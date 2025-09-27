@@ -1,0 +1,39 @@
+strategies:
+  default:
+    # Position sizing
+    position_size_usd: 100
+    max_positions: 10
+    max_exposure_usd: 1000
+
+    # Risk management
+    stop_loss_percent: 2.0
+    take_profit_percent: 3.0
+
+    # Trailing stop
+    trailing_activation_percent: 1.5
+    trailing_callback_percent: 0.5
+    use_breakeven: true
+    breakeven_at_percent: 0.5
+
+    # Signal filtering
+    min_score_week: 70
+    min_score_month: 80
+    signal_time_window_minutes: 5
+    max_trades_per_15min: 10
+
+    # Execution
+    max_slippage_percent: 0.5
+    max_spread_percent: 0.5
+
+  aggressive:
+    position_size_usd: 200
+    max_positions: 15
+    stop_loss_percent: 3.0
+    trailing_activation_percent: 1.0
+
+  conservative:
+    position_size_usd: 50
+    max_positions: 5
+    stop_loss_percent: 1.5
+    min_score_week: 80
+    min_score_month: 85

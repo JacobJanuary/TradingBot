@@ -1,0 +1,457 @@
+"""
+Smart Trailing Stop Manager
+Based on best practices from:
+- https://github.com/freqtrade/freqtrade/blob/develop/freqtrade/strategy/stoploss_manager.py
+- https://github.com/jesse-ai/jesse/blob/master/jesse/strategies/
+"""
+import logging
+from typing import Dict, Optional, List
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+import asyncio
+from decimal import Decimal
+
+logger = logging.getLogger(__name__)
+
+
+class TrailingStopState(Enum):
+    """Trailing stop states"""
+    INACTIVE = "inactive"  # Not activated yet
+    WAITING = "waiting"  # Waiting for activation price
+    ACTIVE = "active"  # Actively trailing
+    TRIGGERED = "triggered"  # Stop triggered
+
+
+@dataclass
+class TrailingStopConfig:
+    """Configuration for trailing stop"""
+    activation_percent: Decimal = Decimal('1.5')  # Profit % to activate
+    callback_percent: Decimal = Decimal('0.5')  # Trail distance %
+
+    # Advanced features
+    use_atr: bool = False  # Use ATR for dynamic distance
+    atr_multiplier: Decimal = Decimal('2.0')  # ATR multiplier
+
+    step_activation: bool = False  # Step-based activation
+    activation_steps: List[Dict] = field(default_factory=lambda: [
+        {'profit': 1.0, 'distance': 0.5},
+        {'profit': 2.0, 'distance': 0.3},
+        {'profit': 3.0, 'distance': 0.2},
+    ])
+
+    breakeven_at: Optional[Decimal] = Decimal('0.5')  # Move SL to breakeven at X%
+
+    # Time-based features
+    time_based_activation: bool = False
+    min_position_age_minutes: int = 10
+
+    # Acceleration feature
+    accelerate_on_momentum: bool = False
+    momentum_threshold: Decimal = Decimal('0.1')  # Price change % per minute
+
+
+@dataclass
+class TrailingStopInstance:
+    """Individual trailing stop instance"""
+    symbol: str
+    entry_price: Decimal
+    current_price: Decimal
+    highest_price: Decimal
+    lowest_price: Decimal
+
+    state: TrailingStopState = TrailingStopState.INACTIVE
+    activation_price: Optional[Decimal] = None
+    current_stop_price: Optional[Decimal] = None
+    last_stop_update: Optional[datetime] = None
+
+    # Order tracking
+    stop_order_id: Optional[str] = None
+
+    # Statistics
+    created_at: datetime = field(default_factory=datetime.now)
+    activated_at: Optional[datetime] = None
+    highest_profit_percent: Decimal = Decimal('0')
+    update_count: int = 0
+
+    # Position info
+    side: str = 'long'  # 'long' or 'short'
+    quantity: Decimal = Decimal('0')
+
+
+class SmartTrailingStopManager:
+    """
+    Advanced trailing stop manager with WebSocket integration
+    Handles all trailing stop logic independently of exchange implementation
+    """
+
+    def __init__(self, exchange_manager, config: TrailingStopConfig = None):
+        """Initialize trailing stop manager"""
+        self.exchange = exchange_manager
+        self.config = config or TrailingStopConfig()
+
+        # Active trailing stops
+        self.trailing_stops: Dict[str, TrailingStopInstance] = {}
+
+        # Lock for thread safety
+        self.lock = asyncio.Lock()
+
+        # Statistics
+        self.stats = {
+            'total_created': 0,
+            'total_activated': 0,
+            'total_triggered': 0,
+            'average_profit_on_trigger': Decimal('0'),
+            'best_profit': Decimal('0')
+        }
+
+        logger.info(f"SmartTrailingStopManager initialized with config: {self.config}")
+
+    async def create_trailing_stop(self,
+                                   symbol: str,
+                                   side: str,
+                                   entry_price: float,
+                                   quantity: float,
+                                   initial_stop: Optional[float] = None) -> TrailingStopInstance:
+        """
+        Create new trailing stop instance
+
+        Args:
+            symbol: Trading symbol
+            side: Position side ('long' or 'short')
+            entry_price: Entry price of position
+            quantity: Position size
+            initial_stop: Initial stop loss price (optional)
+        """
+        async with self.lock:
+            # Check if already exists
+            if symbol in self.trailing_stops:
+                logger.warning(f"Trailing stop for {symbol} already exists")
+                return self.trailing_stops[symbol]
+
+            # Create instance
+            ts = TrailingStopInstance(
+                symbol=symbol,
+                entry_price=Decimal(str(entry_price)),
+                current_price=Decimal(str(entry_price)),
+                highest_price=Decimal(str(entry_price)) if side == 'long' else Decimal('999999'),
+                lowest_price=Decimal('999999') if side == 'long' else Decimal(str(entry_price)),
+                side=side.lower(),
+                quantity=Decimal(str(quantity))
+            )
+
+            # Set initial stop if provided
+            if initial_stop:
+                ts.current_stop_price = Decimal(str(initial_stop))
+
+                # Place initial stop order
+                await self._place_stop_order(ts)
+
+            # Calculate activation price
+            if side == 'long':
+                ts.activation_price = ts.entry_price * (1 + self.config.activation_percent / 100)
+            else:
+                ts.activation_price = ts.entry_price * (1 - self.config.activation_percent / 100)
+
+            # Store instance
+            self.trailing_stops[symbol] = ts
+            self.stats['total_created'] += 1
+
+            logger.info(
+                f"Created trailing stop for {symbol} {side}: "
+                f"entry={entry_price}, activation={ts.activation_price}, "
+                f"initial_stop={initial_stop}"
+            )
+
+            return ts
+
+    async def update_price(self, symbol: str, price: float) -> Optional[Dict]:
+        """
+        Update price and check trailing stop logic
+        Called from WebSocket on every price update
+
+        Returns:
+            Dict with action if stop needs update, None otherwise
+        """
+        if symbol not in self.trailing_stops:
+            return None
+
+        async with self.lock:
+            ts = self.trailing_stops[symbol]
+            ts.current_price = Decimal(str(price))
+
+            # Update highest/lowest
+            if ts.side == 'long':
+                if ts.current_price > ts.highest_price:
+                    ts.highest_price = ts.current_price
+            else:
+                if ts.current_price < ts.lowest_price:
+                    ts.lowest_price = ts.current_price
+
+            # Calculate current profit
+            profit_percent = self._calculate_profit_percent(ts)
+            if profit_percent > ts.highest_profit_percent:
+                ts.highest_profit_percent = profit_percent
+
+            # State machine
+            if ts.state == TrailingStopState.INACTIVE:
+                return await self._check_activation(ts)
+
+            elif ts.state == TrailingStopState.WAITING:
+                return await self._check_activation(ts)
+
+            elif ts.state == TrailingStopState.ACTIVE:
+                return await self._update_trailing_stop(ts)
+
+            return None
+
+    async def _check_activation(self, ts: TrailingStopInstance) -> Optional[Dict]:
+        """Check if trailing stop should be activated"""
+
+        # Check breakeven first (if configured)
+        if self.config.breakeven_at and not ts.current_stop_price:
+            profit = self._calculate_profit_percent(ts)
+            if profit >= self.config.breakeven_at:
+                # Move stop to breakeven
+                ts.current_stop_price = ts.entry_price
+                ts.state = TrailingStopState.WAITING
+
+                await self._update_stop_order(ts)
+
+                logger.info(f"{ts.symbol}: Moving stop to breakeven at {profit:.2f}% profit")
+                return {
+                    'action': 'breakeven',
+                    'symbol': ts.symbol,
+                    'stop_price': float(ts.current_stop_price)
+                }
+
+        # Check activation conditions
+        should_activate = False
+
+        if ts.side == 'long':
+            should_activate = ts.current_price >= ts.activation_price
+        else:
+            should_activate = ts.current_price <= ts.activation_price
+
+        # Time-based activation
+        if self.config.time_based_activation and not should_activate:
+            position_age = (datetime.now() - ts.created_at).seconds / 60
+            if position_age >= self.config.min_position_age_minutes:
+                profit = self._calculate_profit_percent(ts)
+                if profit > 0:
+                    should_activate = True
+                    logger.info(f"{ts.symbol}: Time-based activation after {position_age:.0f} minutes")
+
+        if should_activate:
+            return await self._activate_trailing_stop(ts)
+
+        return None
+
+    async def _activate_trailing_stop(self, ts: TrailingStopInstance) -> Dict:
+        """Activate trailing stop"""
+        ts.state = TrailingStopState.ACTIVE
+        ts.activated_at = datetime.now()
+        self.stats['total_activated'] += 1
+
+        # Calculate initial trailing stop price
+        distance = self._get_trailing_distance(ts)
+
+        if ts.side == 'long':
+            ts.current_stop_price = ts.highest_price * (1 - distance / 100)
+        else:
+            ts.current_stop_price = ts.lowest_price * (1 + distance / 100)
+
+        # Update stop order
+        await self._update_stop_order(ts)
+
+        logger.info(
+            f"✅ {ts.symbol}: Trailing stop ACTIVATED at {ts.current_price:.4f}, "
+            f"stop at {ts.current_stop_price:.4f}"
+        )
+
+        return {
+            'action': 'activated',
+            'symbol': ts.symbol,
+            'stop_price': float(ts.current_stop_price),
+            'distance_percent': float(distance)
+        }
+
+    async def _update_trailing_stop(self, ts: TrailingStopInstance) -> Optional[Dict]:
+        """Update trailing stop if price moved favorably"""
+
+        distance = self._get_trailing_distance(ts)
+        new_stop_price = None
+
+        if ts.side == 'long':
+            # For long: trail below highest price
+            potential_stop = ts.highest_price * (1 - distance / 100)
+
+            # Only update if new stop is higher than current
+            if potential_stop > ts.current_stop_price:
+                new_stop_price = potential_stop
+        else:
+            # For short: trail above lowest price
+            potential_stop = ts.lowest_price * (1 + distance / 100)
+
+            # Only update if new stop is lower than current
+            if potential_stop < ts.current_stop_price:
+                new_stop_price = potential_stop
+
+        if new_stop_price:
+            old_stop = ts.current_stop_price
+            ts.current_stop_price = new_stop_price
+            ts.last_stop_update = datetime.now()
+            ts.update_count += 1
+
+            # Update stop order on exchange
+            await self._update_stop_order(ts)
+
+            improvement = abs((new_stop_price - old_stop) / old_stop * 100)
+            logger.info(
+                f"📈 {ts.symbol}: Trailing stop updated from {old_stop:.4f} to {new_stop_price:.4f} "
+                f"(+{improvement:.2f}%)"
+            )
+
+            return {
+                'action': 'updated',
+                'symbol': ts.symbol,
+                'old_stop': float(old_stop),
+                'new_stop': float(new_stop_price),
+                'improvement_percent': float(improvement)
+            }
+
+        return None
+
+    def _get_trailing_distance(self, ts: TrailingStopInstance) -> Decimal:
+        """Get trailing distance based on configuration"""
+
+        # Step-based distance
+        if self.config.step_activation:
+            profit = self._calculate_profit_percent(ts)
+
+            for step in reversed(self.config.activation_steps):
+                if profit >= step['profit']:
+                    return Decimal(str(step['distance']))
+
+        # Momentum-based acceleration
+        if self.config.accelerate_on_momentum:
+            # Calculate price change rate (simplified)
+            if ts.last_stop_update:
+                time_diff = (datetime.now() - ts.last_stop_update).seconds / 60
+                if time_diff > 0:
+                    price_change_rate = abs(
+                        (ts.current_price - ts.entry_price) / ts.entry_price / time_diff * 100
+                    )
+
+                    if price_change_rate > self.config.momentum_threshold:
+                        # Tighten stop on strong momentum
+                        return self.config.callback_percent * Decimal('0.7')
+
+        return self.config.callback_percent
+
+    def _calculate_profit_percent(self, ts: TrailingStopInstance) -> Decimal:
+        """Calculate current profit percentage"""
+        if ts.side == 'long':
+            return (ts.current_price - ts.entry_price) / ts.entry_price * 100
+        else:
+            return (ts.entry_price - ts.current_price) / ts.entry_price * 100
+
+    async def _place_stop_order(self, ts: TrailingStopInstance) -> bool:
+        """Place initial stop order on exchange"""
+        try:
+            # Cancel existing stop order if any
+            if ts.stop_order_id:
+                await self.exchange.cancel_order(ts.stop_order_id, ts.symbol)
+
+            # Determine order side (opposite of position)
+            order_side = 'sell' if ts.side == 'long' else 'buy'
+
+            # Place stop market order
+            order = await self.exchange.create_stop_loss_order(
+                symbol=ts.symbol,
+                side=order_side,
+                amount=float(ts.quantity),
+                stop_price=float(ts.current_stop_price)
+            )
+
+            ts.stop_order_id = order.id
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to place stop order for {ts.symbol}: {e}")
+            return False
+
+    async def _update_stop_order(self, ts: TrailingStopInstance) -> bool:
+        """Update stop order on exchange"""
+        try:
+            # Cancel old order
+            if ts.stop_order_id:
+                await self.exchange.cancel_order(ts.stop_order_id, ts.symbol)
+                await asyncio.sleep(0.1)  # Small delay
+
+            # Place new order
+            return await self._place_stop_order(ts)
+
+        except Exception as e:
+            logger.error(f"Failed to update stop order for {ts.symbol}: {e}")
+            return False
+
+    async def on_position_closed(self, symbol: str, realized_pnl: float = None):
+        """Handle position closure"""
+        if symbol not in self.trailing_stops:
+            return
+
+        async with self.lock:
+            ts = self.trailing_stops[symbol]
+            ts.state = TrailingStopState.TRIGGERED
+
+            # Update statistics
+            if ts.state == TrailingStopState.ACTIVE:
+                self.stats['total_triggered'] += 1
+
+                if realized_pnl:
+                    profit_percent = (realized_pnl / float(ts.entry_price * ts.quantity)) * 100
+
+                    # Update average
+                    current_avg = self.stats['average_profit_on_trigger']
+                    total = self.stats['total_triggered']
+                    self.stats['average_profit_on_trigger'] = (
+                            (current_avg * (total - 1) + profit_percent) / total
+                    )
+
+                    if profit_percent > self.stats['best_profit']:
+                        self.stats['best_profit'] = profit_percent
+
+            # Remove from active stops
+            del self.trailing_stops[symbol]
+
+            logger.info(f"Position {symbol} closed, trailing stop removed")
+
+    def get_status(self, symbol: str = None) -> Dict:
+        """Get status of trailing stops"""
+        if symbol:
+            if symbol in self.trailing_stops:
+                ts = self.trailing_stops[symbol]
+                return {
+                    'symbol': symbol,
+                    'state': ts.state.value,
+                    'entry_price': float(ts.entry_price),
+                    'current_price': float(ts.current_price),
+                    'stop_price': float(ts.current_stop_price) if ts.current_stop_price else None,
+                    'profit_percent': float(self._calculate_profit_percent(ts)),
+                    'highest_profit': float(ts.highest_profit_percent),
+                    'updates': ts.update_count
+                }
+            return None
+
+        # Return all
+        return {
+            'active_stops': len(self.trailing_stops),
+            'stops': {
+                symbol: self.get_status(symbol)
+                for symbol in self.trailing_stops
+            },
+            'statistics': self.stats
+        }
+# Alias for compatibility
+TrailingStopManager = SmartTrailingStopManager

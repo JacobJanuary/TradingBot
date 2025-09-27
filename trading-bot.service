@@ -1,0 +1,36 @@
+[Unit]
+Description=Trading Bot Service
+Documentation=https://github.com/your-org/TradingBot
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/opt/trading-bot
+Environment="PATH=/opt/trading-bot/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/opt/trading-bot"
+ExecStartPre=/opt/trading-bot/.venv/bin/python scripts/pre_start_check.py
+ExecStart=/opt/trading-bot/.venv/bin/python main.py --config /opt/trading-bot/config/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/opt/trading-bot/.venv/bin/python scripts/graceful_shutdown.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/trading-bot/stdout.log
+StandardError=append:/var/log/trading-bot/stderr.log
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/trading-bot/logs /opt/trading-bot/reports /opt/trading-bot/backups
+
+# Resource limits
+CPUQuota=80%
+MemoryMax=4G
+TasksMax=100
+
+[Install]
+WantedBy=multi-user.target
