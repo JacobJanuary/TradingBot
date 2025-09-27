@@ -1,0 +1,34 @@
+TOP 30 LIQUID PAIRS ON BINANCE FUTURES
+============================================================
+Generated: 2025-09-27T04:04:05.000564
+
+ 1. BTC/USDT:USDT             | Price: $ 109537.6000 | 24h Volume: $  37646.80M
+ 2. ETH/USDT:USDT             | Price: $   4023.7500 | 24h Volume: $  26532.34M
+ 3. ALPHA/USDT:USDT           | Price: $      0.0177 | 24h Volume: $   3317.22M
+ 4. OMNI/USDT:USDT            | Price: $      3.8980 | 24h Volume: $   1226.39M
+ 5. BNX/USDT:USDT             | Price: $      1.7825 | 24h Volume: $    506.94M
+ 6. BSW/USDT:USDT             | Price: $      0.0122 | 24h Volume: $    411.36M
+ 7. OMG/USDT:USDT             | Price: $      0.1899 | 24h Volume: $    323.51M
+ 8. SOL/USDT:USDT             | Price: $    204.4600 | 24h Volume: $     96.51M
+ 9. BNB/USDT:USDT             | Price: $    960.1100 | 24h Volume: $     79.94M
+10. ALPINE/USDT:USDT          | Price: $      4.7151 | 24h Volume: $     47.90M
+11. SQD/USDT:USDT             | Price: $      0.1849 | 24h Volume: $     46.03M
+12. XPL/USDT:USDT             | Price: $      1.2093 | 24h Volume: $     34.18M
+13. NEIROETH/USDT:USDT        | Price: $      0.0064 | 24h Volume: $     33.47M
+14. XRP/USDT:USDT             | Price: $      2.7838 | 24h Volume: $     32.88M
+15. MIRA/USDT:USDT            | Price: $      1.4829 | 24h Volume: $     30.52M
+16. FLUID/USDT:USDT           | Price: $      6.3740 | 24h Volume: $     16.35M
+17. SNX/USDT:USDT             | Price: $      1.0390 | 24h Volume: $     16.06M
+18. ASTER/USDT:USDT           | Price: $      2.0396 | 24h Volume: $     15.72M
+19. COMBO/USDT:USDT           | Price: $      0.0053 | 24h Volume: $     15.04M
+20. VIDT/USDT:USDT            | Price: $      0.0003 | 24h Volume: $     12.32M
+21. AVNT/USDT:USDT            | Price: $      1.6578 | 24h Volume: $     12.07M
+22. UXLINK/USDT:USDT          | Price: $      0.0729 | 24h Volume: $     10.80M
+23. COAI/USDT:USDT            | Price: $      0.1721 | 24h Volume: $     10.04M
+24. AVAX/USDT:USDT            | Price: $     28.9920 | 24h Volume: $      9.28M
+25. BCH/USDT:USDT             | Price: $    547.4900 | 24h Volume: $      9.19M
+26. AI16Z/USDT:USDT           | Price: $      0.0879 | 24h Volume: $      8.99M
+27. AAVE/USDT:USDT            | Price: $    270.4300 | 24h Volume: $      8.09M
+28. DOGE/USDT:USDT            | Price: $      0.2319 | 24h Volume: $      7.90M
+29. MYX/USDT:USDT             | Price: $     10.5137 | 24h Volume: $      7.29M
+30. QNT/USDT:USDT             | Price: $     95.3100 | 24h Volume: $      7.26M

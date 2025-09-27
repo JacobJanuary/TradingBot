@@ -1,0 +1,107 @@
+# Trading Bot Configuration
+
+# Database Configuration
+database:
+  host: localhost
+  port: 5432
+  database: postgres  # Use existing database for now
+  user: evgeniyyanvarskiy  # Your current user
+  password: ""  # Empty for local trust auth
+  pool_size: 10
+  max_overflow: 20
+
+# Trading Configuration  
+trading:
+  mode: shadow  # shadow, paper, live
+  exchanges:
+    - name: binance
+      enabled: true  # Enable for testing
+      markets: [BTC/USDT, ETH/USDT, BNB/USDT]
+      leverage: 5
+      testnet: true
+    
+    - name: bybit
+      enabled: true  # Enable for testing
+      markets: [BTC/USDT, ETH/USDT]
+      leverage: 10
+      testnet: true
+
+# Risk Management
+risk:
+  max_position_size: 10000  # USD
+  max_daily_loss: 1000      # USD
+  max_open_positions: 5
+  max_leverage: 10
+  max_correlation: 0.7
+  default_stop_loss: 2.0    # %
+  risk_per_trade: 1.0       # % of capital
+
+# Position Protection
+protection:
+  max_drawdown_pct: 5.0
+  critical_loss_pct: 3.0
+  max_position_hours: 48
+  volatility_threshold: 2.0
+  correlation_threshold: 0.7
+  
+  stop_loss:
+    enabled: true
+    type: combined  # fixed, trailing, combined
+    fixed_percentage: 2.0
+    trailing_percentage: 1.5
+    atr_multiplier: 2.5
+    time_based_hours: 24
+
+# Signal Processing
+signals:
+  enabled: false  # Disabled for testing
+  min_score_week: 70
+  min_score_month: 80
+  time_window_minutes: 5
+  max_signals_per_hour: 10
+  check_interval: 60  # seconds
+
+# Monitoring
+monitoring:
+  enabled: true
+  health_check_interval: 60  # seconds
+  metrics_port: 8000
+  health_port: 8080
+  
+# Performance Tracking
+performance:
+  enabled: true
+  report_interval: daily
+  benchmark_symbol: BTC/USDT
+  save_reports: true
+  report_path: ./reports
+
+# System
+system:
+  auto_restart: false
+  max_retries: 3
+  retry_delay: 60  # seconds
+  cleanup_old_data_days: 30
+  backup_enabled: false
+  backup_path: ./backups
+
+# API Keys (loaded from environment)
+binance:
+  api_key: ${BINANCE_API_KEY}
+  api_secret: ${BINANCE_API_SECRET}
+
+bybit:
+  enabled: true
+  testnet: true
+  api_key: ${BYBIT_API_KEY}
+  api_secret: ${BYBIT_API_SECRET}
+  options:
+    defaultType: 'future'
+    accountType: 'UNIFIED'
+
+# Logging
+logging:
+  level: INFO
+  file: logs/trading_bot.log
+  max_size: 10485760  # 10MB
+  backup_count: 5

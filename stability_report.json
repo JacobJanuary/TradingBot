@@ -1,0 +1,65 @@
+{
+  "summary": {
+    "runtime_seconds": 79.64474320411682,
+    "runtime_hours": 0.022123539778921338,
+    "errors_count": 1,
+    "warnings_count": 0,
+    "metrics_collected": 6,
+    "avg_memory_mb": 227.3046875,
+    "max_memory_mb": 227.703125,
+    "avg_cpu_percent": 0.0,
+    "memory_leak": false,
+    "stable": false
+  },
+  "errors": [
+    {
+      "timestamp": "2025-09-27T12:22:02.086826",
+      "error": "Bot failed to stop within timeout"
+    }
+  ],
+  "warnings": [],
+  "metrics": [
+    {
+      "timestamp": "2025-09-27T12:20:51.969401",
+      "memory_mb": 226.078125,
+      "cpu_percent": 0.0,
+      "num_threads": 11,
+      "num_fds": 25
+    },
+    {
+      "timestamp": "2025-09-27T12:21:01.969879",
+      "memory_mb": 227.453125,
+      "cpu_percent": 0.0,
+      "num_threads": 12,
+      "num_fds": 25
+    },
+    {
+      "timestamp": "2025-09-27T12:21:11.972300",
+      "memory_mb": 227.453125,
+      "cpu_percent": 0.0,
+      "num_threads": 12,
+      "num_fds": 24
+    },
+    {
+      "timestamp": "2025-09-27T12:21:21.972942",
+      "memory_mb": 227.453125,
+      "cpu_percent": 0.0,
+      "num_threads": 12,
+      "num_fds": 22
+    },
+    {
+      "timestamp": "2025-09-27T12:21:31.973561",
+      "memory_mb": 227.6875,
+      "cpu_percent": 0.0,
+      "num_threads": 12,
+      "num_fds": 22
+    },
+    {
+      "timestamp": "2025-09-27T12:21:41.974251",
+      "memory_mb": 227.703125,
+      "cpu_percent": 0.0,
+      "num_threads": 12,
+      "num_fds": 22
+    }
+  ]
+}
