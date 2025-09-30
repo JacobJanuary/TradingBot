@@ -47,7 +47,7 @@ def setup_logger(
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
-    # File handler
+    # File handler with rotation
     if log_file:
         # Create log directory if needed
         log_path = Path(log_file)
@@ -73,3 +73,7 @@ def setup_trading_logger():
         log_file='logs/trading_bot.log',
         format_string='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
     )
+
+
+# Default logger instance for imports
+logger = setup_trading_logger()

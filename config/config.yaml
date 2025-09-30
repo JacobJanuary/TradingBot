@@ -12,7 +12,7 @@ database:
 
 # Trading Configuration  
 trading:
-  mode: shadow  # shadow, paper, live
+  mode: production  # shadow, paper, live (PRODUCTION MODE ENABLED!)
   exchanges:
     - name: binance
       enabled: true  # Enable for testing

@@ -8,7 +8,15 @@ import hmac
 import hashlib
 from typing import Dict, Optional, Callable
 from datetime import datetime
+from decimal import Decimal
 from .improved_stream import ImprovedStream
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from models.validation import (
+    PositionUpdate, OrderUpdate, BalanceUpdate, PriceUpdate,
+    validate_websocket_data
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +34,9 @@ class BinancePrivateStream(ImprovedStream):
         self.listen_key = None
         self.listen_key_task = None
         self.testnet = config.get('testnet', False)
+
+        # Cache size limits for positions and orders
+        self.max_cache_size = config.get('max_cache_size', 100)
         
         # Base URLs
         if self.testnet:
@@ -165,35 +176,53 @@ class BinancePrivateStream(ImprovedStream):
         """
         data = msg.get('a', {})
 
-        # Update balances
+        # Update balances with validation
         for balance in data.get('B', []):
             if balance['a'] == 'USDT':
-                self.account_info['availableBalance'] = float(balance['wb'])
-                self.account_info['walletBalance'] = float(balance['cw'])
+                try:
+                    balance_data = {
+                        'asset': 'USDT',
+                        'free': Decimal(str(balance['wb'])),
+                        'locked': Decimal('0'),
+                        'timestamp': datetime.fromtimestamp(msg.get('T', 0) / 1000)
+                    }
+                    validated = validate_websocket_data('balance', balance_data)
+                    if validated:
+                        self.account_info['availableBalance'] = float(validated.free)
+                        self.account_info['walletBalance'] = float(validated.free)
+                        
+                        await self._emit_event(StreamEvent.BALANCE_UPDATE, {
+                            'asset': validated.asset,
+                            'wallet_balance': float(validated.free),
+                            'available_balance': float(validated.free),
+                            'timestamp': msg.get('T')
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to validate balance update: {e}")
 
-                await self._emit_event(StreamEvent.BALANCE_UPDATE, {
-                    'asset': 'USDT',
-                    'wallet_balance': float(balance['cw']),
-                    'available_balance': float(balance['wb']),
-                    'timestamp': msg.get('T')
-                })
-
-        # Update positions
+        # Update positions with validation
         for position in data.get('P', []):
             symbol = position['s']
-            position_data = {
-                'symbol': symbol,
-                'side': 'LONG' if float(position['pa']) > 0 else 'SHORT',
-                'position_amount': abs(float(position['pa'])),
-                'entry_price': float(position['ep']),
-                'mark_price': float(position.get('mp', 0)),
-                'unrealized_pnl': float(position['up']),
-                'realized_pnl': float(position.get('rp', 0)),
-                'margin_type': position.get('mt'),
-                'isolated_wallet': float(position.get('iw', 0)),
-                'position_side': position.get('ps'),
-                'timestamp': msg.get('T')
-            }
+            try:
+                position_amt = Decimal(str(position['pa']))
+                position_data = {
+                    'symbol': symbol,
+                    'side': 'LONG' if position_amt > 0 else 'SHORT',
+                    'quantity': abs(position_amt),
+                    'entry_price': Decimal(str(position['ep'])),
+                    'mark_price': Decimal(str(position.get('mp', 0))) if position.get('mp') else None,
+                    'unrealized_pnl': Decimal(str(position['up'])),
+                    'realized_pnl': Decimal(str(position.get('rp', 0))),
+                    'timestamp': datetime.fromtimestamp(msg.get('T', 0) / 1000)
+                }
+                
+                validated = validate_websocket_data('position', position_data)
+                if not validated:
+                    logger.warning(f"Invalid position data for {symbol}")
+                    continue
+            except Exception as e:
+                logger.warning(f"Failed to validate position {symbol}: {e}")
+                continue
 
             # Check if position opened/closed
             old_position = self.positions.get(symbol)
@@ -218,6 +247,8 @@ class BinancePrivateStream(ImprovedStream):
                         logger.info(f"Position {symbol} PnL change: ${pnl_change:.2f}")
 
                 self.positions[symbol] = position_data
+                # Limit cache size
+                self._limit_cache(self.positions, self.max_cache_size)
 
             # Emit position update event
             await self._emit_event(StreamEvent.POSITION_UPDATE, position_data)
@@ -278,6 +309,8 @@ class BinancePrivateStream(ImprovedStream):
             self.open_orders.pop(order_info['order_id'], None)
         else:
             self.open_orders[order_info['order_id']] = order_info
+            # Limit cache size
+            self._limit_cache(self.open_orders, self.max_cache_size)
 
         # Emit order update event
         await self._emit_event(StreamEvent.ORDER_UPDATE, order_info)

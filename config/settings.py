@@ -3,11 +3,18 @@ Trading Bot Configuration
 Based on best practices from freqtrade and jesse-ai
 """
 import os
+import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from decimal import Decimal
 import yaml
 from pathlib import Path
+import sys
+# Add parent directory to path for imports
+sys.path.append(str(Path(__file__).parent.parent))
+from utils.crypto_manager import decrypt_env_value
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,23 +44,42 @@ class TradingConfig:
 
     # Risk management
     stop_loss_percent: Decimal = Decimal('2.0')
-    take_profit_percent: Decimal = Decimal('3.0')
-    trailing_activation_percent: Decimal = Decimal('1.5')
-    trailing_callback_percent: Decimal = Decimal('0.5')
+    # take_profit_percent: Decimal = Decimal('3.0')  # DEPRECATED - Using Smart Trailing Stop
+    trailing_activation_percent: Decimal = Decimal('1.5')  # Smart Trailing activation
+    trailing_callback_percent: Decimal = Decimal('0.5')  # Trail distance from peak
 
     # Position management
-    max_position_age_hours: int = 24
+    max_position_age_hours: int = 1  # From .env
     min_profit_for_breakeven: Decimal = Decimal('0.3')
+    commission_percent: Decimal = Decimal('0.3')  # Trading commission for breakeven calculation
+
+    # Aged position liquidation settings
+    liquidation_low_balance_factor: int = 10  # Start liquidation if balance < position_size * factor
+    liquidation_start_hours: int = 4  # Hours after max_age to start gradual liquidation
+    aged_check_interval_minutes: int = 60  # Check interval for aged positions
 
     # Signal filtering
-    min_score_week: Decimal = Decimal('70')
-    min_score_month: Decimal = Decimal('80')
-    signal_time_window_minutes: int = 5
+    min_score_week: Decimal = Decimal('50')
+    min_score_month: Decimal = Decimal('50')
+    signal_time_window_minutes: int = 1440  # Increased to 24 hours for testing
     max_trades_per_15min: int = 10
+
+    # Wave processing with buffer
+    signal_buffer_percent: Decimal = Decimal('33')  # Buffer percentage for duplicate replacement
+    duplicate_check_enabled: bool = True  # Enable duplicate position checking
+    allow_multiple_positions: bool = False  # One position per symbol only
 
     # Execution
     max_slippage_percent: Decimal = Decimal('0.5')
     max_spread_percent: Decimal = Decimal('0.5')
+
+    # Symbol filtering
+    stoplist_symbols: str = ''  # Comma-separated list of symbols to exclude
+    use_symbol_whitelist: bool = False
+    whitelist_symbols: str = ''  # Comma-separated list of allowed symbols (if whitelist enabled)
+    excluded_patterns: str = ''  # Patterns to exclude (e.g., *UP,*DOWN)
+    min_symbol_volume_usd: Decimal = Decimal('0')
+    delisted_symbols: str = ''  # Delisted symbols to exclude
 
 
 @dataclass
@@ -136,20 +162,28 @@ class Settings:
 
         # Fallback to environment variables if no YAML config
         if not exchanges:
-            if os.getenv('BINANCE_API_KEY'):
+            # Decrypt API keys if they are encrypted
+            binance_key = decrypt_env_value('BINANCE_API_KEY') or os.getenv('BINANCE_API_KEY')
+            binance_secret = decrypt_env_value('BINANCE_API_SECRET') or os.getenv('BINANCE_API_SECRET')
+            
+            if binance_key:
                 exchanges['binance'] = ExchangeConfig(
                     name='binance',
-                    api_key=os.getenv('BINANCE_API_KEY'),
-                    api_secret=os.getenv('BINANCE_API_SECRET'),
+                    api_key=binance_key,
+                    api_secret=binance_secret,
                     enabled=True,
                     testnet=os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
                 )
 
-            if os.getenv('BYBIT_API_KEY'):
+            # Decrypt Bybit API keys if encrypted
+            bybit_key = decrypt_env_value('BYBIT_API_KEY') or os.getenv('BYBIT_API_KEY')
+            bybit_secret = decrypt_env_value('BYBIT_API_SECRET') or os.getenv('BYBIT_API_SECRET')
+            
+            if bybit_key:
                 exchanges['bybit'] = ExchangeConfig(
                     name='bybit',
-                    api_key=os.getenv('BYBIT_API_KEY'),
-                    api_secret=os.getenv('BYBIT_API_SECRET'),
+                    api_key=bybit_key,
+                    api_secret=bybit_secret,
                     enabled=False,  # Disable by default due to connection issues
                     testnet=os.getenv('BYBIT_TESTNET', 'false').lower() == 'true'
                 )
@@ -164,10 +198,26 @@ class Settings:
         env_mappings = {
             'POSITION_SIZE_USD': 'position_size_usd',
             'MAX_POSITIONS': 'max_positions',
+            'MAX_TRADES_PER_15MIN': 'max_trades_per_15min',
+            'MAX_EXPOSURE_USD': 'max_exposure_usd',
             'STOP_LOSS_PERCENT': 'stop_loss_percent',
             'TRAILING_ACTIVATION_PERCENT': 'trailing_activation_percent',
+            'TRAILING_CALLBACK_PERCENT': 'trailing_callback_percent',
+            'MAX_POSITION_AGE_HOURS': 'max_position_age_hours',
+            'COMMISSION_PERCENT': 'commission_percent',
             'MIN_SCORE_WEEK': 'min_score_week',
             'MIN_SCORE_MONTH': 'min_score_month',
+            'MAX_SPREAD_PERCENT': 'max_spread_percent',
+            'MAX_SLIPPAGE_PERCENT': 'max_slippage_percent',
+            'LIQUIDATION_LOW_BALANCE_FACTOR': 'liquidation_low_balance_factor',
+            'LIQUIDATION_START_HOURS': 'liquidation_start_hours',
+            'AGED_CHECK_INTERVAL_MINUTES': 'aged_check_interval_minutes',
+            'STOPLIST_SYMBOLS': 'stoplist_symbols',
+            'USE_SYMBOL_WHITELIST': 'use_symbol_whitelist',
+            'WHITELIST_SYMBOLS': 'whitelist_symbols',
+            'EXCLUDED_PATTERNS': 'excluded_patterns',
+            'MIN_SYMBOL_VOLUME_USD': 'min_symbol_volume_usd',
+            'DELISTED_SYMBOLS': 'delisted_symbols',
         }
 
         for env_key, attr_name in env_mappings.items():
@@ -179,9 +229,18 @@ class Settings:
                 elif attr_type == int:
                     setattr(config, attr_name, int(value))
 
+        # Determine strategy based on environment
+        strategy_name = self._get_strategy_name()
+        
         # Override with YAML if exists
         if 'strategies' in self.yaml_configs:
-            strategy_config = self.yaml_configs['strategies'].get('default', {})
+            # First try environment-specific strategy, then fallback to default
+            strategy_config = self.yaml_configs['strategies'].get(strategy_name, {})
+            if not strategy_config:
+                strategy_config = self.yaml_configs['strategies'].get('default', {})
+                
+            logger.info(f"Loading trading strategy: {strategy_name}")
+            
             for key, value in strategy_config.items():
                 if hasattr(config, key):
                     if isinstance(getattr(config, key), Decimal):
@@ -190,15 +249,39 @@ class Settings:
                         setattr(config, key, value)
 
         return config
+    
+    def _get_strategy_name(self) -> str:
+        """Determine strategy name based on environment and exchange settings"""
+        # Check if explicitly set via environment variable
+        if os.getenv('STRATEGY_NAME'):
+            return os.getenv('STRATEGY_NAME')
+        
+        # Check if any exchange is using testnet
+        is_testnet = False
+        for exchange in self.exchanges.values():
+            if exchange.testnet:
+                is_testnet = True
+                break
+        
+        # Select strategy based on environment
+        if is_testnet:
+            return 'testnet'
+        elif self.environment == 'production':
+            return 'production'
+        else:
+            return 'default'
 
     def _init_database(self) -> DatabaseConfig:
         """Initialize database configuration"""
+        # Decrypt password if encrypted
+        db_password = decrypt_env_value('DB_PASSWORD') or os.getenv('DB_PASSWORD', '')
+        
         return DatabaseConfig(
             host=os.getenv('DB_HOST', 'localhost'),
             port=int(os.getenv('DB_PORT', 5432)),
             database=os.getenv('DB_NAME', 'trading'),
             user=os.getenv('DB_USER', 'postgres'),
-            password=os.getenv('DB_PASSWORD', ''),
+            password=db_password,
             pool_size=int(os.getenv('DB_POOL_SIZE', 10)),
             max_overflow=int(os.getenv('DB_MAX_OVERFLOW', 20))
         )

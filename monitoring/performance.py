@@ -403,7 +403,12 @@ class PerformanceTracker:
             roi=0,
             expectancy=Decimal('0'),
             recovery_factor=0,
-            calmar_ratio=0
+            calmar_ratio=0,
+            net_profit=Decimal('0'),
+            gross_profit=Decimal('0'),
+            gross_loss=Decimal('0'),
+            largest_win=Decimal('0'),
+            largest_loss=Decimal('0')
         )
     
     async def get_daily_performance(self, 

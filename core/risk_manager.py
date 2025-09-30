@@ -79,34 +79,13 @@ class RiskManager:
             logger.error(f"Failed to check daily loss limit: {e}")
             return True  # Allow trading on error
     
-    async def calculate_position_size(self,
-                                     symbol: str,
-                                     price: Decimal,
-                                     stop_loss: Decimal,
-                                     account_balance: Decimal,
-                                     leverage: float = 1.0) -> Decimal:
-        """Calculate appropriate position size based on risk"""
-        
-        # Calculate risk amount (1% of account)
-        risk_amount = account_balance * (self.risk_per_trade / 100)
-        
-        # Calculate stop distance
-        stop_distance = abs(price - stop_loss)
-        
-        if stop_distance == 0:
-            return Decimal('0')
-        
-        # Base position size
-        position_size = risk_amount / stop_distance
-        
-        # Apply leverage
-        position_size = position_size * Decimal(str(leverage))
-        
-        # Limit by max position size
-        max_size = self.max_position_size / price
-        position_size = min(position_size, max_size)
-        
-        return position_size
+    # REMOVED: Complex position sizing calculation
+    # The system uses fixed position size from config (POSITION_SIZE_USD)
+    # See position_manager._calculate_position_size() for actual implementation
+
+    def get_fixed_position_size(self) -> Decimal:
+        """Get fixed position size from config"""
+        return self.max_position_size  # Uses the configured max as fixed size
     
     async def validate_order(self, order: Order) -> bool:
         """Validate order against risk rules"""

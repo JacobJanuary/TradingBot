@@ -4,6 +4,9 @@ Input validation utilities
 from typing import Any, Optional
 from decimal import Decimal
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def validate_symbol(symbol: str) -> bool:
@@ -120,5 +123,6 @@ def validate_decimal(value: Any, precision: int = 8) -> Optional[Decimal]:
             # Round to precision
             decimal_value = decimal_value.quantize(Decimal(10) ** -precision)
         return decimal_value
-    except:
+    except (ValueError, TypeError, ArithmeticError) as e:
+        logger.warning(f"Failed to validate decimal value {value}: {e}")
         return None
