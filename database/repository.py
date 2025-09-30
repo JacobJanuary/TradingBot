@@ -19,18 +19,35 @@ class Repository:
         self.pool = None
 
     async def initialize(self):
-        """Create connection pool"""
+        """Create optimized connection pool with better settings"""
         self.pool = await asyncpg.create_pool(
             host=self.db_config['host'],
             port=self.db_config['port'],
             database=self.db_config['database'],
             user=self.db_config['user'],
             password=self.db_config['password'],
-            min_size=self.db_config.get('pool_size', 10),
-            max_size=self.db_config.get('max_overflow', 20),
-            command_timeout=10
+
+            # Optimized pool settings
+            min_size=self.db_config.get('pool_size', 15),  # Increased from 10
+            max_size=self.db_config.get('max_overflow', 50),  # Increased from 20
+
+            # Timeout settings
+            command_timeout=30,  # Increased from 10
+            timeout=60,  # Connection timeout
+
+            # Connection recycling
+            max_queries=100000,  # Recycle connections after many queries
+            max_inactive_connection_lifetime=60.0,  # Close idle connections after 60s
+
+            # Performance settings
+            server_settings={
+                'jit': 'off',  # Disable JIT for more predictable performance
+                'statement_timeout': '60000',  # 60 seconds
+                'lock_timeout': '10000',  # 10 seconds
+                'idle_in_transaction_session_timeout': '60000'  # 60 seconds
+            }
         )
-        logger.info("Database pool initialized")
+        logger.info(f"Database pool initialized: min={self.db_config.get('pool_size', 15)}, max={self.db_config.get('max_overflow', 50)}")
         
         # Verify schemas exist
         async with self.pool.acquire() as conn:
@@ -53,45 +70,83 @@ class Repository:
                                       min_score_month: float = 80,
                                       time_window_minutes: int = 5,
                                       limit: int = 10) -> List[Dict]:
-        """Fetch unprocessed signals within time window"""
+        """
+        Fetch unprocessed signals within time window with correct exchange mapping
+        Signals are grouped by 15-minute candle timestamps (waves)
+        
+        Returns signals ordered by:
+        1. Created timestamp (most recent waves first) 
+        2. Score within each wave (highest scores first)
+        """
         query = """
             SELECT 
-                id, trading_pair_id, pair_symbol, exchange_id, exchange_name,
-                score_week, score_month, recommended_action,
-                patterns_details, combinations_details, created_at
-            FROM trading_bot.scoring_history
-            WHERE created_at > NOW() - INTERVAL '%s minutes'
-                AND is_active = true
-                AND is_processed = false
-                AND score_week >= $1
-                AND score_month >= $2
-                AND recommended_action IN ('BUY', 'SELL')
-            ORDER BY score_week DESC, score_month DESC
-            LIMIT $3
+                sc.id, 
+                sc.pair_symbol as symbol, 
+                sc.recommended_action as action,  -- Может быть BUY, SELL, LONG, SHORT
+                sc.score_week, 
+                sc.score_month,
+                sc.patterns_details, 
+                sc.combinations_details,
+                sc.created_at,
+                LOWER(ex.exchange_name) as exchange,
+                -- Round to 15-minute candle for wave grouping
+                date_trunc('hour', sc.created_at) + 
+                    interval '15 min' * floor(date_part('minute', sc.created_at) / 15) as wave_timestamp
+            FROM fas.scoring_history sc
+            JOIN public.trading_pairs tp ON tp.id = sc.trading_pair_id
+            JOIN public.exchanges ex ON ex.id = tp.exchange_id
+            WHERE sc.created_at > NOW() - INTERVAL '1 minute' * $1
+                AND sc.score_week >= $2
+                AND sc.score_month >= $3
+                AND sc.is_active = true
+                AND sc.recommended_action IN ('BUY', 'SELL', 'LONG', 'SHORT')
+                AND sc.recommended_action IS NOT NULL
+                AND sc.recommended_action != 'NO_TRADE'
+            ORDER BY 
+                -- First by wave timestamp (newest waves first)
+                wave_timestamp DESC,
+                -- Then by score within each wave (highest scores first)
+                sc.score_week DESC, 
+                sc.score_month DESC
+            LIMIT $4
         """
 
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                query % time_window_minutes,
+                query,
+                time_window_minutes,  # Just pass the number
                 min_score_week,
                 min_score_month,
-                limit
+                limit  # This is now the max we'll return, but filtering happens in signal_processor
             )
 
             return [dict(row) for row in rows]
 
     async def mark_signal_processed(self, signal_id: int):
-        """Mark signal as processed"""
+        """Mark signal as processed by setting is_active to false"""
+        # Update fas.scoring_history to mark as processed
         query = """
-            UPDATE trading_bot.scoring_history 
-            SET is_processed = true, 
-                processed_at = NOW(),
-                is_active = false
+            UPDATE fas.scoring_history 
+            SET is_active = false
             WHERE id = $1
         """
 
         async with self.pool.acquire() as conn:
             await conn.execute(query, signal_id)
+            
+        # Also track in our signals table for history
+        track_query = """
+            INSERT INTO trading_bot.signals (external_id, symbol, exchange, action, processed, processed_at, created_at, source)
+            SELECT $1, pair_symbol, 'binance', 
+                   LOWER(COALESCE(recommended_action, 'buy')), 
+                   true, NOW(), NOW(), 'fas'
+            FROM fas.scoring_history
+            WHERE id = $1
+            ON CONFLICT (external_id) DO UPDATE SET processed = true, processed_at = NOW()
+        """
+        
+        async with self.pool.acquire() as conn:
+            await conn.execute(track_query, signal_id)
 
     # ============== Risk Management ==============
     
@@ -138,32 +193,27 @@ class Repository:
     async def create_trade(self, trade_data: Dict) -> int:
         """Create new trade record"""
         query = """
-            INSERT INTO monitoring.trades (
-                signal_id, symbol, exchange, side, order_type,
-                quantity, price, executed_qty, average_price,
-                order_id, client_order_id, status, fee, fee_currency,
+            INSERT INTO trading_bot.trades (
+                position_id, symbol, exchange, side, order_type,
+                quantity, price, order_id, status, commission,
                 executed_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
             RETURNING id
         """
 
         async with self.pool.acquire() as conn:
             trade_id = await conn.fetchval(
                 query,
-                trade_data.get('signal_id'),
+                trade_data.get('position_id'),
                 trade_data['symbol'],
                 trade_data['exchange'],
                 trade_data['side'],
                 trade_data.get('order_type', 'MARKET'),
                 trade_data['quantity'],
                 trade_data['price'],
-                trade_data['executed_qty'],
-                trade_data.get('average_price', trade_data['price']),
                 trade_data['order_id'],
-                trade_data.get('client_order_id'),
                 trade_data.get('status', 'FILLED'),
-                trade_data.get('fee', 0),
-                trade_data.get('fee_currency', 'USDT')
+                trade_data.get('commission', 0)
             )
 
             return trade_id
@@ -333,6 +383,22 @@ class Repository:
             result = await conn.fetchval(query, symbol, exchange)
             return result or 0.0
 
+    async def get_open_positions(self) -> List[Dict]:
+        """Get all open positions from database"""
+        query = """
+            SELECT id, symbol, exchange, side, entry_price, current_price,
+                   quantity, leverage, stop_loss, take_profit,
+                   status, pnl, pnl_percentage, trailing_activated,
+                   created_at, updated_at
+            FROM trading_bot.positions
+            WHERE status = 'open'
+            ORDER BY created_at DESC
+        """
+        
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(query)
+            return [dict(row) for row in rows]
+
     # ============== Advisory Locks ==============
 
     async def acquire_position_lock(self, symbol: str, exchange: str) -> bool:
@@ -448,6 +514,37 @@ class Repository:
     async def health_check(self) -> Dict[str, Any]:
         """Health check"""
         return {'status': 'ok', 'pool_size': 10}
+
+    async def update_position_status(self, position_id: int, status: str,
+                                    notes: str = None) -> bool:
+        """
+        Update position status in database
+
+        Args:
+            position_id: Position database ID
+            status: New status ('active', 'closed', 'phantom')
+            notes: Optional notes about the update
+
+        Returns:
+            bool: True if update successful
+        """
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute("""
+                    UPDATE trading_bot.positions
+                    SET status = $1,
+                        notes = COALESCE($2, notes),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $3
+                    RETURNING id
+                """, status, notes, position_id)
+
+                # Check if any row was updated
+                return result is not None
+
+        except Exception as e:
+            logger.error(f"Failed to update position status: {e}")
+            return False
     
     async def get_balance_history(self, exchange: str, days: int) -> List[Any]:
         """Get balance history"""

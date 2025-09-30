@@ -7,11 +7,12 @@ import logging
 import signal
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 import argparse
 
 from config.settings import settings
+from utils.process_lock import ProcessLock, ensure_single_instance, check_running_instances, kill_all_instances
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
 from core.signal_processor import SignalProcessor
@@ -19,7 +20,8 @@ from database.repository import Repository as TradingRepository
 from websocket.binance_stream import BinancePrivateStream
 from websocket.event_router import EventRouter
 from protection.trailing_stop import SmartTrailingStopManager, TrailingStopConfig
-from monitoring.health_check import HealthChecker
+from core.aged_position_manager import AgedPositionManager
+from monitoring.health_check import HealthChecker, HealthStatus
 from monitoring.performance import PerformanceTracker
 
 # Setup logging
@@ -51,6 +53,7 @@ class TradingBot:
         self.repository: Optional[TradingRepository] = None
         self.event_router = EventRouter()
         self.position_manager: Optional[PositionManager] = None
+        self.aged_position_manager: Optional[AgedPositionManager] = None
         self.signal_processor: Optional[SignalProcessor] = None
 
         # Monitoring - will be initialized after repository is ready
@@ -131,16 +134,85 @@ class TradingBot:
                     continue
                     
                 if name == 'binance':
-                    stream = BinancePrivateStream(
+                    # Check if we're on testnet
+                    is_testnet = config.testnet
+                    
+                    if is_testnet:
+                        # Use adaptive stream for testnet
+                        logger.info("🔧 Using AdaptiveStream for testnet")
+                        from websocket.adaptive_stream import AdaptiveBinanceStream
+                        
+                        # Get exchange client
+                        exchange = self.exchanges.get(name)
+                        if exchange:
+                            stream = AdaptiveBinanceStream(exchange, is_testnet=True)
+                            
+                            # Set up callbacks to integrate with existing event system
+                            async def on_price_update(symbol, price):
+                                await self._handle_stream_event('price_update', {
+                                    'symbol': symbol,
+                                    'price': price
+                                })
+                            
+                            async def on_position_update(positions):
+                                await self._handle_stream_event('position_update', positions)
+                            
+                            stream.set_callback('price_update', on_price_update)
+                            stream.set_callback('position_update', on_position_update)
+                            
+                            # Start in background
+                            asyncio.create_task(stream.start())
+                            self.websockets[name] = stream
+                            logger.info(f"✅ {name.capitalize()} AdaptiveStream ready (testnet)")
+                    else:
+                        # Use normal stream for mainnet
+                        stream = BinancePrivateStream(
+                            config.__dict__,
+                            os.getenv('BINANCE_API_KEY'),
+                            os.getenv('BINANCE_API_SECRET'),
+                            self._handle_stream_event
+                        )
+                        await stream.start()
+                        self.websockets[name] = stream
+                        logger.info(f"✅ {name.capitalize()} WebSocket ready (mainnet)")
+
+                elif name == 'bybit':
+                    # Import Bybit streams
+                    from websocket.bybit_stream import BybitPrivateStream, BybitMarketStream
+
+                    # Market data stream (always available, works on testnet and mainnet)
+                    market_symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']  # Top symbols for market data
+                    market_stream = BybitMarketStream(
                         config.__dict__,
-                        os.getenv('BINANCE_API_KEY'),
-                        os.getenv('BINANCE_API_SECRET'),
-                        self._handle_stream_event
+                        symbols=market_symbols,
+                        event_handler=self._handle_stream_event
                     )
-                    await stream.start()
-                    self.websockets[name] = stream
-                    logger.info(f"✅ {name.capitalize()} WebSocket ready")
-                # TODO: Add Bybit stream when implemented
+                    await market_stream.start()
+                    self.websockets[f'{name}_market'] = market_stream
+                    logger.info(f"✅ {name.capitalize()} Market WebSocket ready ({'testnet' if config.testnet else 'mainnet'})")
+
+                    # Private stream (only for mainnet with API keys)
+                    api_key = os.getenv('BYBIT_API_KEY')
+                    api_secret = os.getenv('BYBIT_API_SECRET')
+
+                    if not config.testnet and api_key and api_secret:
+                        try:
+                            private_stream = BybitPrivateStream(
+                                config.__dict__,
+                                api_key=api_key,
+                                api_secret=api_secret,
+                                event_handler=self._handle_stream_event
+                            )
+                            await private_stream.start()
+                            self.websockets[f'{name}_private'] = private_stream
+                            logger.info(f"✅ {name.capitalize()} Private WebSocket ready (mainnet)")
+                        except Exception as e:
+                            logger.warning(f"Failed to start Bybit private stream: {e}")
+                            logger.info("Continuing with public stream only")
+                    elif config.testnet:
+                        logger.info(f"ℹ️ Bybit private stream skipped (testnet mode)")
+                    else:
+                        logger.info(f"ℹ️ Bybit private stream skipped (no API credentials)")
 
             # Initialize position manager
             logger.info("Initializing position manager...")
@@ -150,6 +222,19 @@ class TradingBot:
                 self.repository,
                 self.event_router
             )
+            
+            # Load existing positions from database
+            logger.info("Loading positions from database...")
+            await self.position_manager.load_positions_from_db()
+
+            # Initialize aged position manager
+            logger.info("Initializing aged position manager...")
+            self.aged_position_manager = AgedPositionManager(
+                settings.trading,
+                self.position_manager,
+                self.exchanges  # Pass exchanges dict directly
+            )
+            logger.info("✅ Aged position manager ready")
 
             # Initialize signal processor
             logger.info("Initializing signal processor...")
@@ -160,9 +245,9 @@ class TradingBot:
                 self.event_router
             )
 
-            # Add stop-list symbols
-            stop_list = ['BTCDOMUSDT']  # Example
-            self.signal_processor.add_to_stop_list(stop_list)
+            # Stop-list symbols are now loaded from configuration (.env file)
+            # via SymbolFilter in signal_processor
+            logger.info("Symbol filtering configured from .env file")
 
             # Register event handlers
             self._register_event_handlers()
@@ -243,9 +328,14 @@ class TradingBot:
             # Start WebSocket streams
             stream_tasks = []
             for name, stream in self.websockets.items():
-                task = asyncio.create_task(stream.connect())
-                stream_tasks.append(task)
-                logger.info(f"Starting {name} WebSocket stream...")
+                # Check if stream has connect method (mainnet) or is already started (testnet)
+                if hasattr(stream, 'connect'):
+                    task = asyncio.create_task(stream.connect())
+                    stream_tasks.append(task)
+                    logger.info(f"Starting {name} WebSocket stream...")
+                else:
+                    # AdaptiveStream is already started in background
+                    logger.info(f"{name} AdaptiveStream already running in background")
 
             # Start signal processor
             if self.mode in ['production', 'shadow']:
@@ -255,6 +345,12 @@ class TradingBot:
             # Start monitoring
             monitor_task = asyncio.create_task(self._monitor_loop())
             health_task = asyncio.create_task(self._health_check_loop())
+
+            # Start periodic position sync
+            sync_task = None
+            if self.position_manager:
+                sync_task = asyncio.create_task(self.position_manager.start_periodic_sync())
+                logger.info("🔄 Started periodic position synchronization")
 
             # Log startup complete
             logger.info("=" * 80)
@@ -291,9 +387,25 @@ class TradingBot:
             try:
                 # Update performance metrics
                 metrics = await self._collect_metrics()
-                # Store metrics in performance tracker (update_metrics doesn't take arguments)
+                # Store metrics in performance tracker
                 if self.performance_tracker:
-                    await self.performance_tracker.update_metrics()
+                    try:
+                        await self.performance_tracker.update_metrics()
+                    except Exception as e:
+                        logger.debug(f"Performance tracker update skipped: {e}")
+
+                # Check aged positions with smart liquidation
+                if self.aged_position_manager:
+                    aged_count = await self.aged_position_manager.check_and_process_aged_positions()
+                    if aged_count > 0:
+                        stats = self.aged_position_manager.get_statistics()
+                        logger.info(f"📊 Aged positions processed: {aged_count}, "
+                                  f"breakeven: {stats['breakeven_closes']}, "
+                                  f"liquidated: {stats['gradual_liquidations']}")
+
+                # Check positions have stop loss protection
+                if self.position_manager:
+                    await self.position_manager.check_positions_protection()
 
                 # Log summary
                 if self.position_manager:
@@ -305,7 +417,7 @@ class TradingBot:
                         f"Win Rate: {stats['win_rate']:.1f}%"
                     )
 
-                await asyncio.sleep(60)  # Every minute
+                await asyncio.sleep(300)  # Every 5 minutes (optimized to reduce API calls)
 
             except asyncio.CancelledError:
                 break
@@ -321,31 +433,34 @@ class TradingBot:
                 for name, exchange in self.exchanges.items():
                     try:
                         await exchange.fetch_balance()
-                        self.health_monitor.record_check(f"exchange_{name}", True)
+                        # Exchange health OK
                     except Exception as e:
-                        self.health_monitor.record_check(f"exchange_{name}", False)
+                        logger.warning(f"Exchange {name} health check failed")
                         logger.error(f"{name} health check failed: {e}")
 
                 # Check database
                 try:
                     await self.repository.pool.fetchval("SELECT 1")
-                    self.health_monitor.record_check("database", True)
+                    # Database health OK
                 except Exception:
-                    self.health_monitor.record_check("database", False)
+                    logger.warning("Database health check failed")
 
                 # Check WebSocket streams
                 for name, stream in self.websockets.items():
                     is_healthy = stream.connected
-                    self.health_monitor.record_check(f"websocket_{name}", is_healthy)
+                    if not is_healthy:
+                        logger.warning(f"WebSocket {name} unhealthy")
 
                 # Log health status
-                if not self.health_monitor.is_healthy():
-                    logger.warning("⚠️ System health degraded")
-                    issues = self.health_monitor.get_issues()
-                    for issue in issues:
-                        logger.warning(f"  - {issue}")
+                if self.health_monitor:
+                    health_status = self.health_monitor.get_system_health()
+                    if health_status.status != HealthStatus.HEALTHY:
+                        logger.warning(f"⚠️ System health: {health_status.status.value}")
+                        issues = self.health_monitor.get_issues()
+                        for issue in issues[:5]:  # Log first 5 issues
+                            logger.warning(f"  - {issue}")
 
-                await asyncio.sleep(30)  # Every 30 seconds
+                await asyncio.sleep(300)  # Every 5 minutes (optimized to reduce API calls)
 
             except asyncio.CancelledError:
                 break
@@ -356,7 +471,7 @@ class TradingBot:
     async def _collect_metrics(self) -> Dict:
         """Collect current metrics"""
         metrics = {
-            'timestamp': datetime.now(),
+            'timestamp': datetime.now(timezone.utc),
             'mode': self.mode
         }
 
@@ -376,7 +491,8 @@ class TradingBot:
             try:
                 balance = await exchange.fetch_balance()
                 balances[name] = balance.get('USDT', {}).get('free', 0)
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to fetch balance for {name}: {e}")
                 balances[name] = 0
         metrics['balances'] = balances
 
@@ -428,8 +544,11 @@ class TradingBot:
         if self.performance_tracker:
             try:
                 # Log final metrics
-                metrics = await self.performance_tracker.update_metrics(force=True)
-                logger.info(f"Final PnL: ${getattr(metrics, 'total_pnl', 0):.2f}")
+                try:
+                    await self.performance_tracker.update_metrics()
+                    logger.info("Final metrics saved")
+                except Exception as metrics_err:
+                    logger.warning(f"Could not save final metrics: {metrics_err}")
             except Exception as e:
                 logger.error(f"Failed to save final report: {e}")
 
@@ -457,24 +576,65 @@ def main():
         default='config',
         help='Configuration directory'
     )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force start by killing existing instances'
+    )
+    parser.add_argument(
+        '--check-instances',
+        action='store_true',
+        help='Check for running instances and exit'
+    )
 
     args = parser.parse_args()
 
-    # Create bot instance
-    bot = TradingBot(args)
+    # Check for running instances
+    if args.check_instances:
+        count = check_running_instances()
+        if count > 0:
+            logger.error(f"Found {count} running instances")
+            sys.exit(1)
+        else:
+            logger.info("No running instances found")
+            sys.exit(0)
 
-    # Setup signal handlers
-    signal.signal(signal.SIGINT, bot.handle_shutdown)
-    signal.signal(signal.SIGTERM, bot.handle_shutdown)
+    # Force kill existing instances if requested
+    if args.force:
+        killed = kill_all_instances()
+        if killed > 0:
+            logger.info(f"Killed {killed} existing instances")
+            # Wait for processes to die
+            import time
+            time.sleep(2)
 
-    # Run bot
-    try:
-        asyncio.run(async_main(bot))
-    except KeyboardInterrupt:
-        logger.info("Interrupted by user")
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}", exc_info=True)
+    # Acquire process lock
+    process_lock = ProcessLock('bot.pid')
+    if not process_lock.acquire():
+        logger.error("❌ Cannot start: another instance is already running")
+        logger.error("Use --force to kill existing instances, or --check-instances to verify")
         sys.exit(1)
+
+    try:
+        # Create bot instance
+        bot = TradingBot(args)
+
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, bot.handle_shutdown)
+        signal.signal(signal.SIGTERM, bot.handle_shutdown)
+
+        # Run bot
+        try:
+            logger.info("🚀 Starting trading bot (single instance enforced)")
+            asyncio.run(async_main(bot))
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user")
+        except Exception as e:
+            logger.critical(f"Fatal error: {e}", exc_info=True)
+            sys.exit(1)
+    finally:
+        # Release process lock
+        process_lock.release()
 
 
 async def async_main(bot: TradingBot):

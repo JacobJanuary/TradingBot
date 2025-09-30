@@ -9,8 +9,8 @@ from decimal import Decimal
 from datetime import datetime, timezone
 import json
 
-from websocket.binance_stream import BinancePrivateStream as BinanceStream
-from websocket.bybit_stream import BybitStream
+from websocket.binance_stream import BinancePrivateStream
+from websocket.bybit_stream import BybitPrivateStream
 from websocket.event_router import EventRouter
 
 
@@ -26,7 +26,7 @@ class TestWebSocketStreams:
     async def binance_stream(self):
         """Create Binance WebSocket stream"""
         # Create a mock BinanceStream to ensure all required attributes
-        mock_stream = Mock(spec=BinanceStream)
+        mock_stream = Mock(spec=BinancePrivateStream)
         
         # Mock attributes
         mock_stream.callbacks = {}
@@ -57,7 +57,7 @@ class TestWebSocketStreams:
     async def bybit_stream(self):
         """Create Bybit WebSocket stream"""
         # Create a mock BybitStream to avoid abstract method issues
-        mock_stream = Mock(spec=BybitStream)
+        mock_stream = Mock(spec=BybitPrivateStream)
         
         # Mock all necessary attributes and methods
         mock_stream.callbacks = {}

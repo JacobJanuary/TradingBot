@@ -5,7 +5,7 @@ import asyncio
 import signal
 import logging
 from typing import Dict, List, Callable, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class ShutdownManager:
             return
         
         self.is_shutting_down = True
-        self.shutdown_start_time = datetime.now()
+        self.shutdown_start_time = datetime.now(timezone.utc)
         self.shutdown_event.set()
         
         logger.info("=" * 60)
@@ -125,7 +125,7 @@ class ShutdownManager:
         finally:
             # Calculate shutdown duration
             self.shutdown_stats['duration'] = (
-                datetime.now() - self.shutdown_start_time
+                datetime.now(timezone.utc) - self.shutdown_start_time
             ).total_seconds()
             
             # Log shutdown statistics
@@ -148,7 +148,7 @@ class ShutdownManager:
             logger.info(f"\nExecuting {priority.name} priority tasks ({len(tasks)} tasks)")
             
             # Calculate time budget for this priority level
-            elapsed = (datetime.now() - self.shutdown_start_time).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - self.shutdown_start_time).total_seconds()
             remaining_time = max(self.timeout - elapsed, 1)
             
             # Higher priority tasks get more time
@@ -172,7 +172,7 @@ class ShutdownManager:
                 completed += 1
             
             # Check if we're running out of time
-            elapsed = (datetime.now() - self.shutdown_start_time).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - self.shutdown_start_time).total_seconds()
             if elapsed > self.timeout * 0.9:
                 logger.warning("Running out of time - skipping lower priority tasks")
                 break
@@ -252,8 +252,10 @@ class ShutdownManager:
                 try:
                     await asyncio.wait_for(task(), timeout=1)
                     logger.info(f"  ✅ {task.__name__}")
-                except:
-                    logger.error(f"  ❌ {task.__name__} failed")
+                except asyncio.TimeoutError:
+                    logger.error(f"  ⏱️ {task.__name__} timed out")
+                except Exception as e:
+                    logger.error(f"  ❌ {task.__name__} failed: {e}", exc_info=True)
     
     def _log_shutdown_stats(self):
         """Log shutdown statistics"""

@@ -229,27 +229,48 @@ class ImprovedStream(ABC):
                 self.session = None
     
     async def _reconnect(self):
-        """Reconnect WebSocket"""
+        """Reconnect WebSocket - CRITICAL FIX: Immediate reconnection"""
         if self.state == ConnectionState.RECONNECTING:
+            logger.warning(f"Already reconnecting {self.name}")
             return
-        
-        logger.info(f"Reconnecting {self.name} WebSocket...")
-        
+
+        logger.critical(f"🔄 IMMEDIATE RECONNECT initiated for {self.name}")
+
         self.state = ConnectionState.RECONNECTING
         self.stats['reconnections'] += 1
-        
-        # Cancel current tasks
-        if self.receive_task:
-            self.receive_task.cancel()
-        if self.heartbeat_task:
-            self.heartbeat_task.cancel()
-        
-        # Close current connection
-        if self.ws and not self.ws.closed:
-            await self.ws.close()
-        
-        # Mark as disconnected and let monitor handle reconnection
+
+        # Cancel current tasks immediately
+        tasks_to_cancel = []
+        if self.receive_task and not self.receive_task.done():
+            tasks_to_cancel.append(self.receive_task)
+        if self.heartbeat_task and not self.heartbeat_task.done():
+            tasks_to_cancel.append(self.heartbeat_task)
+
+        for task in tasks_to_cancel:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        # Force close current connection
+        if self.ws:
+            try:
+                await asyncio.wait_for(self.ws.close(), timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.error("WebSocket close timeout - forcing closure")
+            except Exception as e:
+                logger.error(f"Error closing WebSocket: {e}")
+            finally:
+                self.ws = None
+
+        # Reset state for immediate reconnection
         self.state = ConnectionState.DISCONNECTED
+        self.last_pong = datetime.now()  # Reset pong timer
+        self.last_heartbeat = datetime.now()  # Reset heartbeat timer
+        self.consecutive_errors = 0  # Reset error counter
+
+        logger.info(f"✅ {self.name} ready for reconnection")
     
     async def _receive_loop(self):
         """Receive and process messages"""
@@ -331,10 +352,17 @@ class ImprovedStream(ABC):
             logger.warning(f"No heartbeat for {time_since_heartbeat:.0f}s")
             return False
         
-        # Check last pong
+        # Check last pong - CRITICAL FIX: Force reconnect if no pong
         time_since_pong = (datetime.now() - self.last_pong).total_seconds()
+
+        # IMMEDIATE reconnect if no pong for 120 seconds
+        if time_since_pong > 120:
+            logger.critical(f"🔴 CRITICAL: No pong for {time_since_pong:.0f}s - FORCE RECONNECT!")
+            return False  # This will trigger immediate reconnection
+
+        # Warning if no pong for 2x heartbeat timeout
         if time_since_pong > self.heartbeat_timeout * 2:
-            logger.warning(f"No pong response for {time_since_pong:.0f}s")
+            logger.warning(f"⚠️ No pong response for {time_since_pong:.0f}s - connection degraded")
             return False
         
         # Check error rate
@@ -366,10 +394,26 @@ class ImprovedStream(ABC):
             logger.error(f"Failed to send message: {e}")
             return False
     
+    def _limit_cache(self, cache: Dict, max_size: int = None) -> None:
+        """
+        Simple cache limiter - removes oldest entries when size exceeded
+
+        Args:
+            cache: Dictionary to limit
+            max_size: Maximum size (uses self.max_cache_size if not provided)
+        """
+        if max_size is None:
+            max_size = getattr(self, 'max_cache_size', 100)
+
+        while len(cache) > max_size:
+            # Remove oldest entry (FIFO)
+            oldest_key = next(iter(cache))
+            del cache[oldest_key]
+
     def get_stats(self) -> Dict:
         """Get connection statistics"""
         stats = self.stats.copy()
-        
+
         if self.stats['connected_at']:
             if self.state == ConnectionState.CONNECTED:
                 uptime = (datetime.now() - self.stats['connected_at']).total_seconds()
@@ -378,8 +422,8 @@ class ImprovedStream(ABC):
             else:
                 uptime = 0
             stats['uptime_seconds'] = uptime
-        
+
         stats['state'] = self.state.value
         stats['reconnect_count'] = self.reconnect_count
-        
+
         return stats

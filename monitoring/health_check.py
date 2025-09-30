@@ -531,3 +531,63 @@ class HealthChecker:
     async def force_health_check(self) -> SystemHealth:
         """Force immediate health check"""
         return await self.check_system_health()
+
+    def get_system_health(self) -> SystemHealth:
+        """Get current system health status"""
+        if not self.system_health:
+            # Return default unhealthy status if no checks performed
+            return SystemHealth(
+                status=HealthStatus.UNHEALTHY,
+                components=[],
+                checks_passed=0,
+                checks_failed=0,
+                last_check=datetime.now(timezone.utc),
+                alerts=["No health checks performed yet"]
+            )
+        return self.system_health
+
+    def get_issues(self) -> List[str]:
+        """Get current system issues"""
+        issues = []
+
+        if not self.system_health:
+            return ["Health monitoring not initialized"]
+
+        # Add component issues
+        for component in self.system_health.components:
+            if component.status != HealthStatus.HEALTHY:
+                issue = f"{component.name}: {component.status.value}"
+                if component.error_message:
+                    issue += f" - {component.error_message}"
+                issues.append(issue)
+
+        # Add alerts
+        issues.extend(self.system_health.alerts)
+
+        # Add consecutive failure warnings
+        for comp_type, count in self.consecutive_failures.items():
+            if count >= 3:
+                issues.append(f"{comp_type.value}: {count} consecutive failures")
+
+        return issues
+
+    def record_error(self, error_data: Dict[str, Any]):
+        """Record an error for health tracking"""
+        try:
+            component_name = error_data.get('component', 'unknown')
+            error_msg = error_data.get('error', 'Unknown error')
+
+            # Find component type
+            comp_type = None
+            for ct in ComponentType:
+                if ct.value == component_name:
+                    comp_type = ct
+                    break
+
+            if comp_type and comp_type in self.consecutive_failures:
+                self.consecutive_failures[comp_type] += 1
+
+            logger.debug(f"Error recorded for {component_name}: {error_msg}")
+
+        except Exception as e:
+            logger.error(f"Failed to record error: {e}")
