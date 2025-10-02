@@ -142,6 +142,9 @@ class PositionManager:
         # Periodic sync task
         self.sync_task = None
         self.sync_interval = 600  # 10 minutes (optimized to reduce API calls)
+        self.zombie_check_counter = 0  # Counter for tracking zombie checks
+        self.last_zombie_count = 0  # Track last zombie count for trend monitoring
+        self.aggressive_cleanup_threshold = 10  # Trigger aggressive cleanup if > 10 zombies
 
         logger.info("PositionManager initialized")
 
@@ -594,27 +597,48 @@ class PositionManager:
 
         return False
 
-    async def has_open_position(self, symbol: str) -> bool:
+    async def has_open_position(self, symbol: str, exchange: str = None) -> bool:
         """
         Public method to check if position exists for symbol.
         Used by WaveSignalProcessor for duplicate detection.
 
         Args:
             symbol: Trading symbol to check
+            exchange: Specific exchange to check (e.g., 'binance', 'bybit').
+                     If None, checks all exchanges.
 
         Returns:
             bool: True if open position exists
         """
-        # Quick check in local cache
-        if symbol in self.positions:
-            return True
+        # If specific exchange provided, check only that exchange
+        if exchange:
+            # Normalize exchange name (binance, bybit, etc)
+            exchange_lower = exchange.lower()
 
-        # Check all exchanges if not in cache
-        for exchange_name in self.exchanges.keys():
-            if await self._position_exists(symbol, exchange_name):
+            # Check in local cache for specific exchange
+            for pos_symbol, position in self.positions.items():
+                if pos_symbol == symbol and position.exchange.lower() == exchange_lower:
+                    return True
+
+            # Check on specific exchange
+            if exchange in self.exchanges:
+                return await self._position_exists(symbol, exchange)
+            else:
+                logger.warning(f"Exchange {exchange} not found in configured exchanges")
+                return False
+
+        # Original behavior: check all exchanges if no specific exchange provided
+        else:
+            # Quick check in local cache
+            if symbol in self.positions:
                 return True
 
-        return False
+            # Check all exchanges if not in cache
+            for exchange_name in self.exchanges.keys():
+                if await self._position_exists(symbol, exchange_name):
+                    return True
+
+            return False
 
     async def _validate_risk_limits(self, request: PositionRequest) -> bool:
         """Validate risk management rules"""
@@ -739,18 +763,43 @@ class PositionManager:
 
         try:
             # Check if stop loss already exists by checking open orders
-            existing_orders = await exchange.exchange.fetch_open_orders(position.symbol)
+            # FIXED: Use exchange manager method that returns OrderResult objects
+            existing_orders = await exchange.fetch_open_orders(position.symbol)
 
             # Determine order side (opposite of position)
             order_side = 'sell' if position.side == 'long' else 'buy'
 
-            # Check for existing stop loss orders
-            existing_stop_orders = [
-                o for o in existing_orders
-                if o.get('side') == order_side and
-                   o.get('type') in ['stop', 'stop_market', 'market'] and
-                   abs(float(o.get('amount', 0)) - float(position.quantity)) < 0.01
-            ]
+            # Check for existing stop loss orders - FIXED to handle OrderResult properly
+            existing_stop_orders = []
+            for o in existing_orders:
+                # Handle both OrderResult objects and dicts
+                if hasattr(o, '__dict__'):
+                    # OrderResult object - convert to dict
+                    o_dict = o.__dict__
+                else:
+                    # Already a dict
+                    o_dict = o
+
+                o_side = o_dict.get('side', '') if isinstance(o_dict, dict) else getattr(o, 'side', '')
+                o_type = o_dict.get('type', '') if isinstance(o_dict, dict) else getattr(o, 'type', '')
+                o_amount = float(o_dict.get('amount', 0) if isinstance(o_dict, dict) else getattr(o, 'amount', 0))
+                o_stop_type = o_dict.get('stopOrderType', '') if isinstance(o_dict, dict) else getattr(o, 'stopOrderType', '')
+                o_trigger = float(o_dict.get('triggerPrice', 0) if isinstance(o_dict, dict) else getattr(o, 'triggerPrice', 0))
+                o_reduce = o_dict.get('reduceOnly', False) if isinstance(o_dict, dict) else getattr(o, 'reduceOnly', False)
+
+                # Proper stop loss detection for Bybit
+                is_stop_loss = (
+                    o_side == order_side and
+                    abs(o_amount - float(position.quantity)) < 0.01 and
+                    (
+                        (o_stop_type and o_stop_type not in ['', 'UNKNOWN']) or  # Has stop order type
+                        o_trigger > 0 or  # Has trigger price
+                        (o_type in ['stop', 'stop_market'] and o_reduce)  # Stop with reduce only
+                    )
+                )
+
+                if is_stop_loss:
+                    existing_stop_orders.append(o)
 
             if existing_stop_orders:
                 logger.info(f"📌 Stop loss already exists for {position.symbol}")
@@ -760,11 +809,21 @@ class PositionManager:
                 if len(existing_stop_orders) > 1:
                     logger.warning(f"⚠️ Multiple stop orders found, cleaning up duplicates")
                     # Sort by timestamp and cancel all but the latest
-                    existing_stop_orders.sort(key=lambda x: x.get('datetime', ''), reverse=True)
+                    def get_datetime(order):
+                        if hasattr(order, '__dict__'):
+                            return order.__dict__.get('datetime', '') if hasattr(order.__dict__, 'get') else getattr(order, 'datetime', '')
+                        return order.get('datetime', '')
+
+                    existing_stop_orders.sort(key=get_datetime, reverse=True)
                     for old_order in existing_stop_orders[1:]:
                         try:
-                            await exchange.exchange.cancel_order(old_order['id'], position.symbol)
-                            logger.info(f"  ✅ Cancelled duplicate order {old_order['id']}")
+                            # Extract order ID properly
+                            order_id = old_order.__dict__.get('id') if hasattr(old_order, '__dict__') else old_order.get('id')
+                            if not order_id and hasattr(old_order, 'id'):
+                                order_id = old_order.id
+
+                            await exchange.exchange.cancel_order(order_id, position.symbol)
+                            logger.info(f"  ✅ Cancelled duplicate order {order_id}")
                         except Exception as cancel_error:
                             logger.error(f"  ❌ Failed to cancel duplicate: {cancel_error}")
 
@@ -936,31 +995,48 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Error cancelling order: {e}")
     
-    async def _place_limit_close_order(self, symbol: str, position: PositionState, 
+    async def _place_limit_close_order(self, symbol: str, position: PositionState,
                                        target_price: float, reason: str):
         """Place a limit order to close position at target price"""
         exchange = self.exchanges.get(position.exchange)
         if not exchange:
             logger.error(f"Exchange {position.exchange} not available")
             return
-        
+
         try:
-            # Determine order side (opposite to position)
-            order_side = 'sell' if position.side == 'long' else 'buy'
-            
-            # Place limit order
-            order = await exchange.exchange.create_order(
-                symbol=symbol,
-                type='limit',
-                side=order_side,
-                amount=position.quantity,
-                price=to_decimal(target_price),
-                params={
-                    'reduceOnly': True,  # Only close position, don't open new
-                    'postOnly': True,     # Maker order only
-                    'timeInForce': 'GTC'  # Good till cancelled
-                }
-            )
+            # Import enhanced manager if available, fallback to standard
+            try:
+                from core.exchange_manager_enhanced import EnhancedExchangeManager
+
+                # Create enhanced manager wrapper
+                enhanced_manager = EnhancedExchangeManager(exchange.exchange)
+
+                # Determine order side (opposite to position)
+                order_side = 'sell' if position.side == 'long' else 'buy'
+
+                # Use enhanced manager with duplicate checking
+                order = await enhanced_manager.create_limit_exit_order(
+                    symbol=symbol,
+                    side=order_side,
+                    amount=float(position.quantity),
+                    price=float(target_price),
+                    check_duplicates=True  # CRITICAL: Prevent duplicates!
+                )
+
+            except ImportError:
+                # Fallback to standard method if enhanced not available
+                logger.warning("Enhanced ExchangeManager not available, using standard method")
+
+                # Determine order side (opposite to position)
+                order_side = 'sell' if position.side == 'long' else 'buy'
+
+                # Place limit order through standard exchange manager
+                order = await exchange.create_limit_order(
+                    symbol=symbol,
+                    side=order_side,
+                    amount=position.quantity,
+                    price=target_price
+                )
             
             if order and order.get('id'):
                 logger.info(
@@ -1082,18 +1158,38 @@ class PositionManager:
                 # Check if stop loss order actually exists on exchange
                 has_sl_on_exchange = False
                 try:
-                    # Get all orders for this symbol
+                    # Get all orders for this symbol - returns List[OrderResult]
                     orders = await exchange.fetch_open_orders(symbol)
 
-                    # Check for stop-loss orders
+                    # Check for stop-loss orders - FIXED to handle OrderResult objects
                     for order in orders:
-                        # Bybit stop-loss appears as market order with price=0
-                        if order['type'] == 'market' and order.get('price', 1) == 0:
+                        # OrderResult is an object, not dict - access attributes properly
+                        order_dict = order.__dict__ if hasattr(order, '__dict__') else order
+
+                        # For Bybit: Check stopOrderType and triggerPrice
+                        stop_order_type = order_dict.get('stopOrderType', '') if isinstance(order_dict, dict) else getattr(order, 'stopOrderType', '')
+                        trigger_price = float(order_dict.get('triggerPrice', 0) if isinstance(order_dict, dict) else getattr(order, 'triggerPrice', 0))
+                        order_type = order_dict.get('type', '') if isinstance(order_dict, dict) else getattr(order, 'type', '')
+                        reduce_only = order_dict.get('reduceOnly', False) if isinstance(order_dict, dict) else getattr(order, 'reduceOnly', False)
+
+                        # CRITICAL: Proper stop-loss detection
+                        # Import order utils for correct detection
+                        try:
+                            from core.order_utils import is_stop_loss_order
+                            # Use proper detection logic
+                            is_stop_loss = is_stop_loss_order(order)
+                        except ImportError:
+                            # Fallback to improved logic if utils not available
+                            # Stop-loss MUST have stop characteristics, not just reduceOnly
+                            is_stop_loss = (
+                                (stop_order_type and stop_order_type not in ['', 'UNKNOWN']) and  # Has stop order type
+                                (trigger_price > 0 or  # Has trigger price
+                                 ('stop' in order_type.lower() and reduce_only))  # Is stop order with reduce only
+                            )
+
+                        if is_stop_loss:
                             has_sl_on_exchange = True
-                            break
-                        # Also check for stop orders
-                        if 'stop' in str(order.get('type', '')).lower():
-                            has_sl_on_exchange = True
+                            logger.debug(f"Found stop-loss for {symbol}: type={stop_order_type}, trigger={trigger_price}")
                             break
 
                 except Exception as e:
@@ -1276,89 +1372,240 @@ class PositionManager:
             logger.error(f"Error in zombie position handling: {e}", exc_info=True)
 
     async def cleanup_zombie_orders(self):
-        """Clean up zombie orders (orders without corresponding positions)"""
+        """
+        Enhanced zombie order cleanup using specialized cleaners:
+        - BybitZombieOrderCleaner for Bybit exchanges
+        - BinanceZombieManager for Binance exchanges with weight-based rate limiting
+        Falls back to basic cleanup for other exchanges
+        """
         try:
-            logger.info("🧹 Checking for zombie orders...")
-            zombie_orders_found = False
+            cleanup_start_time = asyncio.get_event_loop().time()
+            logger.info("🧹 Starting enhanced zombie order cleanup...")
+            logger.info(f"📊 Cleanup interval: {self.sync_interval} seconds")
+            total_zombies_cleaned = 0
+            total_zombies_found = 0
 
             for exchange_name, exchange in self.exchanges.items():
                 try:
-                    # Get all open orders from exchange
-                    open_orders = await exchange.exchange.fetch_open_orders()
+                    # Use specialized cleaner for Bybit
+                    if 'bybit' in exchange_name.lower():
+                        # Import and use the advanced Bybit cleaner
+                        try:
+                            from core.bybit_zombie_cleaner import BybitZombieOrderCleaner
 
-                    # Get current positions
-                    positions = await exchange.fetch_positions()
-                    position_symbols = {p.symbol for p in positions if p.quantity > 0}
+                            # Initialize the cleaner with the exchange
+                            cleaner = BybitZombieOrderCleaner(exchange.exchange)
 
-                    # Find zombie orders (orders for symbols without positions)
-                    zombie_orders = []
-                    for order in open_orders:
-                        symbol = order.get('symbol')
-                        order_type = order.get('type', '').lower()
+                            # Run comprehensive cleanup
+                            logger.info(f"🔧 Running advanced Bybit zombie cleanup for {exchange_name}")
+                            results = await cleaner.cleanup_zombie_orders(
+                                symbols=None,  # Check all symbols
+                                category="linear",  # For perpetual futures
+                                dry_run=False  # Actually cancel orders
+                            )
 
-                        # Check if this is a limit order for a symbol without position
-                        if symbol and symbol not in position_symbols:
-                            # Skip stop orders as they might be protective orders
-                            if 'stop' not in order_type and 'limit' in order_type:
-                                zombie_orders.append(order)
+                            # Log results
+                            if results['zombies_found'] > 0:
+                                logger.warning(
+                                    f"🧟 Bybit: Found {results['zombies_found']} zombies, "
+                                    f"cancelled {results['zombies_cancelled']}, "
+                                    f"TP/SL cleared: {results.get('tpsl_cleared', 0)}"
+                                )
+                                total_zombies_found += results['zombies_found']
+                                total_zombies_cleaned += results['zombies_cancelled']
 
-                    if zombie_orders:
-                        zombie_orders_found = True
-                        logger.warning(f"🧟 Found {len(zombie_orders)} zombie orders on {exchange_name}")
+                                # Log individual zombie details for monitoring
+                                logger.info(f"📈 Zombie cleanup metrics for {exchange_name}:")
+                                logger.info(f"  - Detection rate: {results['zombies_found']}/{results.get('total_scanned', 0)} orders")
+                                logger.info(f"  - Cleanup success rate: {results['zombies_cancelled']}/{results['zombies_found']}")
+                                logger.info(f"  - Errors: {len(results.get('errors', []))}")
+                            else:
+                                logger.debug(f"✨ No zombie orders found on {exchange_name}")
 
-                        # Cancel zombie orders
-                        for order in zombie_orders:
-                            try:
-                                symbol = order.get('symbol')
-                                order_id = order.get('id')
-                                order_side = order.get('side')
-                                order_amount = order.get('amount', 0)
+                            # Print detailed stats
+                            if results.get('errors'):
+                                logger.error(f"⚠️ Errors during cleanup: {results['errors'][:3]}")
 
-                                logger.info(f"Cancelling zombie order: {symbol} {order_side} {order_amount} (ID: {order_id})")
-                                await exchange.exchange.cancel_order(order_id, symbol)
-                                logger.info(f"✅ Cancelled zombie order {order_id} for {symbol}")
+                        except ImportError as ie:
+                            logger.warning(f"BybitZombieOrderCleaner not available, using basic cleanup: {ie}")
+                            # Fall back to basic cleanup for Bybit
+                            await self._basic_zombie_cleanup(exchange_name, exchange)
 
-                                # Small delay to avoid rate limits
-                                await asyncio.sleep(0.5)
+                    # Use specialized cleaner for Binance
+                    elif 'binance' in exchange_name.lower():
+                        try:
+                            from core.binance_zombie_manager import BinanceZombieIntegration
 
-                            except Exception as cancel_error:
-                                logger.error(f"Failed to cancel zombie order {order.get('id')}: {cancel_error}")
+                            # Initialize the Binance zombie manager integration
+                            integration = BinanceZombieIntegration(exchange.exchange)
 
-                    # Also check for orphaned stop orders (stop orders for non-existent positions)
-                    stop_orders = [o for o in open_orders if 'stop' in o.get('type', '').lower()]
-                    orphaned_stops = []
+                            # Enable zombie protection with advanced features
+                            logger.info(f"🔧 Running advanced Binance zombie cleanup for {exchange_name}")
+                            await integration.enable_zombie_protection()
 
-                    for order in stop_orders:
-                        symbol = order.get('symbol')
-                        if symbol and symbol not in position_symbols:
-                            orphaned_stops.append(order)
+                            # Perform cleanup
+                            results = await integration.cleanup_zombies(dry_run=False)
 
-                    if orphaned_stops:
-                        zombie_orders_found = True
-                        logger.warning(f"🛑 Found {len(orphaned_stops)} orphaned stop orders on {exchange_name}")
+                            # Log results
+                            if results['zombie_orders_found'] > 0:
+                                logger.warning(
+                                    f"🧟 Binance: Found {results['zombie_orders_found']} zombies, "
+                                    f"cancelled {results['zombie_orders_cancelled']}, "
+                                    f"OCO handled: {results.get('oco_orders_handled', 0)}"
+                                )
+                                total_zombies_found += results['zombie_orders_found']
+                                total_zombies_cleaned += results['zombie_orders_cancelled']
 
-                        for order in orphaned_stops:
-                            try:
-                                symbol = order.get('symbol')
-                                order_id = order.get('id')
+                                # Log metrics
+                                logger.info(f"📈 Zombie cleanup metrics for {exchange_name}:")
+                                logger.info(f"  - Empty responses mitigated: {results.get('empty_responses_mitigated', 0)}")
+                                logger.info(f"  - API weight used: {results.get('weight_used', 0)}")
+                                logger.info(f"  - Async delays detected: {results.get('async_delays_detected', 0)}")
+                                logger.info(f"  - Errors: {len(results.get('errors', []))}")
+                            else:
+                                logger.debug(f"✨ No zombie orders found on {exchange_name}")
 
-                                logger.info(f"Cancelling orphaned stop order for {symbol} (ID: {order_id})")
-                                await exchange.exchange.cancel_order(order_id, symbol)
-                                logger.info(f"✅ Cancelled orphaned stop order {order_id}")
+                            # Check if weight limit is approaching
+                            if results.get('weight_used', 0) > 900:
+                                logger.warning(f"⚠️ Binance API weight high: {results['weight_used']}/1200")
 
-                                await asyncio.sleep(0.5)
+                        except ImportError as ie:
+                            logger.warning(f"BinanceZombieManager not available, using basic cleanup: {ie}")
+                            # Fall back to basic cleanup for Binance
+                            await self._basic_zombie_cleanup(exchange_name, exchange)
 
-                            except Exception as cancel_error:
-                                logger.error(f"Failed to cancel orphaned stop order {order.get('id')}: {cancel_error}")
+                    else:
+                        # Use basic cleanup for other exchanges
+                        cleaned = await self._basic_zombie_cleanup(exchange_name, exchange)
+                        if cleaned > 0:
+                            total_zombies_found += cleaned
+                            total_zombies_cleaned += cleaned
 
                 except Exception as exchange_error:
                     logger.error(f"Error cleaning zombie orders on {exchange_name}: {exchange_error}")
 
-            if not zombie_orders_found:
-                logger.info("✨ No zombie orders found")
+            # Log final summary with timing
+            cleanup_duration = asyncio.get_event_loop().time() - cleanup_start_time
+
+            # Update zombie tracking
+            self.zombie_check_counter += 1
+            self.last_zombie_count = total_zombies_found
+
+            if total_zombies_found > 0:
+                logger.warning(f"⚠️ ZOMBIE CLEANUP SUMMARY:")
+                logger.warning(f"  🧟 Total found: {total_zombies_found}")
+                logger.warning(f"  ✅ Total cleaned: {total_zombies_cleaned}")
+                logger.warning(f"  ❌ Failed to clean: {total_zombies_found - total_zombies_cleaned}")
+                logger.warning(f"  ⏱️ Duration: {cleanup_duration:.2f} seconds")
+                logger.warning(f"  📊 Check #: {self.zombie_check_counter}")
+
+                # Alert and adjust if too many zombies
+                if total_zombies_found > self.aggressive_cleanup_threshold:
+                    logger.critical(f"🚨 HIGH ZOMBIE COUNT DETECTED: {total_zombies_found} zombies!")
+                    logger.critical(f"🔄 Temporarily reducing sync interval from {self.sync_interval}s to 300s")
+
+                    # Temporarily reduce sync interval to clean up faster
+                    self.sync_interval = min(300, self.sync_interval)  # Max 5 minutes for emergency cleanup
+
+                    logger.critical("📢 Manual intervention may be required - check exchange UI")
+                elif total_zombies_found > 5:
+                    logger.warning(f"⚠️ Moderate zombie count: {total_zombies_found}")
+                    # Slightly reduce interval if persistent zombies
+                    if self.sync_interval > 300:
+                        self.sync_interval = 450  # 7.5 minutes
+                        logger.info(f"📉 Reduced sync interval to {self.sync_interval}s")
+            else:
+                logger.info(f"✨ No zombie orders found (check #{self.zombie_check_counter}, duration: {cleanup_duration:.2f}s)")
+
+                # Gradually increase interval if no zombies found for multiple checks
+                if self.zombie_check_counter > 3 and self.last_zombie_count == 0:
+                    if self.sync_interval < 600:
+                        self.sync_interval = min(600, self.sync_interval + 60)
+                        logger.info(f"📈 Increased sync interval back to {self.sync_interval}s")
 
         except Exception as e:
-            logger.error(f"Error in zombie order cleanup: {e}")
+            logger.error(f"Error in enhanced zombie order cleanup: {e}")
+
+    async def _basic_zombie_cleanup(self, exchange_name: str, exchange) -> int:
+        """
+        Basic zombie order cleanup for non-Bybit exchanges
+        Returns number of orders cancelled
+        """
+        cancelled_count = 0
+
+        try:
+            # Get all open orders from exchange
+            open_orders = await exchange.exchange.fetch_open_orders()
+
+            # Get current positions
+            positions = await exchange.fetch_positions()
+            position_symbols = {p.get('symbol') for p in positions if p.get('contracts', 0) > 0}
+
+            # Find zombie orders (orders for symbols without positions)
+            zombie_orders = []
+            for order in open_orders:
+                symbol = order.get('symbol')
+                order_type = order.get('type', '').lower()
+
+                # Check if this is a limit order for a symbol without position
+                if symbol and symbol not in position_symbols:
+                    # Skip stop orders as they might be protective orders
+                    if 'stop' not in order_type and 'limit' in order_type:
+                        zombie_orders.append(order)
+
+            if zombie_orders:
+                logger.warning(f"🧟 Found {len(zombie_orders)} zombie orders on {exchange_name}")
+
+                # Cancel zombie orders
+                for order in zombie_orders:
+                    try:
+                        symbol = order.get('symbol')
+                        order_id = order.get('id')
+                        order_side = order.get('side')
+                        order_amount = order.get('amount', 0)
+
+                        logger.info(f"Cancelling zombie order: {symbol} {order_side} {order_amount} (ID: {order_id})")
+                        await exchange.exchange.cancel_order(order_id, symbol)
+                        logger.info(f"✅ Cancelled zombie order {order_id} for {symbol}")
+                        cancelled_count += 1
+
+                        # Small delay to avoid rate limits
+                        await asyncio.sleep(0.5)
+
+                    except Exception as cancel_error:
+                        logger.error(f"Failed to cancel zombie order {order.get('id')}: {cancel_error}")
+
+            # Also check for orphaned stop orders
+            stop_orders = [o for o in open_orders if 'stop' in o.get('type', '').lower()]
+            orphaned_stops = []
+
+            for order in stop_orders:
+                symbol = order.get('symbol')
+                if symbol and symbol not in position_symbols:
+                    orphaned_stops.append(order)
+
+            if orphaned_stops:
+                logger.warning(f"🛑 Found {len(orphaned_stops)} orphaned stop orders on {exchange_name}")
+
+                for order in orphaned_stops:
+                    try:
+                        symbol = order.get('symbol')
+                        order_id = order.get('id')
+
+                        logger.info(f"Cancelling orphaned stop order for {symbol} (ID: {order_id})")
+                        await exchange.exchange.cancel_order(order_id, symbol)
+                        logger.info(f"✅ Cancelled orphaned stop order {order_id}")
+                        cancelled_count += 1
+
+                        await asyncio.sleep(0.5)
+
+                    except Exception as cancel_error:
+                        logger.error(f"Failed to cancel orphaned stop order {order.get('id')}: {cancel_error}")
+
+        except Exception as e:
+            logger.error(f"Error in basic zombie cleanup for {exchange_name}: {e}")
+
+        return cancelled_count
 
     def get_statistics(self) -> Dict:
         """Get current statistics"""
@@ -1375,5 +1622,11 @@ class PositionManager:
             'total_pnl': to_decimal(self.stats['total_pnl']),
             'win_rate': win_rate,
             'wins': self.stats['win_count'],
+            'zombie_cleanup': {
+                'checks_performed': self.zombie_check_counter,
+                'last_zombie_count': self.last_zombie_count,
+                'current_sync_interval': self.sync_interval,
+                'aggressive_threshold': self.aggressive_cleanup_threshold
+            },
             'losses': self.stats['loss_count']
         }

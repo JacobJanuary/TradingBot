@@ -237,16 +237,27 @@ class SignalProcessor:
 
         # Use wave processor to handle duplicates and get final signals
         result = await self.wave_processor.process_wave_signals(signals_found, wave_timestamp)
-        final_signals = result['signals']
-        stats = result['stats']
 
-        logger.info(f"After duplicate filtering: {len(final_signals)} signals to execute (from {len(signals_found)} total, "
-                   f"{stats.duplicates_filtered} duplicates replaced from buffer)")
+        # Extract successful signals for execution
+        final_signals = result.get('successful', [])
+        failed_signals = result.get('failed', [])
+        skipped_signals = result.get('skipped', [])
 
-        # Execute final signals
-        for idx, signal in enumerate(final_signals):
+        logger.info(
+            f"Wave processing results: "
+            f"✅ {len(final_signals)} to execute, "
+            f"❌ {len(failed_signals)} failed, "
+            f"⏭️ {len(skipped_signals)} skipped "
+            f"(from {len(signals_found)} total signals)"
+        )
+
+        # Execute successful signals
+        for idx, signal_result in enumerate(final_signals):
             if not self.running:
                 break
+
+            # Extract the original signal data from the result
+            signal = signal_result.get('signal_data') if isinstance(signal_result, dict) else signal_result
 
             logger.info(f"Executing signal {idx+1}/{len(final_signals)}")
             await self._process_signal(signal)
@@ -256,16 +267,15 @@ class SignalProcessor:
             if len(final_signals) > 1:
                 await asyncio.sleep(1)
 
-        # Log wave statistics
-        wave_stats = self.wave_processor.wave_stats.get(wave_timestamp)
-        if wave_stats:
-            logger.info(
-                f"Wave {wave_timestamp} complete:\n"
-                f"  • Processed: {len(final_signals)}/{len(signals_found)} signals\n"
-                f"  • Duplicates filtered: {wave_stats.duplicates_filtered}\n"
-                f"  • Buffer replacements: {wave_stats.buffer_replacements}\n"
-                f"  • Buffer exhausted: {wave_stats.buffer_exhausted}"
-            )
+        # Log wave completion
+        logger.info(
+            f"Wave {wave_timestamp} complete:\n"
+            f"  • Total signals found: {len(signals_found)}\n"
+            f"  • Successfully executed: {len(final_signals)}\n"
+            f"  • Failed: {len(failed_signals)}\n"
+            f"  • Skipped (duplicates): {len(skipped_signals)}\n"
+            f"  • Success rate: {result.get('success_rate', 0):.1%}"
+        )
         return True
 
     async def _fetch_wave_signals(self, wave_time: datetime) -> List[Dict]:
