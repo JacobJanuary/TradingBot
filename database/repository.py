@@ -483,6 +483,70 @@ class Repository:
         """Get last signal time"""
         return None
     
+    async def get_open_positions_by_exchange(self, exchange: str) -> List[Dict]:
+        """Get all open positions for a specific exchange"""
+        query = """
+            SELECT p.*
+            FROM fas.position p
+            WHERE p.exchange = $1
+            AND p.status = 'open'
+        """
+
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(query, exchange)
+            return [dict(row) for row in rows] if rows else []
+
+    async def close_position(self, position_id: int, close_price: float,
+                            pnl: float, pnl_percentage: float, reason: str = None) -> bool:
+        """Close a position with final details"""
+        query = """
+            UPDATE fas.position
+            SET status = 'closed',
+                closed_at = NOW(),
+                current_price = $2,
+                pnl = $3,
+                pnl_percentage = $4,
+                notes = COALESCE(notes, '') || ' | Closed: ' || $5
+            WHERE id = $1
+        """
+
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                query,
+                position_id,
+                close_price,
+                pnl,
+                pnl_percentage,
+                reason or 'MANUAL'
+            )
+            return True
+
+    async def update_position(self, position_id: int, **kwargs) -> bool:
+        """Update position with arbitrary fields"""
+        # Build dynamic UPDATE query
+        set_clauses = []
+        values = []
+        param_count = 1
+
+        for key, value in kwargs.items():
+            set_clauses.append(f"{key} = ${param_count}")
+            values.append(value)
+            param_count += 1
+
+        if not set_clauses:
+            return False
+
+        query = f"""
+            UPDATE fas.position
+            SET {', '.join(set_clauses)}, updated_at = NOW()
+            WHERE id = ${param_count}
+        """
+        values.append(position_id)
+
+        async with self.pool.acquire() as conn:
+            await conn.execute(query, *values)
+            return True
+
     async def find_duplicate_positions(self) -> List[Any]:
         """Find duplicate positions"""
         return []
