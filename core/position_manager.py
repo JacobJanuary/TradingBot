@@ -148,9 +148,73 @@ class PositionManager:
 
         logger.info("PositionManager initialized")
 
+    async def synchronize_with_exchanges(self):
+        """Synchronize database positions with exchange reality"""
+        try:
+            from core.position_synchronizer import PositionSynchronizer
+
+            logger.info("🔄 Synchronizing positions with exchanges...")
+
+            synchronizer = PositionSynchronizer(
+                repository=self.repository,
+                exchanges=self.exchanges
+            )
+
+            results = await synchronizer.synchronize_all_exchanges()
+
+            # Log critical findings
+            for exchange_name, result in results.items():
+                if 'error' not in result:
+                    if result.get('closed_phantom'):
+                        logger.warning(
+                            f"⚠️ {exchange_name}: Closed {len(result['closed_phantom'])} phantom positions: "
+                            f"{result['closed_phantom']}"
+                        )
+                    if result.get('added_missing'):
+                        logger.info(
+                            f"➕ {exchange_name}: Added {len(result['added_missing'])} missing positions: "
+                            f"{result['added_missing']}"
+                        )
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Failed to synchronize positions: {e}")
+            # Continue with loading - better to work with potentially stale data than crash
+            return {}
+
+    async def verify_position_exists(self, symbol: str, exchange: str) -> bool:
+        """Verify a position actually exists on the exchange before operations"""
+        try:
+            exchange_instance = self.exchanges.get(exchange)
+            if not exchange_instance:
+                logger.error(f"Exchange {exchange} not configured")
+                return False
+
+            # Fetch current positions from exchange
+            positions = await exchange_instance.fetch_positions([symbol])
+
+            # Check if position exists with non-zero contracts
+            for pos in positions:
+                if pos.get('symbol') == symbol:
+                    contracts = float(pos.get('contracts') or 0)
+                    if abs(contracts) > 0:
+                        return True
+
+            logger.warning(f"Position {symbol} not found on {exchange}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying position {symbol}: {e}")
+            return False
+
     async def load_positions_from_db(self):
         """Load open positions from database on startup"""
         try:
+            # FIRST: Synchronize with exchanges
+            await self.synchronize_with_exchanges()
+
+            # THEN: Load verified positions
             positions = await self.repository.get_open_positions()
 
             for pos in positions:

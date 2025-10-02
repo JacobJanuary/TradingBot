@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 import argparse
 
-from config.settings import settings
+from config.settings import config as settings
 from utils.process_lock import ProcessLock, ensure_single_instance, check_running_instances, kill_all_instances
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -49,11 +50,12 @@ class SignalProcessor:
         self.stop_list = set()  # Keep for backward compatibility, but use symbol_filter
         self.processed_waves = {}  # Track signals per wave {timestamp: {signal_ids, count, first_seen}}
 
-        # Wave timing configuration
+        # Wave timing configuration from environment variables
         # Waves check at: 04, 18, 33, 48 minutes (3 mins after candle close)
-        self.wave_check_minutes = [4, 18, 33, 48]  # Minutes to check for waves
-        self.wave_check_duration = 120  # Check for up to 120 seconds
-        self.wave_check_interval = 1  # Check every second during wave detection
+        wave_minutes_str = os.getenv('WAVE_CHECK_MINUTES', '4,18,33,48')
+        self.wave_check_minutes = [int(m.strip()) for m in wave_minutes_str.split(',')]
+        self.wave_check_duration = int(os.getenv('WAVE_CHECK_DURATION_SECONDS', '120'))  # Check for up to 120 seconds
+        self.wave_check_interval = int(os.getenv('WAVE_CHECK_INTERVAL_SECONDS', '1'))  # Check every second during wave detection
 
         # Signal processing limits
         self.signal_time_window = config.signal_time_window_minutes
