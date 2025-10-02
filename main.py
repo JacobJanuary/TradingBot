@@ -346,11 +346,16 @@ class TradingBot:
             monitor_task = asyncio.create_task(self._monitor_loop())
             health_task = asyncio.create_task(self._health_check_loop())
 
-            # Start periodic position sync
+            # Start periodic position sync with zombie cleanup
             sync_task = None
             if self.position_manager:
                 sync_task = asyncio.create_task(self.position_manager.start_periodic_sync())
                 logger.info("🔄 Started periodic position synchronization")
+                logger.info("🧟 ZOMBIE ORDER CLEANUP: ACTIVE")
+                logger.info(f"  - Cleanup interval: {self.position_manager.sync_interval} seconds")
+                logger.info(f"  - Mode: REAL CLEANUP (dry_run=False)")
+                logger.info(f"  - Aggressive threshold: {self.position_manager.aggressive_cleanup_threshold} zombies")
+                logger.info("  - Auto-adjusting interval based on zombie count")
 
             # Log startup complete
             logger.info("=" * 80)

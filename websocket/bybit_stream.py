@@ -26,14 +26,14 @@ class BybitPrivateStream(ImprovedStream):
         self.api_secret = api_secret
         self.testnet = config.get('testnet', False)
         
-        # Base URLs for UNIFIED account
+        # Base URLs for UNIFIED account with max_active_time parameter
         if self.testnet:
-            self.ws_base = "wss://stream-testnet.bybit.com/v5/private"
+            self.ws_base = "wss://stream-testnet.bybit.com/v5/private?max_active_time=180s"
         else:
-            self.ws_base = "wss://stream.bybit.com/v5/private"
-    
+            self.ws_base = "wss://stream.bybit.com/v5/private?max_active_time=180s"
+
     async def _get_ws_url(self) -> str:
-        """Get WebSocket URL for Bybit"""
+        """Get WebSocket URL for Bybit with extended connection time"""
         return self.ws_base
     
     async def _authenticate(self):

@@ -268,36 +268,76 @@ class AgedPositionManager:
 
     async def _place_or_update_limit_order(self, position, target_price: float):
         """
-        Place or update limit order for position exit
+        Place or update limit order for position exit with duplicate prevention
         """
         try:
             position_id = f"{position.symbol}_{position.exchange}"
 
-            # Check if we need to update (once per hour)
-            if not self._should_update_price(position_id):
-                return
-
-            # Cancel existing order if any
-            existing_order_id = self.position_orders.get(position_id)
-            if existing_order_id:
-                try:
-                    exchange = self.exchanges.get(position.exchange)
-                    if exchange:
-                        await exchange.cancel_order(existing_order_id, position.symbol)
-                        logger.info(f"Cancelled old order {existing_order_id}")
-                except Exception as e:
-                    logger.debug(f"Could not cancel order {existing_order_id}: {e}")
-
-            # Determine order side (opposite of position)
-            order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
-
-            # Place new limit order
+            # Get exchange
             exchange = self.exchanges.get(position.exchange)
             if not exchange:
                 logger.error(f"Exchange {position.exchange} not available")
                 return
 
+            # Try to use enhanced manager for duplicate prevention
             try:
+                from core.exchange_manager_enhanced import EnhancedExchangeManager
+
+                # Create enhanced manager
+                enhanced_manager = EnhancedExchangeManager(exchange.exchange)
+
+                # Determine order side (opposite of position)
+                order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
+
+                # Check for existing exit order first
+                existing = await enhanced_manager._check_existing_exit_order(
+                    position.symbol, order_side, target_price
+                )
+
+                if existing:
+                    existing_price = float(existing.get('price', 0))
+                    price_diff_pct = abs(target_price - existing_price) / existing_price * 100
+
+                    if price_diff_pct > 0.5:  # More than 0.5% difference
+                        logger.info(f"📊 Updating order price (diff {price_diff_pct:.1f}%)")
+                        # Update order price
+                        order = await enhanced_manager.update_exit_order_price(
+                            existing, target_price, abs(position.size)
+                        )
+                    else:
+                        logger.info(f"✅ Existing order price is acceptable (diff {price_diff_pct:.1f}%)")
+                        order = existing
+                else:
+                    # Create new order with duplicate check
+                    order = await enhanced_manager.create_limit_exit_order(
+                        symbol=position.symbol,
+                        side=order_side,
+                        amount=abs(position.size),
+                        price=target_price,
+                        check_duplicates=True
+                    )
+
+            except ImportError:
+                # Fallback to standard method
+                logger.warning("Enhanced ExchangeManager not available, using standard method")
+
+                # Check if we need to update (once per hour) - old logic
+                if not self._should_update_price(position_id):
+                    return
+
+                # Cancel existing order if any
+                existing_order_id = self.position_orders.get(position_id)
+                if existing_order_id:
+                    try:
+                        await exchange.cancel_order(existing_order_id, position.symbol)
+                        logger.info(f"Cancelled old order {existing_order_id}")
+                    except Exception as e:
+                        logger.debug(f"Could not cancel order {existing_order_id}: {e}")
+
+                # Determine order side
+                order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
+
+                # Create order through standard exchange
                 order = await exchange.create_order(
                     symbol=position.symbol,
                     type='limit',
