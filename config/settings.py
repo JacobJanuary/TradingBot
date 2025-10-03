@@ -103,6 +103,9 @@ class Config:
         self.environment = os.getenv('ENVIRONMENT', 'production')
         self.log_level = os.getenv('LOG_LEVEL', 'INFO')
 
+        # Symbol filtering - FIX: 2025-10-03 - Add missing STOPLIST_SYMBOLS loading
+        self.stoplist_symbols = os.getenv('STOPLIST_SYMBOLS', '')
+
         # Log configuration source
         logger.info("Configuration loaded from .env file ONLY")
         logger.info(f"Environment: {self.environment}")
