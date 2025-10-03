@@ -233,13 +233,13 @@ class PositionManager:
                             logger.debug(f"✅ Verified position exists on exchange: {symbol}")
                         else:
                             logger.warning(f"🗑️ PHANTOM detected during load: {symbol} - closing in database")
-                            # Close the phantom position immediately
+                            # Close the phantom position immediately - FIXED: Use correct method signature with all required args
                             await self.repository.close_position(
-                                pos['id'],
-                                close_price=pos['current_price'] or pos['entry_price'],
-                                pnl=0,
-                                pnl_percentage=0,
-                                reason='PHANTOM_ON_LOAD'
+                                pos['id'],          # position_id: int
+                                0.0,                # close_price: float
+                                0.0,                # pnl: float
+                                0.0,                # pnl_percentage: float
+                                'PHANTOM_ON_LOAD'   # reason: str
                             )
                     except Exception as e:
                         logger.error(f"Error verifying position {symbol}: {e}")
@@ -402,12 +402,13 @@ class PositionManager:
                     logger.info(f"Closing orphaned position: {pos_state.symbol}")
                     # Close position in database
                     if pos_state.id:
-                        await self.repository.close_position(pos_state.id, {
-                            'exit_price': pos_state.current_price,
-                            'exit_reason': 'sync_cleanup',
-                            'pnl': pos_state.unrealized_pnl,
-                            'pnl_percentage': pos_state.unrealized_pnl_percent
-                        })
+                        await self.repository.close_position(
+                            pos_state.id,                           # position_id: int
+                            pos_state.current_price or 0.0,        # close_price: float
+                            pos_state.unrealized_pnl or 0.0,       # pnl: float
+                            pos_state.unrealized_pnl_percent or 0.0, # pnl_percentage: float
+                            'sync_cleanup'                          # reason: str
+                        )
                     # Remove from tracking
                     self.positions.pop(pos_state.symbol, None)
                     logger.info(f"✅ Closed orphaned position: {pos_state.symbol}")
@@ -1041,13 +1042,13 @@ class PositionManager:
                     realized_pnl_percent = (position.entry_price - exit_price) / position.entry_price * 100
 
                 # Update database
-                await self.repository.close_position(position.id, {
-                    'exit_price': exit_price,
-                    'exit_quantity': position.quantity,
-                    'realized_pnl': realized_pnl,
-                    'realized_pnl_percent': realized_pnl_percent,
-                    'exit_reason': reason
-                })
+                await self.repository.close_position(
+                    position.id,                    # position_id: int
+                    exit_price,                     # close_price: float
+                    realized_pnl,                   # pnl: float
+                    realized_pnl_percent,           # pnl_percentage: float
+                    reason                          # reason: str
+                )
 
                 # Update statistics
                 self.stats['positions_closed'] += 1
@@ -1651,8 +1652,19 @@ class PositionManager:
             # Find zombie orders (orders for symbols without positions)
             zombie_orders = []
             for order in open_orders:
-                symbol = order.get('symbol')
-                order_type = order.get('type', '').lower()
+                # CRITICAL FIX: Handle OrderResult objects safely - check type first
+                if isinstance(order, dict):
+                    # Direct dict access
+                    symbol = order.get('symbol')
+                    order_type = order.get('type', '').lower()
+                else:
+                    # Object attribute access (for OrderResult objects)
+                    try:
+                        symbol = getattr(order, 'symbol', '')
+                        order_type = getattr(order, 'type', '').lower()
+                    except (AttributeError, TypeError):
+                        # Skip this order if we can't access its properties
+                        continue
 
                 # Check if this is a limit order for a symbol without position
                 if symbol and symbol not in position_symbols:
@@ -1666,10 +1678,23 @@ class PositionManager:
                 # Cancel zombie orders
                 for order in zombie_orders:
                     try:
-                        symbol = order.get('symbol')
-                        order_id = order.get('id')
-                        order_side = order.get('side')
-                        order_amount = order.get('amount', 0)
+                        # CRITICAL FIX: Handle OrderResult objects safely - check type first
+                        if isinstance(order, dict):
+                            # Direct dict access
+                            symbol = order.get('symbol')
+                            order_id = order.get('id')
+                            order_side = order.get('side')
+                            order_amount = order.get('amount', 0)
+                        else:
+                            # Object attribute access (for OrderResult objects)
+                            try:
+                                symbol = getattr(order, 'symbol', '')
+                                order_id = getattr(order, 'id', '')
+                                order_side = getattr(order, 'side', '')
+                                order_amount = getattr(order, 'amount', 0)
+                            except (AttributeError, TypeError):
+                                # Skip this order if we can't access its properties
+                                continue
 
                         logger.info(f"Cancelling zombie order: {symbol} {order_side} {order_amount} (ID: {order_id})")
                         await exchange.exchange.cancel_order(order_id, symbol)

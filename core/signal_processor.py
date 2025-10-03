@@ -245,6 +245,16 @@ class SignalProcessor:
         failed_signals = result.get('failed', [])
         skipped_signals = result.get('skipped', [])
 
+        # CRITICAL FIX 2: Limit execution to MAX_TRADES_PER_15MIN
+        # Buffer helps get enough signals after filtering, but we only execute MAX
+        if len(final_signals) > self.max_trades_per_window:
+            original_count = len(final_signals)
+            final_signals = final_signals[:self.max_trades_per_window]
+            logger.info(
+                f"🎯 EXECUTION LIMITED: {original_count} -> {len(final_signals)} "
+                f"(max_trades_per_15min={self.max_trades_per_window})"
+            )
+
         logger.info(
             f"Wave processing results: "
             f"✅ {len(final_signals)} to execute, "
@@ -332,7 +342,26 @@ class SignalProcessor:
                     buffer_size  # Fetch with buffer for duplicate replacement
                 )
 
-            return [dict(s) for s in signals]
+            # CRITICAL FIX 1: Apply STOPLIST_SYMBOLS filtering in wave mode
+            # Convert to list of dicts for filtering
+            raw_signals = [dict(s) for s in signals]
+
+            # Apply symbol filtering (same as in _fetch_signals)
+            filtered_signals = []
+            for signal in raw_signals:
+                symbol = signal.get('symbol', '')
+                is_allowed, reason = self.symbol_filter.is_symbol_allowed(symbol)
+                if not is_allowed:
+                    logger.debug(f"Wave signal for {symbol} filtered: {reason}")
+                    continue
+                filtered_signals.append(signal)
+
+            logger.info(
+                f"Wave signals after stoplist filtering: {len(filtered_signals)} "
+                f"(filtered {len(raw_signals) - len(filtered_signals)} stoplist symbols)"
+            )
+
+            return filtered_signals
 
         except Exception as e:
             logger.error(f"Error fetching wave signals: {e}", exc_info=True)
