@@ -361,23 +361,21 @@ class Repository:
         query = """
             UPDATE monitoring.positions
             SET status = 'closed',
-                realized_pnl = $1,
+                pnl = $1,
                 exit_reason = $2,
                 current_price = COALESCE($3, current_price),
-                pnl = COALESCE($4, pnl, $1),
-                pnl_percentage = COALESCE($5, pnl_percentage),
+                pnl_percentage = COALESCE($4, pnl_percentage),
                 closed_at = NOW(),
                 updated_at = NOW()
-            WHERE id = $6
+            WHERE id = $5
         """
 
         async with self.pool.acquire() as conn:
             await conn.execute(
                 query,
-                realized_pnl,
+                realized_pnl,  # Now goes to pnl column
                 exit_reason,
                 current_price,
-                realized_pnl,  # pnl fallback
                 pnl_percent,
                 position_id
             )

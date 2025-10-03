@@ -301,8 +301,13 @@ class PositionManager:
             
             logger.info(f"📊 Loaded {len(self.positions)} positions from database")
             logger.info(f"💰 Total exposure: ${self.total_exposure:.2f}")
-            
-            # Check and set stop losses for loaded positions
+
+            # CRITICAL FIX: Check actual stop loss status on exchange BEFORE setting new ones
+            # This prevents creating duplicate stop losses when they already exist
+            logger.info("🔍 Checking actual stop loss status on exchanges...")
+            await self.check_positions_protection()
+
+            # Now check which positions still need stop losses (after real verification)
             positions_without_sl = []
             for symbol, position in self.positions.items():
                 if not position.has_stop_loss:
