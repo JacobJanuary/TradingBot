@@ -1227,14 +1227,23 @@ class PositionManager:
 
                     # Check for stop-loss orders - FIXED to handle OrderResult objects
                     for order in orders:
-                        # OrderResult is an object, not dict - access attributes properly
-                        order_dict = order.__dict__ if hasattr(order, '__dict__') else order
-
-                        # For Bybit: Check stopOrderType and triggerPrice
-                        stop_order_type = order_dict.get('stopOrderType', '') if isinstance(order_dict, dict) else getattr(order, 'stopOrderType', '')
-                        trigger_price = float(order_dict.get('triggerPrice', 0) if isinstance(order_dict, dict) else getattr(order, 'triggerPrice', 0))
-                        order_type = order_dict.get('type', '') if isinstance(order_dict, dict) else getattr(order, 'type', '')
-                        reduce_only = order_dict.get('reduceOnly', False) if isinstance(order_dict, dict) else getattr(order, 'reduceOnly', False)
+                        # Handle OrderResult objects safely - check type first
+                        if isinstance(order, dict):
+                            # Direct dict access
+                            stop_order_type = order.get('stopOrderType', '')
+                            trigger_price = float(order.get('triggerPrice', 0) or 0)
+                            order_type = order.get('type', '')
+                            reduce_only = order.get('reduceOnly', False)
+                        else:
+                            # Object attribute access (for OrderResult objects)
+                            try:
+                                stop_order_type = getattr(order, 'stopOrderType', '')
+                                trigger_price = float(getattr(order, 'triggerPrice', 0) or 0)
+                                order_type = getattr(order, 'type', '')
+                                reduce_only = getattr(order, 'reduceOnly', False)
+                            except (AttributeError, TypeError):
+                                # Skip this order if we can't access its properties
+                                continue
 
                         # CRITICAL: Proper stop-loss detection
                         # Import order utils for correct detection
