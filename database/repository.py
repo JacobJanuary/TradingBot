@@ -44,7 +44,8 @@ class Repository:
                 'jit': 'off',  # Disable JIT for more predictable performance
                 'statement_timeout': '60000',  # 60 seconds
                 'lock_timeout': '10000',  # 10 seconds
-                'idle_in_transaction_session_timeout': '60000'  # 60 seconds
+                'idle_in_transaction_session_timeout': '60000',  # 60 seconds
+                'search_path': 'monitoring,fas,public'  # CRITICAL FIX: Set proper schema search order
             }
         )
         logger.info(f"Database pool initialized: min={self.db_config.get('pool_size', 15)}, max={self.db_config.get('max_overflow', 50)}")
@@ -52,11 +53,29 @@ class Repository:
         # Verify schemas exist
         async with self.pool.acquire() as conn:
             schemas = await conn.fetch("""
-                SELECT schema_name FROM information_schema.schemata 
+                SELECT schema_name FROM information_schema.schemata
                 WHERE schema_name IN ('fas', 'monitoring')
             """)
             existing = [s['schema_name'] for s in schemas]
             logger.info(f"Connected to DB with schemas: {', '.join(existing)}")
+
+            # CRITICAL FIX: Verify search_path is set correctly
+            search_path = await conn.fetchval("SHOW search_path")
+            logger.info(f"PostgreSQL search_path: {search_path}")
+
+            # CRITICAL FIX: Verify monitoring.positions table exists and has correct columns
+            try:
+                columns = await conn.fetch("""
+                    SELECT column_name, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = 'monitoring'
+                    AND table_name = 'positions'
+                    ORDER BY ordinal_position
+                """)
+                column_list = [f"{c['column_name']}:{c['data_type']}" for c in columns]
+                logger.info(f"monitoring.positions columns: {', '.join(column_list)}")
+            except Exception as e:
+                logger.error(f"Failed to check monitoring.positions columns: {e}")
 
     async def close(self):
         """Close connection pool"""
@@ -308,23 +327,58 @@ class Repository:
         async with self.pool.acquire() as conn:
             await conn.execute(query, position_id)
 
-    async def close_position(self, position_id: int, exit_data: Dict):
-        """Close position with exit details"""
+    async def close_position(self, position_id: int,
+                            close_price: float = None,
+                            pnl: float = None,
+                            pnl_percentage: float = None,
+                            reason: str = None,
+                            exit_data: Dict = None):
+        """
+        Close position with exit details
+
+        Args:
+            position_id: Position ID to close
+            close_price: Final price (optional)
+            pnl: Profit/Loss amount (optional)
+            pnl_percentage: PnL percentage (optional)
+            reason: Close reason (optional)
+            exit_data: Legacy dict format for backward compatibility (optional)
+        """
+        # Support both new parameter format and legacy exit_data dict
+        if exit_data is not None:
+            # Legacy format - extract from dict
+            realized_pnl = exit_data.get('realized_pnl', pnl or 0)
+            exit_reason = exit_data.get('exit_reason', reason or 'manual')
+            current_price = exit_data.get('exit_price', close_price)
+            pnl_percent = exit_data.get('pnl_percentage', pnl_percentage)
+        else:
+            # New format - use direct parameters
+            realized_pnl = pnl or 0
+            exit_reason = reason or 'manual'
+            current_price = close_price
+            pnl_percent = pnl_percentage
+
         query = """
             UPDATE monitoring.positions
             SET status = 'closed',
                 realized_pnl = $1,
                 exit_reason = $2,
+                current_price = COALESCE($3, current_price),
+                pnl = COALESCE($4, pnl, $1),
+                pnl_percentage = COALESCE($5, pnl_percentage),
                 closed_at = NOW(),
                 updated_at = NOW()
-            WHERE id = $3
+            WHERE id = $6
         """
 
         async with self.pool.acquire() as conn:
             await conn.execute(
                 query,
-                exit_data.get('realized_pnl', 0),
-                exit_data.get('exit_reason', 'manual'),
+                realized_pnl,
+                exit_reason,
+                current_price,
+                realized_pnl,  # pnl fallback
+                pnl_percent,
                 position_id
             )
 
@@ -427,9 +481,43 @@ class Repository:
         """Get all open orders"""
         return []
     
-    async def update_position(self, position: Any) -> bool:
-        """Update position"""
-        return True
+    async def update_position(self, position_id: int, **kwargs) -> bool:
+        """
+        Update position with arbitrary fields
+
+        Args:
+            position_id: Position ID to update
+            **kwargs: Field names and values to update
+
+        Returns:
+            bool: True if update successful
+
+        Example:
+            await repo.update_position(123, current_price=50.5, pnl=10.0)
+        """
+        if not kwargs:
+            return False
+
+        # Build dynamic UPDATE query
+        set_clauses = []
+        values = []
+        param_count = 1
+
+        for key, value in kwargs.items():
+            set_clauses.append(f"{key} = ${param_count}")
+            values.append(value)
+            param_count += 1
+
+        query = f"""
+            UPDATE monitoring.positions
+            SET {', '.join(set_clauses)}, updated_at = NOW()
+            WHERE id = ${param_count}
+        """
+        values.append(position_id)
+
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(query, *values)
+            return True
     
     async def create_order(self, order: Any) -> bool:
         """Create order"""
@@ -475,69 +563,8 @@ class Repository:
         """Get last signal time"""
         return None
     
-    async def get_open_positions_by_exchange(self, exchange: str) -> List[Dict]:
-        """Get all open positions for a specific exchange"""
-        query = """
-            SELECT p.*
-            FROM fas.position p
-            WHERE p.exchange = $1
-            AND p.status = 'active'
-        """
 
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(query, exchange)
-            return [dict(row) for row in rows] if rows else []
 
-    async def close_position(self, position_id: int, close_price: float,
-                            pnl: float, pnl_percentage: float, reason: str = None) -> bool:
-        """Close a position with final details"""
-        query = """
-            UPDATE fas.position
-            SET status = 'closed',
-                closed_at = NOW(),
-                current_price = $2,
-                pnl = $3,
-                pnl_percentage = $4,
-                notes = COALESCE(notes, '') || ' | Closed: ' || $5
-            WHERE id = $1
-        """
-
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                query,
-                position_id,
-                close_price,
-                pnl,
-                pnl_percentage,
-                reason or 'MANUAL'
-            )
-            return True
-
-    async def update_position(self, position_id: int, **kwargs) -> bool:
-        """Update position with arbitrary fields"""
-        # Build dynamic UPDATE query
-        set_clauses = []
-        values = []
-        param_count = 1
-
-        for key, value in kwargs.items():
-            set_clauses.append(f"{key} = ${param_count}")
-            values.append(value)
-            param_count += 1
-
-        if not set_clauses:
-            return False
-
-        query = f"""
-            UPDATE fas.position
-            SET {', '.join(set_clauses)}, updated_at = NOW()
-            WHERE id = ${param_count}
-        """
-        values.append(position_id)
-
-        async with self.pool.acquire() as conn:
-            await conn.execute(query, *values)
-            return True
 
     async def find_duplicate_positions(self) -> List[Any]:
         """Find duplicate positions"""
