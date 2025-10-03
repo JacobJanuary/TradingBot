@@ -205,8 +205,10 @@ class PositionManager:
                 logger.error(f"Exchange {exchange} not configured")
                 return False
 
-            # Fetch current positions from exchange
-            positions = await exchange_instance.fetch_positions([symbol])
+            # CRITICAL FIX: Fetch ALL positions from exchange (not filtered by symbol)
+            # Binance Futures requires exact symbol format - 'SONICUSDT' != 'SONIC/USDT:USDT'
+            # We'll filter using normalize_symbol() comparison below
+            positions = await exchange_instance.fetch_positions()
 
             # CRITICAL FIX: Use normalize_symbol for correct comparison
             # Database stores 'HIGHUSDT', exchange returns 'HIGH/USDT:USDT'
@@ -713,9 +715,15 @@ class PositionManager:
         # Check exchange
         exchange_obj = self.exchanges.get(exchange)
         if exchange_obj:
-            positions = await exchange_obj.fetch_positions([symbol])
-            if positions and positions[0]['contracts'] > 0:
-                return True
+            # CRITICAL FIX: Same issue as verify_position_exists - use fetch_positions() without [symbol]
+            positions = await exchange_obj.fetch_positions()
+            # Find position using normalize_symbol comparison
+            normalized_symbol = normalize_symbol(symbol)
+            for pos in positions:
+                if normalize_symbol(pos.get('symbol')) == normalized_symbol:
+                    contracts = float(pos.get('contracts') or 0)
+                    if abs(contracts) > 0:
+                        return True
 
         return False
 
@@ -1301,71 +1309,104 @@ class PositionManager:
                 # Check if stop loss order actually exists on exchange
                 has_sl_on_exchange = False
                 try:
-                    # Get all orders for this symbol - returns List[OrderResult]
-                    orders = await exchange.fetch_open_orders(symbol)
+                    # PRIORITY 1: For Bybit, check position-attached stop loss first
+                    if position.exchange == 'bybit':
+                        # CRITICAL FIX: Must pass category='linear' for Bybit
+                        positions = await exchange.fetch_positions(
+                            symbols=[symbol],
+                            params={'category': 'linear'}
+                        )
 
-                    # Check for stop-loss orders - FIXED to handle OrderResult objects
-                    for order in orders:
-                        # Handle OrderResult objects safely - check type first
-                        if isinstance(order, dict):
-                            # Direct dict access
-                            stop_order_type = order.get('stopOrderType', '')
-                            trigger_price = float(order.get('triggerPrice', 0) or 0)
-                            order_type = order.get('type', '')
-                            reduce_only = order.get('reduceOnly', False)
-                        else:
-                            # Object attribute access (for OrderResult objects)
-                            try:
-                                stop_order_type = getattr(order, 'stopOrderType', '')
-                                trigger_price = float(getattr(order, 'triggerPrice', 0) or 0)
-                                order_type = getattr(order, 'type', '')
-                                reduce_only = getattr(order, 'reduceOnly', False)
-                            except (AttributeError, TypeError):
-                                # Skip this order if we can't access its properties
-                                continue
+                        for pos in positions:
+                            if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                                # Check for position-attached stop loss
+                                stop_loss = pos.get('info', {}).get('stopLoss', '0')
+                                logger.info(f"Checking position {symbol}: stopLoss='{stop_loss}'")
 
-                        # CRITICAL: Proper stop-loss detection
-                        # Import order utils for correct detection
-                        try:
-                            from core.order_utils import is_stop_loss_order
-                            # CRITICAL FIX: Convert OrderResult to Dict before passing to is_stop_loss_order
-                            if hasattr(order, '__dict__') and not hasattr(order, 'get'):
-                                # OrderResult object - convert to dict
-                                order_dict = {
-                                    'id': order.id,
-                                    'symbol': order.symbol,
-                                    'side': order.side,
-                                    'type': order.type,
-                                    'amount': float(order.amount) if order.amount else 0,
-                                    'price': float(order.price) if order.price else 0,
-                                    'filled': float(order.filled) if order.filled else 0,
-                                    'remaining': float(order.remaining) if order.remaining else 0,
-                                    'status': order.status,
-                                    'timestamp': order.timestamp,
-                                    'info': order.info,
-                                    'reduceOnly': order.info.get('reduceOnly', False),
-                                    'triggerPrice': order.info.get('triggerPrice'),
-                                    'stopPrice': order.info.get('stopPrice'),
-                                    'stopOrderType': order.info.get('stopOrderType'),
+                                if stop_loss and stop_loss not in ['0', '0.00', '']:
+                                    has_sl_on_exchange = True
+                                    logger.info(f"✅ Found position-attached SL for {symbol}: {stop_loss}")
+                                    break
+                                else:
+                                    logger.info(f"⚠️ No position-attached SL for {symbol} (stopLoss='{stop_loss}')")
+
+                    # PRIORITY 2: Check conditional stop orders (for all exchanges)
+                    if not has_sl_on_exchange:
+                        # Get all orders for this symbol - returns List[OrderResult]
+                        if position.exchange == 'bybit':
+                            # CRITICAL FIX: Must pass category='linear' for Bybit
+                            orders = await exchange.fetch_open_orders(
+                                symbol,
+                                params={
+                                    'category': 'linear',
+                                    'orderFilter': 'StopOrder'
                                 }
-                            else:
-                                # Already a dict
-                                order_dict = order
-                            # Use proper detection logic with converted dict
-                            is_stop_loss = is_stop_loss_order(order_dict)
-                        except ImportError:
-                            # Fallback to improved logic if utils not available
-                            # Stop-loss MUST have stop characteristics, not just reduceOnly
-                            is_stop_loss = (
-                                (stop_order_type and stop_order_type not in ['', 'UNKNOWN']) and  # Has stop order type
-                                (trigger_price > 0 or  # Has trigger price
-                                 ('stop' in order_type.lower() and reduce_only))  # Is stop order with reduce only
                             )
+                        else:
+                            orders = await exchange.fetch_open_orders(symbol)
 
-                        if is_stop_loss:
-                            has_sl_on_exchange = True
-                            logger.debug(f"Found stop-loss for {symbol}: type={stop_order_type}, trigger={trigger_price}")
-                            break
+                        # Check for stop-loss orders - FIXED to handle OrderResult objects
+                        for order in orders:
+                            # Handle OrderResult objects safely - check type first
+                            if isinstance(order, dict):
+                                # Direct dict access
+                                stop_order_type = order.get('stopOrderType', '')
+                                trigger_price = float(order.get('triggerPrice', 0) or 0)
+                                order_type = order.get('type', '')
+                                reduce_only = order.get('reduceOnly', False)
+                            else:
+                                # Object attribute access (for OrderResult objects)
+                                try:
+                                    stop_order_type = getattr(order, 'stopOrderType', '')
+                                    trigger_price = float(getattr(order, 'triggerPrice', 0) or 0)
+                                    order_type = getattr(order, 'type', '')
+                                    reduce_only = getattr(order, 'reduceOnly', False)
+                                except (AttributeError, TypeError):
+                                    # Skip this order if we can't access its properties
+                                    continue
+
+                            # CRITICAL: Proper stop-loss detection
+                            # Import order utils for correct detection
+                            try:
+                                from core.order_utils import is_stop_loss_order
+                                # CRITICAL FIX: Convert OrderResult to Dict before passing to is_stop_loss_order
+                                if hasattr(order, '__dict__') and not hasattr(order, 'get'):
+                                    # OrderResult object - convert to dict
+                                    order_dict = {
+                                        'id': order.id,
+                                        'symbol': order.symbol,
+                                        'side': order.side,
+                                        'type': order.type,
+                                        'amount': float(order.amount) if order.amount else 0,
+                                        'price': float(order.price) if order.price else 0,
+                                        'filled': float(order.filled) if order.filled else 0,
+                                        'remaining': float(order.remaining) if order.remaining else 0,
+                                        'status': order.status,
+                                        'timestamp': order.timestamp,
+                                        'info': order.info,
+                                        'reduceOnly': order.info.get('reduceOnly', False),
+                                        'triggerPrice': order.info.get('triggerPrice'),
+                                        'stopPrice': order.info.get('stopPrice'),
+                                        'stopOrderType': order.info.get('stopOrderType'),
+                                    }
+                                else:
+                                    # Already a dict
+                                    order_dict = order
+                                # Use proper detection logic with converted dict
+                                is_stop_loss = is_stop_loss_order(order_dict)
+                            except ImportError:
+                                # Fallback to improved logic if utils not available
+                                # Stop-loss MUST have stop characteristics, not just reduceOnly
+                                is_stop_loss = (
+                                    (stop_order_type and stop_order_type not in ['', 'UNKNOWN']) and  # Has stop order type
+                                    (trigger_price > 0 or  # Has trigger price
+                                     ('stop' in order_type.lower() and reduce_only))  # Is stop order with reduce only
+                                )
+
+                            if is_stop_loss:
+                                has_sl_on_exchange = True
+                                logger.debug(f"Found stop-loss for {symbol}: type={stop_order_type}, trigger={trigger_price}")
+                                break
 
                 except Exception as e:
                     logger.warning(f"Could not check orders for {symbol}: {e}")

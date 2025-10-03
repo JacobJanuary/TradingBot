@@ -186,14 +186,24 @@ class ExchangeManager:
         )
         return balance
 
-    async def fetch_positions(self, symbols: List[str] = None) -> List[Dict]:
+    async def fetch_positions(self, symbols: List[str] = None, params: Dict = None) -> List[Dict]:
         """
         Fetch open positions
         Returns standardized position format
+
+        Args:
+            symbols: List of symbols to fetch (optional)
+            params: Additional parameters (e.g., {'category': 'linear'} for Bybit)
         """
-        positions = await self.rate_limiter.execute_request(
-            self.exchange.fetch_positions, symbols
-        )
+        # CRITICAL FIX: Support params for Bybit category='linear'
+        if params:
+            positions = await self.rate_limiter.execute_request(
+                self.exchange.fetch_positions, symbols, params
+            )
+        else:
+            positions = await self.rate_limiter.execute_request(
+                self.exchange.fetch_positions, symbols
+            )
 
         # Standardize position format
         standardized = []
@@ -389,30 +399,75 @@ class ExchangeManager:
                     }
                 )
             elif self.name == 'bybit':
-                # Bybit V5 implementation - use market order with stop trigger
-                # Determine trigger direction based on position side
-                # For short positions (stop loss above entry), trigger when price goes up (ascending)
-                # For long positions (stop loss below entry), trigger when price goes down (descending)
-                trigger_direction = 'ascending' if side.lower() == 'buy' else 'descending'
+                # CRITICAL FIX: Use position-attached stop loss instead of conditional order
+                # This prevents "Insufficient balance" error as it doesn't require margin
+                # Source: https://bybit-exchange.github.io/docs/v5/position/trading-stop
 
-                order = await self.rate_limiter.execute_request(
-                    self.exchange.create_order,
-                    symbol=symbol,
-                    type='market',  # Use market order type for Bybit V5
-                    side=side.lower(),
-                    amount=float(amount),
-                    price=None,
-                    params={
-                        'stopPrice': float(stop_price),  # V5 API uses stopPrice
-                        'triggerPrice': float(stop_price),
-                        'reduceOnly': reduce_only,
-                        'triggerBy': 'LastPrice',
-                        'triggerDirection': trigger_direction,
-                        'orderFilter': 'StopOrder'  # Specify this is a stop order
-                    }
+                # Get position info to determine positionIdx
+                # CRITICAL FIX: Must pass category='linear' for Bybit
+                positions = await self.exchange.fetch_positions(
+                    symbols=[symbol],
+                    params={'category': 'linear'}
                 )
+                position_idx = 0  # Default for one-way mode
+
+                for pos in positions:
+                    if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                        position_idx = int(pos.get('info', {}).get('positionIdx', 0))
+                        break
+
+                # Format symbol for Bybit API (remove / and :USDT)
+                bybit_symbol = symbol.replace('/', '').replace(':USDT', '')
+
+                # Format stop loss price with proper precision
+                stop_loss_price = self.exchange.price_to_precision(symbol, float(stop_price))
+
+                # Use trading-stop endpoint for position-attached SL
+                params = {
+                    'category': 'linear',
+                    'symbol': bybit_symbol,
+                    'stopLoss': stop_loss_price,
+                    'positionIdx': position_idx,
+                    'slTriggerBy': 'LastPrice',  # Use last price as trigger
+                    'tpslMode': 'Full'  # Full position stop loss
+                }
+
+                # Make direct API call to set trading stop
+                try:
+                    result = await self.rate_limiter.execute_request(
+                        self.exchange.private_post_v5_position_trading_stop,
+                        params
+                    )
+
+                    logger.info(f"✅ Stop Loss set via trading-stop: {stop_loss_price}")
+
+                except ccxt.ExchangeError as e:
+                    # Check if error is "not modified" (34040) - means SL already set with same price
+                    if '"retCode":34040' in str(e) and '"retMsg":"not modified"' in str(e):
+                        logger.info(f"✅ Stop Loss already set at {stop_loss_price} (not modified)")
+                        # Create a fake success result
+                        result = {'retCode': 0, 'retMsg': 'OK (already set)'}
+                    else:
+                        # Re-raise other errors
+                        raise
+
+                # Return in OrderResult format for compatibility
+                order = {
+                    'id': f'sl_position_{bybit_symbol}',
+                    'symbol': symbol,
+                    'type': 'stop_loss_position',  # Mark as position-attached SL
+                    'side': side,
+                    'price': float(stop_loss_price),  # CRITICAL FIX: Add missing 'price' field
+                    'stopPrice': float(stop_loss_price),
+                    'amount': float(amount),
+                    'filled': 0.0,
+                    'remaining': float(amount),
+                    'status': 'open',
+                    'timestamp': None,
+                    'info': result
+                }
             else:
-                # Generic implementation
+                # Generic implementation - use unified CCXT API
                 order = await self.rate_limiter.execute_request(
                     self.exchange.create_order,
                     symbol=symbol,
@@ -421,7 +476,7 @@ class ExchangeManager:
                     amount=float(amount),
                     price=None,
                     params={
-                        'stopPrice': float(stop_price),
+                        'stopLossPrice': float(stop_price),  # Unified CCXT parameter
                         'reduceOnly': reduce_only
                     }
                 )
@@ -512,9 +567,19 @@ class ExchangeManager:
             logger.error(f"Failed to fetch order {order_id}: {e}")
             raise
 
-    async def fetch_open_orders(self, symbol: str = None) -> List[OrderResult]:
-        """Fetch open orders"""
-        orders = await self.exchange.fetch_open_orders(symbol)
+    async def fetch_open_orders(self, symbol: str = None, params: Dict = None) -> List[OrderResult]:
+        """
+        Fetch open orders
+
+        Args:
+            symbol: Symbol to filter (optional)
+            params: Additional parameters (e.g., {'category': 'linear', 'orderFilter': 'StopOrder'} for Bybit)
+        """
+        # CRITICAL FIX: Support params for Bybit category='linear' and orderFilter
+        if params:
+            orders = await self.exchange.fetch_open_orders(symbol, params)
+        else:
+            orders = await self.exchange.fetch_open_orders(symbol)
         return [self._parse_order(order) for order in orders]
 
     # ============== Position Management ==============
@@ -524,13 +589,28 @@ class ExchangeManager:
         Close position for symbol
         Creates a market order in opposite direction
         """
-        positions = await self.fetch_positions([symbol])
+        # CRITICAL FIX: Same issue - use fetch_positions() without [symbol]
+        all_positions = await self.fetch_positions()
 
-        if not positions:
+        # Find position using exact symbol match first, then normalized comparison
+        position = None
+        for pos in all_positions:
+            if pos.get('symbol') == symbol:
+                position = pos
+                break
+
+        # If not found with exact match, try normalized comparison
+        if not position:
+            from core.position_manager import normalize_symbol
+            normalized_symbol = normalize_symbol(symbol)
+            for pos in all_positions:
+                if normalize_symbol(pos.get('symbol')) == normalized_symbol:
+                    position = pos
+                    break
+
+        if not position:
             logger.warning(f"No position found for {symbol}")
             return False
-
-        position = positions[0]
 
         # Determine close side
         close_side = 'sell' if position['side'] == 'long' else 'buy'
