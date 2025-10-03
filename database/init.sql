@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS fas.scoring_history (
 
 -- Monitoring schema tables
 CREATE TABLE IF NOT EXISTS monitoring.positions (
-    id VARCHAR(100) PRIMARY KEY,
+    id SERIAL PRIMARY KEY,
     signal_id INTEGER,
     symbol VARCHAR(20) NOT NULL,
     exchange VARCHAR(50) NOT NULL,
@@ -39,7 +39,15 @@ CREATE TABLE IF NOT EXISTS monitoring.positions (
     exit_reason VARCHAR(100),
     opened_at TIMESTAMP DEFAULT NOW(),
     closed_at TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    -- Additional fields needed by repository queries
+    leverage DECIMAL(10, 2) DEFAULT 1.0,
+    stop_loss DECIMAL(20, 8),
+    take_profit DECIMAL(20, 8),
+    pnl DECIMAL(20, 8),
+    pnl_percentage DECIMAL(10, 4),
+    trailing_activated BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS monitoring.orders (

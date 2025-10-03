@@ -345,8 +345,12 @@ class HealthChecker:
             last_signal = await self.repository.get_last_signal_time()
             
             if last_signal:
+                # Ensure last_signal is timezone-aware for proper comparison
+                if last_signal.tzinfo is None:
+                    last_signal = last_signal.replace(tzinfo=timezone.utc)
+
                 time_since = datetime.now(timezone.utc) - last_signal
-                
+
                 if time_since > timedelta(minutes=5):
                     status = HealthStatus.DEGRADED
                     error_message = f"No signals for {time_since.seconds//60} minutes"

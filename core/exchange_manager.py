@@ -586,12 +586,23 @@ class ExchangeManager:
                 logger.error(f"❌ {symbol}: Amount {amount} < min {min_amount}")
                 raise ValueError(f"Amount too small: {amount} < {min_amount}")
 
-            # Round to correct precision
-            from decimal import Decimal, ROUND_DOWN
-            step_size = 10 ** -amount_precision
-            amount_decimal = Decimal(str(amount))
-            step_decimal = Decimal(str(step_size))
-            amount = float(amount_decimal.quantize(step_decimal, rounding=ROUND_DOWN))
+            # Round to correct precision (with safe precision limits)
+            from decimal import Decimal, ROUND_DOWN, InvalidOperation
+
+            # Limit precision to safe range to prevent decimal.InvalidOperation
+            safe_precision = max(0, min(int(amount_precision), 18))
+            if safe_precision != amount_precision:
+                logger.debug(f"Limited precision from {amount_precision} to {safe_precision} for {symbol}")
+
+            try:
+                step_size = 10 ** -safe_precision
+                amount_decimal = Decimal(str(amount))
+                step_decimal = Decimal(str(step_size))
+                amount = float(amount_decimal.quantize(step_decimal, rounding=ROUND_DOWN))
+            except (InvalidOperation, OverflowError) as e:
+                # Fallback to simple rounding if decimal operations fail
+                logger.debug(f"Decimal operation failed for {symbol}, using simple rounding: {e}")
+                amount = round(amount, safe_precision)
 
             logger.debug(f"✅ {symbol}: Amount validated: {amount}")
             return amount
