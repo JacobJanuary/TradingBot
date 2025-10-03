@@ -17,6 +17,19 @@ from websocket.event_router import EventRouter
 from core.exchange_manager import ExchangeManager
 from utils.decimal_utils import to_decimal, calculate_stop_loss, calculate_pnl, calculate_quantity
 
+# CRITICAL FIX: Import normalize_symbol for correct position verification
+def normalize_symbol(symbol: str) -> str:
+    """
+    Normalize symbol format for consistent comparison
+    Converts exchange format 'HIGH/USDT:USDT' to database format 'HIGHUSDT'
+    This function MUST match the one in position_synchronizer.py
+    """
+    if '/' in symbol and ':' in symbol:
+        # Exchange format: 'HIGH/USDT:USDT' -> 'HIGHUSDT'
+        base_quote = symbol.split(':')[0]  # 'HIGH/USDT'
+        return base_quote.replace('/', '')  # 'HIGHUSDT'
+    return symbol
+
 logger = logging.getLogger(__name__)
 
 
@@ -195,9 +208,14 @@ class PositionManager:
             # Fetch current positions from exchange
             positions = await exchange_instance.fetch_positions([symbol])
 
+            # CRITICAL FIX: Use normalize_symbol for correct comparison
+            # Database stores 'HIGHUSDT', exchange returns 'HIGH/USDT:USDT'
+            normalized_symbol = normalize_symbol(symbol)
+
             # Check if position exists with non-zero contracts
             for pos in positions:
-                if pos.get('symbol') == symbol:
+                # Compare normalized symbols instead of direct string comparison
+                if normalize_symbol(pos.get('symbol')) == normalized_symbol:
                     contracts = float(pos.get('contracts') or 0)
                     if abs(contracts) > 0:
                         return True
@@ -909,15 +927,26 @@ class PositionManager:
                     logger.warning(f"⚠️ Multiple stop orders found, cleaning up duplicates")
                     # Sort by timestamp and cancel all but the latest
                     def get_datetime(order):
-                        if hasattr(order, '__dict__'):
-                            return order.__dict__.get('datetime', '') if hasattr(order.__dict__, 'get') else getattr(order, 'datetime', '')
-                        return order.get('datetime', '')
+                        # CRITICAL FIX: Handle OrderResult safely
+                        if hasattr(order, 'timestamp'):  # OrderResult has timestamp
+                            return order.timestamp
+                        elif hasattr(order, 'datetime'):  # OrderResult might have datetime
+                            return order.datetime
+                        elif hasattr(order, 'get'):  # Dict
+                            return order.get('datetime', '')
+                        else:  # Fallback
+                            return getattr(order, 'datetime', '')
 
                     existing_stop_orders.sort(key=get_datetime, reverse=True)
                     for old_order in existing_stop_orders[1:]:
                         try:
-                            # Extract order ID properly
-                            order_id = old_order.__dict__.get('id') if hasattr(old_order, '__dict__') else old_order.get('id')
+                            # CRITICAL FIX: Extract order ID properly handling OrderResult
+                            if hasattr(old_order, 'id'):  # OrderResult has direct id attribute
+                                order_id = old_order.id
+                            elif hasattr(old_order, 'get'):  # Dict
+                                order_id = old_order.get('id')
+                            else:  # Fallback
+                                order_id = getattr(old_order, 'id', None)
                             if not order_id and hasattr(old_order, 'id'):
                                 order_id = old_order.id
 
@@ -1137,15 +1166,25 @@ class PositionManager:
                     price=target_price
                 )
             
-            if order and order.get('id'):
+            # CRITICAL FIX: Handle OrderResult safely
+            order_id = None
+            if order:
+                if hasattr(order, 'id'):  # OrderResult
+                    order_id = order.id
+                elif hasattr(order, 'get'):  # Dict
+                    order_id = order.get('id')
+                else:
+                    order_id = getattr(order, 'id', None)
+
+            if order and order_id:
                 logger.info(
                     f"Placed limit close order for {symbol} at {target_price:.2f} "
-                    f"(order_id: {order['id']}, reason: {reason})"
+                    f"(order_id: {order_id}, reason: {reason})"
                 )
                 
                 # Store order info for tracking
                 position.pending_close_order = {
-                    'order_id': order['id'],
+                    'order_id': order_id,
                     'price': to_decimal(target_price),
                     'reason': reason,
                     'created_at': datetime.now(timezone.utc)
@@ -1284,8 +1323,31 @@ class PositionManager:
                         # Import order utils for correct detection
                         try:
                             from core.order_utils import is_stop_loss_order
-                            # Use proper detection logic
-                            is_stop_loss = is_stop_loss_order(order)
+                            # CRITICAL FIX: Convert OrderResult to Dict before passing to is_stop_loss_order
+                            if hasattr(order, '__dict__') and not hasattr(order, 'get'):
+                                # OrderResult object - convert to dict
+                                order_dict = {
+                                    'id': order.id,
+                                    'symbol': order.symbol,
+                                    'side': order.side,
+                                    'type': order.type,
+                                    'amount': float(order.amount) if order.amount else 0,
+                                    'price': float(order.price) if order.price else 0,
+                                    'filled': float(order.filled) if order.filled else 0,
+                                    'remaining': float(order.remaining) if order.remaining else 0,
+                                    'status': order.status,
+                                    'timestamp': order.timestamp,
+                                    'info': order.info,
+                                    'reduceOnly': order.info.get('reduceOnly', False),
+                                    'triggerPrice': order.info.get('triggerPrice'),
+                                    'stopPrice': order.info.get('stopPrice'),
+                                    'stopOrderType': order.info.get('stopOrderType'),
+                                }
+                            else:
+                                # Already a dict
+                                order_dict = order
+                            # Use proper detection logic with converted dict
+                            is_stop_loss = is_stop_loss_order(order_dict)
                         except ImportError:
                             # Fallback to improved logic if utils not available
                             # Stop-loss MUST have stop characteristics, not just reduceOnly
@@ -1705,14 +1767,22 @@ class PositionManager:
                         await asyncio.sleep(0.5)
 
                     except Exception as cancel_error:
-                        logger.error(f"Failed to cancel zombie order {order.get('id')}: {cancel_error}")
+                        # CRITICAL FIX: Handle OrderResult safely
+                        order_id = order.id if hasattr(order, 'id') else order.get('id', 'unknown')
+                        logger.error(f"Failed to cancel zombie order {order_id}: {cancel_error}")
 
             # Also check for orphaned stop orders
-            stop_orders = [o for o in open_orders if 'stop' in o.get('type', '').lower()]
+            # CRITICAL FIX: Handle OrderResult safely
+            stop_orders = []
+            for o in open_orders:
+                order_type = o.type.lower() if hasattr(o, 'type') else o.get('type', '').lower()
+                if 'stop' in order_type:
+                    stop_orders.append(o)
             orphaned_stops = []
 
             for order in stop_orders:
-                symbol = order.get('symbol')
+                # CRITICAL FIX: Handle OrderResult safely
+                symbol = order.symbol if hasattr(order, 'symbol') else order.get('symbol')
                 if symbol and symbol not in position_symbols:
                     orphaned_stops.append(order)
 
@@ -1721,8 +1791,9 @@ class PositionManager:
 
                 for order in orphaned_stops:
                     try:
-                        symbol = order.get('symbol')
-                        order_id = order.get('id')
+                        # CRITICAL FIX: Handle OrderResult safely
+                        symbol = order.symbol if hasattr(order, 'symbol') else order.get('symbol')
+                        order_id = order.id if hasattr(order, 'id') else order.get('id')
 
                         logger.info(f"Cancelling orphaned stop order for {symbol} (ID: {order_id})")
                         await exchange.exchange.cancel_order(order_id, symbol)
@@ -1732,7 +1803,9 @@ class PositionManager:
                         await asyncio.sleep(0.5)
 
                     except Exception as cancel_error:
-                        logger.error(f"Failed to cancel orphaned stop order {order.get('id')}: {cancel_error}")
+                        # CRITICAL FIX: Handle OrderResult safely
+                        order_id = order.id if hasattr(order, 'id') else order.get('id', 'unknown')
+                        logger.error(f"Failed to cancel orphaned stop order {order_id}: {cancel_error}")
 
         except Exception as e:
             logger.error(f"Error in basic zombie cleanup for {exchange_name}: {e}")
