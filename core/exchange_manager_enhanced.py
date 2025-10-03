@@ -556,9 +556,16 @@ async def check_position_has_stop_loss(
 
         # Check 2: Position-attached Stop Loss
         try:
-            positions = await exchange_manager.exchange.fetch_positions([symbol])
-            if positions:
-                position = positions[0]
+            # CRITICAL FIX: Same issue - use fetch_positions() without [symbol]
+            positions = await exchange_manager.exchange.fetch_positions()
+            position = None
+            # Find position using symbol comparison
+            for pos in positions:
+                if pos.get('symbol') == symbol:
+                    position = pos
+                    break
+
+            if position:
 
                 # Check various stop loss fields
                 stop_loss_price = (

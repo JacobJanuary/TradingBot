@@ -121,7 +121,7 @@ class PositionSynchronizer:
             logger.info(f"  Found {len(db_positions)} positions in database")
 
             # 2. Get positions from exchange
-            exchange_positions = await self._fetch_exchange_positions(exchange)
+            exchange_positions = await self._fetch_exchange_positions(exchange, exchange_name)
             self.stats['exchange_positions'] += len(exchange_positions)
 
             logger.info(f"  Found {len(exchange_positions)} positions on exchange")
@@ -184,18 +184,25 @@ class PositionSynchronizer:
 
         return result
 
-    async def _fetch_exchange_positions(self, exchange) -> List[Dict]:
+    async def _fetch_exchange_positions(self, exchange, exchange_name: str) -> List[Dict]:
         """
         Fetch active positions from exchange
 
         Args:
             exchange: Exchange instance
+            exchange_name: Name of exchange ('bybit', 'binance', etc.)
 
         Returns:
             List of active positions
         """
         try:
-            positions = await exchange.fetch_positions()
+            # CRITICAL FIX: For Bybit, must pass category='linear'
+            if exchange_name == 'bybit':
+                positions = await exchange.fetch_positions(
+                    params={'category': 'linear'}
+                )
+            else:
+                positions = await exchange.fetch_positions()
 
             # Filter only active positions (non-zero contracts)
             active_positions = []
@@ -335,8 +342,13 @@ class PositionSynchronizer:
                 logger.error(f"Exchange {exchange_name} not found")
                 return False
 
-            # Fetch current positions
-            positions = await exchange.fetch_positions([symbol])
+            # CRITICAL FIX: Use fetch_positions() without [symbol] and add category for Bybit
+            if exchange_name == 'bybit':
+                positions = await exchange.fetch_positions(
+                    params={'category': 'linear'}
+                )
+            else:
+                positions = await exchange.fetch_positions()
 
             # Check if position exists with non-zero contracts
             # Use normalized symbol comparison
