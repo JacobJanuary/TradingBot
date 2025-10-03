@@ -237,7 +237,7 @@ class PositionManager:
                     has_trailing_stop=pos['trailing_activated'] or False,
                     trailing_activated=pos['trailing_activated'] or False,
                     opened_at=opened_at,
-                    age_hours=(datetime.now(timezone.utc) - opened_at).total_seconds() / 3600 if opened_at else 0
+                    age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
                 )
                 
                 # Add to tracking
@@ -776,7 +776,7 @@ class PositionManager:
             return None
 
         # Final validation - check actual value
-        actual_value = float(formatted_qty) * price
+        actual_value = float(formatted_qty) * float(price)
         logger.info(f"✅ Position size calculated for {symbol}:")
         logger.info(f"   Target: ${size_usd:.2f} USD")
         logger.info(f"   Actual: ${actual_value:.2f} USD")
@@ -1670,6 +1670,30 @@ class PositionManager:
             logger.error(f"Error in basic zombie cleanup for {exchange_name}: {e}")
 
         return cancelled_count
+
+    def _calculate_age_hours(self, opened_at: datetime) -> float:
+        """
+        Calculate position age in hours with proper timezone handling
+
+        Args:
+            opened_at: Position opening datetime (may be naive or timezone-aware)
+
+        Returns:
+            Age in hours as float
+        """
+        try:
+            # Ensure opened_at is timezone-aware for proper comparison
+            if opened_at.tzinfo is None:
+                # Assume naive datetime is in UTC
+                opened_at = opened_at.replace(tzinfo=timezone.utc)
+
+            now = datetime.now(timezone.utc)
+            age_delta = now - opened_at
+            return age_delta.total_seconds() / 3600
+
+        except Exception as e:
+            logger.error(f"Error calculating position age: {e}")
+            return 0.0
 
     def get_statistics(self) -> Dict:
         """Get current statistics"""

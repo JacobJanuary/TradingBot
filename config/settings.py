@@ -66,6 +66,9 @@ class TradingConfig:
     signal_time_window_minutes: int = 10
     max_trades_per_15min: int = 20
 
+    # Wave processing - FIX: 2025-10-03 - Добавлено поле для SIGNAL_BUFFER_PERCENT
+    signal_buffer_percent: float = 33.0
+
 
 @dataclass
 class DatabaseConfig:
@@ -191,7 +194,14 @@ class Config:
         if val := os.getenv('MAX_SPREAD_PERCENT'):
             config.max_spread_percent = Decimal(val)
 
+        # FIX: 2025-10-03 - Добавлена загрузка MAX_TRADES_PER_15MIN из .env
+        if val := os.getenv('MAX_TRADES_PER_15MIN'):
+            config.max_trades_per_15min = int(val)
+        if val := os.getenv('SIGNAL_BUFFER_PERCENT'):
+            config.signal_buffer_percent = float(val)
+
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
+        logger.info(f"Wave limits: max_trades={config.max_trades_per_15min}, buffer={getattr(config, 'signal_buffer_percent', 33)}%")
         return config
 
     def _init_database(self) -> DatabaseConfig:

@@ -11,6 +11,25 @@ from decimal import Decimal
 logger = logging.getLogger(__name__)
 
 
+def normalize_symbol(symbol: str) -> str:
+    """
+    Normalize symbol format for consistent comparison
+
+    Converts exchange format 'HIGH/USDT:USDT' to database format 'HIGHUSDT'
+
+    Args:
+        symbol: Symbol in any format
+
+    Returns:
+        Normalized symbol (database format)
+    """
+    if '/' in symbol and ':' in symbol:
+        # Exchange format: 'HIGH/USDT:USDT' -> 'HIGHUSDT'
+        base_quote = symbol.split(':')[0]  # 'HIGH/USDT'
+        return base_quote.replace('/', '')  # 'HIGHUSDT'
+    return symbol  # Already normalized (database format)
+
+
 class PositionSynchronizer:
     """
     Synchronizes positions between database and exchange
@@ -107,9 +126,10 @@ class PositionSynchronizer:
 
             logger.info(f"  Found {len(exchange_positions)} positions on exchange")
 
-            # Create lookup maps
-            db_map = {pos['symbol']: pos for pos in db_positions}
-            exchange_map = {pos['symbol']: pos for pos in exchange_positions}
+            # Create lookup maps with normalized symbols for comparison
+            # CRITICAL FIX: Use normalized symbols to match 'HIGHUSDT' with 'HIGH/USDT:USDT'
+            db_map = {normalize_symbol(pos['symbol']): pos for pos in db_positions}
+            exchange_map = {normalize_symbol(pos['symbol']): pos for pos in exchange_positions}
 
             # 3. Check each DB position exists on exchange
             for symbol, db_pos in db_map.items():
@@ -205,7 +225,7 @@ class PositionSynchronizer:
             # Since position doesn't exist on exchange, just mark it as closed
             # Use 'closed' (lowercase) to match the check constraint
             query = """
-                UPDATE trading_bot.positions
+                UPDATE monitoring.positions
                 SET status = 'closed',
                     updated_at = NOW()
                 WHERE id = $1
@@ -246,8 +266,9 @@ class PositionSynchronizer:
             current_price = float(exchange_position.get('markPrice') or entry_price)
 
             # Create position data for database
+            # Store symbol in normalized database format
             position_data = {
-                'symbol': symbol,
+                'symbol': normalize_symbol(symbol),
                 'exchange': exchange_name,
                 'side': side,
                 'quantity': abs(contracts),
@@ -318,8 +339,10 @@ class PositionSynchronizer:
             positions = await exchange.fetch_positions([symbol])
 
             # Check if position exists with non-zero contracts
+            # Use normalized symbol comparison
+            normalized_symbol = normalize_symbol(symbol)
             for pos in positions:
-                if pos.get('symbol') == symbol:
+                if normalize_symbol(pos.get('symbol')) == normalized_symbol:
                     contracts = float(pos.get('contracts') or 0)
                     if abs(contracts) > 0:
                         return True

@@ -223,34 +223,38 @@ class Repository:
     async def create_position(self, position_data: Dict) -> int:
         """Create new position record"""
         query = """
-            INSERT INTO trading_bot.positions (
-                trade_id, symbol, exchange, side, quantity,
-                entry_price, status, ws_position_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, 'OPEN', $7)
+            INSERT INTO monitoring.positions (
+                symbol, exchange, side, quantity,
+                entry_price, status
+            ) VALUES ($1, $2, $3, $4, $5, 'active')
             RETURNING id
         """
 
         async with self.pool.acquire() as conn:
             position_id = await conn.fetchval(
                 query,
-                position_data['trade_id'],
                 position_data['symbol'],
                 position_data['exchange'],
                 position_data['side'],
                 position_data['quantity'],
-                position_data['entry_price'],
-                position_data.get('ws_position_id')
+                position_data['entry_price']
             )
 
             return position_id
 
+    async def open_position(self, position_data: Dict) -> int:
+        """
+        Alias for create_position - used by position_synchronizer
+        """
+        return await self.create_position(position_data)
+
     async def get_open_position(self, symbol: str, exchange: str) -> Optional[Dict]:
         """Get open position for symbol"""
         query = """
-            SELECT * FROM trading_bot.positions
+            SELECT * FROM monitoring.positions
             WHERE symbol = $1 
                 AND exchange = $2 
-                AND status = 'OPEN'
+                AND status = 'active'
             LIMIT 1
         """
 
@@ -261,24 +265,20 @@ class Repository:
     async def update_position_from_websocket(self, position_update: Dict):
         """Update position from WebSocket data"""
         query = """
-            UPDATE trading_bot.positions 
+            UPDATE monitoring.positions
             SET current_price = $1,
-                mark_price = $2,
-                unrealized_pnl = $3,
-                unrealized_pnl_percent = $4,
-                last_update = NOW()
-            WHERE symbol = $5 
-                AND exchange = $6 
-                AND status = 'OPEN'
+                unrealized_pnl = $2,
+                updated_at = NOW()
+            WHERE symbol = $3
+                AND exchange = $4
+                AND status = 'active'
         """
 
         async with self.pool.acquire() as conn:
             await conn.execute(
                 query,
                 position_update['current_price'],
-                position_update['mark_price'],
-                position_update['unrealized_pnl'],
-                position_update['unrealized_pnl_percent'],
+                position_update.get('unrealized_pnl', 0),
                 position_update['symbol'],
                 position_update['exchange']
             )
@@ -286,53 +286,45 @@ class Repository:
     async def update_position_stop_loss(self, position_id: int, stop_price: float, order_id: str):
         """Update position stop loss"""
         query = """
-            UPDATE trading_bot.positions 
-            SET has_stop_loss = true,
-                stop_loss_price = $1,
-                stop_loss_order_id = $2
-            WHERE id = $3
+            UPDATE monitoring.positions
+            SET stop_loss_price = $1,
+                updated_at = NOW()
+            WHERE id = $2
         """
 
         async with self.pool.acquire() as conn:
-            await conn.execute(query, stop_price, order_id, position_id)
+            await conn.execute(query, stop_price, position_id)
 
     async def update_position_trailing_stop(self, position_id: int,
                                             activation_price: float,
                                             callback_rate: float):
         """Update position trailing stop"""
         query = """
-            UPDATE trading_bot.positions 
-            SET has_trailing_stop = true,
-                trailing_activation_price = $1,
-                trailing_callback_rate = $2
-            WHERE id = $3
+            UPDATE monitoring.positions
+            SET updated_at = NOW()
+            WHERE id = $1
         """
 
         async with self.pool.acquire() as conn:
-            await conn.execute(query, activation_price, callback_rate, position_id)
+            await conn.execute(query, position_id)
 
     async def close_position(self, position_id: int, exit_data: Dict):
         """Close position with exit details"""
         query = """
-            UPDATE trading_bot.positions 
-            SET status = 'CLOSED',
-                exit_price = $1,
-                exit_quantity = $2,
-                realized_pnl = $3,
-                realized_pnl_percent = $4,
-                exit_reason = $5,
-                closed_at = NOW()
-            WHERE id = $6
+            UPDATE monitoring.positions
+            SET status = 'closed',
+                realized_pnl = $1,
+                exit_reason = $2,
+                closed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $3
         """
 
         async with self.pool.acquire() as conn:
             await conn.execute(
                 query,
-                exit_data['exit_price'],
-                exit_data['exit_quantity'],
-                exit_data['realized_pnl'],
-                exit_data['realized_pnl_percent'],
-                exit_data['exit_reason'],
+                exit_data.get('realized_pnl', 0),
+                exit_data.get('exit_reason', 'manual'),
                 position_id
             )
 
@@ -375,7 +367,7 @@ class Repository:
         """Get position age in hours"""
         query = """
             SELECT EXTRACT(EPOCH FROM (NOW() - opened_at)) / 3600 as age_hours
-            FROM trading_bot.positions
+            FROM monitoring.positions
             WHERE symbol = $1 AND exchange = $2 AND status = 'OPEN'
         """
 
@@ -390,8 +382,8 @@ class Repository:
                    quantity, leverage, stop_loss, take_profit,
                    status, pnl, pnl_percentage, trailing_activated,
                    created_at, updated_at
-            FROM trading_bot.positions
-            WHERE status = 'open'
+            FROM monitoring.positions
+            WHERE status = 'active'
             ORDER BY created_at DESC
         """
         
@@ -459,7 +451,7 @@ class Repository:
         """Get daily PnL"""
         query = """
             SELECT COALESCE(SUM(pnl), 0) as daily_pnl
-            FROM trading_bot.positions
+            FROM monitoring.positions
             WHERE DATE(closed_at) = CURRENT_DATE
         """
         async with self.pool.acquire() as conn:
@@ -489,7 +481,7 @@ class Repository:
             SELECT p.*
             FROM fas.position p
             WHERE p.exchange = $1
-            AND p.status = 'open'
+            AND p.status = 'active'
         """
 
         async with self.pool.acquire() as conn:
@@ -595,13 +587,11 @@ class Repository:
         try:
             async with self.pool.acquire() as conn:
                 result = await conn.execute("""
-                    UPDATE trading_bot.positions
+                    UPDATE monitoring.positions
                     SET status = $1,
-                        notes = COALESCE($2, notes),
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id = $3
-                    RETURNING id
-                """, status, notes, position_id)
+                    WHERE id = $2
+                """, status, position_id)
 
                 # Check if any row was updated
                 return result is not None
