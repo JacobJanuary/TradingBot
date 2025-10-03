@@ -91,11 +91,14 @@ class AgedPositionManager:
 
             for position in positions:
                 if position.opened_at:
-                    # Calculate age in hours
+                    # Calculate age in hours with proper timezone handling
                     if hasattr(position.opened_at, 'tzinfo') and position.opened_at.tzinfo:
-                        position_age = current_time.replace(tzinfo=position.opened_at.tzinfo) - position.opened_at
-                    else:
+                        # position.opened_at is timezone-aware
                         position_age = current_time - position.opened_at
+                    else:
+                        # position.opened_at is naive - assume UTC and make timezone-aware
+                        opened_at_utc = position.opened_at.replace(tzinfo=timezone.utc)
+                        position_age = current_time - opened_at_utc
 
                     age_hours = position_age.total_seconds() / 3600
 
