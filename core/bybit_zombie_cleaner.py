@@ -259,7 +259,32 @@ class BybitZombieOrderCleaner:
 
         Source: Stack Overflow - https://stackoverflow.com/questions/77339832/
         Important: TP/SL created via set_trading_stop don't have orderId!
+
+        CRITICAL FIX: Added symbol validation to prevent retCode:181001 errors
         """
+        # CRITICAL FIX: Check if symbol supports trading-stop endpoint
+        # Some symbols cause retCode:181001 "category only support linear or option"
+        try:
+            # Verify symbol exists and supports perpetual trading
+            markets = await self.exchange.load_markets()
+            if symbol not in markets:
+                logger.warning(f"Symbol {symbol} not found in markets - skipping trading-stop")
+                return False
+
+            market = markets[symbol]
+
+            # Only perpetual swap contracts support trading-stop endpoint
+            # This prevents retCode:181001 errors for unsupported symbols
+            if not market.get('swap', False) or market.get('type') != 'swap':
+                logger.debug(f"Symbol {symbol} is not a perpetual swap - skipping trading-stop endpoint")
+                return False
+
+            logger.debug(f"Symbol {symbol} validated for trading-stop endpoint")
+
+        except Exception as e:
+            logger.warning(f"Failed to validate symbol {symbol} for trading-stop: {e}")
+            return False
+
         success_count = 0
 
         # Check all positionIdx values (critical for hedge mode!)
@@ -284,8 +309,13 @@ class BybitZombieOrderCleaner:
 
             except Exception as e:
                 error_msg = str(e).lower()
+                # CRITICAL FIX: Handle retCode:181001 specifically
+                if 'retcode":181001' in error_msg or 'category only support' in error_msg:
+                    logger.error(f"❌ retCode:181001 for {symbol} idx={position_idx} - symbol not supported by trading-stop endpoint")
+                    logger.error(f"   This should have been caught by symbol validation - please check market data")
+                    break  # Stop trying other position indices for this symbol
                 # Ignore expected errors
-                if 'nothing to change' in error_msg or 'position not exists' in error_msg:
+                elif 'nothing to change' in error_msg or 'position not exists' in error_msg:
                     logger.debug(f"No TP/SL to clear for {symbol} idx={position_idx}")
                 else:
                     logger.warning(f"Failed to clear TP/SL for {symbol} idx={position_idx}: {e}")
