@@ -109,7 +109,8 @@ class PositionManager:
         
         trailing_config = TrailingStopConfig(
             activation_percent=Decimal(str(config.trailing_activation_percent)),
-            callback_percent=Decimal(str(config.trailing_callback_percent))
+            callback_percent=Decimal(str(config.trailing_callback_percent)),
+            breakeven_at=None  # FIX: 2025-10-03 - Отключить breakeven механизм
         )
         
         self.trailing_managers = {
@@ -214,8 +215,41 @@ class PositionManager:
             # FIRST: Synchronize with exchanges
             await self.synchronize_with_exchanges()
 
-            # THEN: Load verified positions
+            # THEN: Load verified positions and double-check each one exists on exchange
             positions = await self.repository.get_open_positions()
+            verified_positions = []
+
+            for pos in positions:
+                # CRITICAL FIX: 2025-10-03 - Double-check each position exists on exchange
+                exchange_name = pos['exchange']
+                symbol = pos['symbol']
+
+                if exchange_name in self.exchanges:
+                    try:
+                        # Verify position actually exists on exchange
+                        position_exists = await self.verify_position_exists(symbol, exchange_name)
+                        if position_exists:
+                            verified_positions.append(pos)
+                            logger.debug(f"✅ Verified position exists on exchange: {symbol}")
+                        else:
+                            logger.warning(f"🗑️ PHANTOM detected during load: {symbol} - closing in database")
+                            # Close the phantom position immediately
+                            await self.repository.close_position(
+                                pos['id'],
+                                close_price=pos['current_price'] or pos['entry_price'],
+                                pnl=0,
+                                pnl_percentage=0,
+                                reason='PHANTOM_ON_LOAD'
+                            )
+                    except Exception as e:
+                        logger.error(f"Error verifying position {symbol}: {e}")
+                        # In case of error, skip this position for safety
+                        continue
+                else:
+                    logger.warning(f"⚠️ Exchange {exchange_name} not available, skipping position {symbol}")
+
+            # Use only verified positions
+            positions = verified_positions
 
             for pos in positions:
                 # Create PositionState from DB data
