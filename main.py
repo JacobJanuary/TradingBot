@@ -96,7 +96,11 @@ class TradingBot:
                 self.repository,
                 {'check_interval': 10}
             )
-            
+
+            # CRITICAL FIX: Start health monitoring
+            await self.health_monitor.start()
+            logger.info("✅ Health monitoring started")
+
             self.performance_tracker = PerformanceTracker(
                 self.repository,
                 {'min_trades_for_stats': 20}

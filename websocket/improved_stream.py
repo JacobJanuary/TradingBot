@@ -114,6 +114,7 @@ class ImprovedStream(ABC):
         
         self.should_stop = True
         self.state = ConnectionState.DISCONNECTED
+        self.connected = False  # CRITICAL FIX: Sync connected attribute with state
         
         # Cancel all tasks
         tasks = [self.receive_task, self.heartbeat_task, self.monitor_task]
@@ -196,6 +197,7 @@ class ImprovedStream(ABC):
             
             # Connection successful
             self.state = ConnectionState.CONNECTED
+            self.connected = True  # CRITICAL FIX: Sync connected attribute with state
             self.reconnect_count = 0
             self.consecutive_errors = 0
             self.last_heartbeat = datetime.now()
@@ -267,6 +269,7 @@ class ImprovedStream(ABC):
 
         # Reset state for immediate reconnection
         self.state = ConnectionState.DISCONNECTED
+        self.connected = False  # CRITICAL FIX: Sync connected attribute with state
         self.last_pong = datetime.now()  # Reset pong timer
         self.last_heartbeat = datetime.now()  # Reset heartbeat timer
         self.consecutive_errors = 0  # Reset error counter
@@ -336,6 +339,7 @@ class ImprovedStream(ABC):
             # Trigger reconnection
             if not self.should_stop:
                 self.state = ConnectionState.DISCONNECTED
+                self.connected = False  # CRITICAL FIX: Sync connected attribute with state
     
     async def _heartbeat_loop(self):
         """Send periodic heartbeat/ping - FIXED for Bybit custom ping"""
