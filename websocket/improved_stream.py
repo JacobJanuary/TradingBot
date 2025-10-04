@@ -181,8 +181,22 @@ class ImprovedStream(ABC):
         try:
             # Create session if needed
             if not self.session or self.session.closed:
-                timeout = aiohttp.ClientTimeout(total=30, connect=10)
-                self.session = aiohttp.ClientSession(timeout=timeout)
+                # CCXT 4.4.8 + aiohttp 3.11.10 best practices
+                connector = aiohttp.TCPConnector(
+                    limit=50,              # Total connections across all hosts
+                    limit_per_host=10,     # Max connections per host
+                    ttl_dns_cache=300,     # Cache DNS for 5 minutes
+                    enable_cleanup_closed=True  # Clean up closed connections
+                )
+                timeout = aiohttp.ClientTimeout(
+                    total=30,              # Total timeout
+                    connect=10,            # Connection timeout
+                    sock_connect=30        # Socket connection timeout (aiohttp 3.10.9+ default)
+                )
+                self.session = aiohttp.ClientSession(
+                    connector=connector,
+                    timeout=timeout
+                )
             
             # Get URL and connect
             ws_url = await self._get_ws_url()

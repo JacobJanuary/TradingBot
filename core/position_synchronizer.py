@@ -196,10 +196,11 @@ class PositionSynchronizer:
             List of active positions
         """
         try:
-            # CRITICAL FIX: For Bybit, must pass category='linear'
+            # CRITICAL FIX: For Bybit, must pass category='linear' and limit=200
+            # CCXT 4.4.8: Bybit returns only 20 positions by default
             if exchange_name == 'bybit':
                 positions = await exchange.fetch_positions(
-                    params={'category': 'linear'}
+                    params={'category': 'linear', 'limit': 200}
                 )
             else:
                 positions = await exchange.fetch_positions()
@@ -342,10 +343,11 @@ class PositionSynchronizer:
                 logger.error(f"Exchange {exchange_name} not found")
                 return False
 
-            # CRITICAL FIX: Use fetch_positions() without [symbol] and add category for Bybit
+            # CRITICAL FIX: Use fetch_positions() without [symbol] and add category+limit for Bybit
+            # CCXT 4.4.8: Bybit returns only 20 positions by default
             if exchange_name == 'bybit':
                 positions = await exchange.fetch_positions(
-                    params={'category': 'linear'}
+                    params={'category': 'linear', 'limit': 200}
                 )
             else:
                 positions = await exchange.fetch_positions()

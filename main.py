@@ -310,7 +310,7 @@ class TradingBot:
         """Log initial system state"""
         for name, exchange in self.exchanges.items():
             balance = await exchange.fetch_balance()
-            usdt_balance = balance.get('USDT', {}).get('free', 0)
+            usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
             logger.info(f"{name.capitalize()} balance: ${usdt_balance:.2f} USDT")
 
             positions = await exchange.fetch_positions()

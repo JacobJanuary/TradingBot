@@ -5,7 +5,7 @@ python-binance==1.0.22  # Latest with futures improvements
 pybit==5.8.0  # Latest Bybit V5 API support
 
 # Async and networking
-aiohttp==3.10.5  # Latest with security fixes
+aiohttp==3.11.10  # SECURITY FIX: CVE-2024-52304 (Request Smuggling)
 asyncpg==0.29.0  # Latest PostgreSQL async driver
 websockets==13.1  # Latest WebSocket support
 

@@ -7,7 +7,13 @@ import asyncio
 import json
 import logging
 import os
-import websockets
+# websockets 13.1: Use new asyncio API (legacy deprecated)
+from websockets.asyncio.client import connect as ws_connect
+from websockets.exceptions import (
+    ConnectionClosed,
+    ConnectionClosedOK,
+    ConnectionClosedError
+)
 from typing import Dict, Optional, Any, Callable
 from datetime import datetime
 from enum import Enum
@@ -127,7 +133,13 @@ class AdaptiveBinanceStream:
                 
                 streams = [f"{symbol.lower()}@ticker" for symbol in symbols]
                 
-                async with websockets.connect(self.public_ws_url) as websocket:
+                # websockets 13.1: Use new asyncio API with explicit config
+                async with ws_connect(
+                    self.public_ws_url,
+                    ping_interval=20,  # Standard WebSocket ping
+                    ping_timeout=20,
+                    max_size=10 * 1024 * 1024  # 10MB max message
+                ) as websocket:
                     self.public_ws = websocket
                     self.connected = True  # Mark as connected
                     logger.info(f"✅ Connected to public stream for {len(symbols)} symbols")
@@ -149,7 +161,15 @@ class AdaptiveBinanceStream:
                             await websocket.ping()
                         except json.JSONDecodeError:
                             continue
-                            
+
+            # websockets 13.1: Use specific exception types
+            except ConnectionClosedOK:
+                logger.info("Public WebSocket closed normally")
+                break
+            except ConnectionClosedError as e:
+                logger.error(f"Public WebSocket closed with error: {e}")
+                await asyncio.sleep(5)
+
             except Exception as e:
                 logger.error(f"Public stream error: {e}")
                 await asyncio.sleep(5)
@@ -164,7 +184,13 @@ class AdaptiveBinanceStream:
             try:
                 ws_url = f"{self.private_ws_url}{self.listen_key}"
                 
-                async with websockets.connect(ws_url) as websocket:
+                # websockets 13.1: Use new asyncio API with explicit config
+                async with ws_connect(
+                    ws_url,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    max_size=10 * 1024 * 1024
+                ) as websocket:
                     self.private_ws = websocket
                     logger.info("✅ Connected to private user data stream")
                     
@@ -176,7 +202,15 @@ class AdaptiveBinanceStream:
                             await websocket.ping()
                         except json.JSONDecodeError:
                             continue
-                            
+
+            # websockets 13.1: Use specific exception types
+            except ConnectionClosedOK:
+                logger.info("Private WebSocket closed normally")
+                break
+            except ConnectionClosedError as e:
+                logger.error(f"Private WebSocket closed with error: {e}")
+                await asyncio.sleep(5)
+
             except Exception as e:
                 logger.error(f"Private stream error: {e}")
                 await asyncio.sleep(5)
