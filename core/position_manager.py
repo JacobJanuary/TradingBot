@@ -421,7 +421,7 @@ class PositionManager:
 
             # Get positions from exchange
             positions = await exchange.fetch_positions()
-            active_positions = [p for p in positions if safe_get_attr(p, 'quantity', 'qty', 'size', default=0) > 0]
+            active_positions = [p for p in positions if safe_get_attr(p, 'contracts', 'quantity', 'qty', 'size', default=0) > 0]
             active_symbols = {p.symbol for p in active_positions}
 
             logger.info(f"Found {len(active_positions)} positions on {exchange_name}")
@@ -1159,8 +1159,7 @@ class PositionManager:
                 # Update database with pending close order
                 await self.repository.update_position(position.id, {
                     'pending_close_order_id': order['id'],
-                    'pending_close_price': to_decimal(target_price),
-                    'close_reason': reason
+                    'pending_close_price': to_decimal(target_price)
                 })
             else:
                 logger.error(f"Failed to place limit order for {symbol}")
@@ -1395,10 +1394,12 @@ class PositionManager:
                                     del self.positions[symbol]
 
                                 # Update database - mark as closed
-                                await self.repository.update_position_status(
+                                await self.repository.close_position(
                                     position.id,
-                                    'closed',
-                                    close_reason='PHANTOM_CLEANUP'
+                                    close_price=position.current_price or 0.0,
+                                    pnl=0.0,
+                                    pnl_percentage=0.0,
+                                    reason='PHANTOM_CLEANUP'
                                 )
 
                                 logger.info(f"✅ Cleaned phantom position: {symbol}")

@@ -1,36 +1,73 @@
-# Core dependencies
-python-binance==1.0.19
-ccxt==4.1.22
-asyncpg==0.29.0
-aiohttp==3.9.1
-python-dotenv==1.0.0
-pyyaml==6.0.1
-cryptography==41.0.7
-pydantic==2.5.2
+# Updated Dependencies - October 2025
+# Core trading libraries
+ccxt==4.4.8  # Latest async support, improved Bybit V5
+python-binance==1.0.22  # Latest with futures improvements
+pybit==5.8.0  # Latest Bybit V5 API support
 
-# Bybit
-pybit==5.6.2
+# Async and networking
+aiohttp==3.10.5  # Latest with security fixes
+asyncpg==0.29.0  # Latest PostgreSQL async driver
+websockets==13.1  # Latest WebSocket support
+
+# Data processing
+python-dotenv==1.0.1
+pyyaml==6.0.2  # Security updates
+cryptography==42.0.8  # Latest security patches
+
+# Validation
+pydantic==2.9.2  # Latest with performance improvements
 
 # Database
-sqlalchemy==2.0.23
-alembic==1.13.0
+sqlalchemy==2.0.35  # Latest 2.0 series
+alembic==1.13.3  # Latest migrations
 
 # Monitoring
-prometheus-client==0.19.0
-psutil==5.9.6
+prometheus-client==0.21.0  # Latest metrics
+psutil==6.0.0  # Latest system monitoring
 
-# Utils
-numpy
-pandas==2.0.3
-scipy==1.11.4
+# Utils and data science
+numpy==2.1.1  # Latest stable
+pandas==2.2.3  # Latest with performance improvements
+scipy==1.14.1  # Latest scientific computing
+
+# Retry and resilience
+tenacity==9.0.0  # Retry logic with exponential backoff
+circuitbreaker==2.0.0  # Circuit breaker pattern
+
+# Caching
+cachetools==5.5.0  # TTL cache for WebSocket data
+
+# Async utilities
+aiofiles==24.1.0  # Async file operations
+aiodns==3.2.0  # Async DNS resolution
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-cov==4.1.0
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==5.0.0
+pytest-timeout==2.3.1
+pytest-mock==3.14.0
 
-# Development
-black==23.11.0
-flake8==6.1.0
-mypy==1.7.1
-ipython==8.18.1
+# Development tools
+black==24.10.0  # Code formatting
+flake8==7.1.1  # Linting
+mypy==1.11.2  # Type checking
+bandit==1.7.10  # Security scanning
+safety==3.2.8  # Dependency security check
+
+# Logging and observability
+loguru==0.7.2  # Better logging
+structlog==24.4.0  # Structured logging
+opentelemetry-api==1.27.0  # Distributed tracing
+opentelemetry-sdk==1.27.0
+opentelemetry-instrumentation-asyncpg==0.48b0
+opentelemetry-instrumentation-aiohttp-client==0.48b0
+
+# Type stubs
+types-PyYAML==6.0.12.20240917
+types-cachetools==5.5.0.20240820
+
+# Performance
+uvloop==0.20.0  # High-performance event loop (optional)
+orjson==3.10.7  # Fast JSON parsing
+
