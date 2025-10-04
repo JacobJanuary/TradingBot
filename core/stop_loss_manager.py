@@ -190,9 +190,18 @@ class StopLossManager:
         Источник: core/exchange_manager.py:create_stop_loss_order (Bybit секция)
         """
         try:
+            # CRITICAL FIX: Convert DB format (BTCUSDT) to CCXT format (BTC/USDT:USDT)
+            # Symbol from DB is in format 'BTCUSDT', but CCXT expects 'BTC/USDT:USDT'
+            ccxt_symbol = symbol
+            if '/' not in symbol:  # Database format
+                # Convert BTCUSDT -> BTC/USDT:USDT for Bybit
+                if symbol.endswith('USDT'):
+                    base = symbol[:-4]  # Remove 'USDT'
+                    ccxt_symbol = f"{base}/USDT:USDT"
+
             # ШАГ 1: Получить позицию для positionIdx
             positions = await self.exchange.fetch_positions(
-                symbols=[symbol],
+                symbols=[ccxt_symbol],
                 params={'category': 'linear'}
             )
 
@@ -200,17 +209,17 @@ class StopLossManager:
             position_found = False
 
             for pos in positions:
-                if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                if pos['symbol'] == ccxt_symbol and float(pos.get('contracts', 0)) > 0:
                     position_idx = int(pos.get('info', {}).get('positionIdx', 0))
                     position_found = True
                     break
 
             if not position_found:
-                raise ValueError(f"No open position found for {symbol}")
+                raise ValueError(f"No open position found for {symbol} (checked as {ccxt_symbol})")
 
             # ШАГ 2: Форматирование для Bybit API
-            bybit_symbol = symbol.replace('/', '').replace(':USDT', '')
-            sl_price_formatted = self.exchange.price_to_precision(symbol, stop_price)
+            bybit_symbol = ccxt_symbol.replace('/', '').replace(':USDT', '')
+            sl_price_formatted = self.exchange.price_to_precision(ccxt_symbol, stop_price)
 
             # ШАГ 3: Установка через set_trading_stop (position-attached)
             params = {
@@ -229,6 +238,12 @@ class StopLossManager:
             # Обработка результата
             ret_code = result.get('retCode', 1)
             ret_msg = result.get('retMsg', 'Unknown error')
+
+            # CRITICAL FIX: Convert retCode to int for comparison
+            if isinstance(ret_code, str):
+                ret_code = int(ret_code)
+
+            self.logger.debug(f"Bybit API response: retCode={ret_code} (type={type(ret_code)}), retMsg={ret_msg}")
 
             if ret_code == 0:
                 # Успех
