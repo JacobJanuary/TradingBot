@@ -422,7 +422,7 @@ class PositionManager:
             # Get positions from exchange
             positions = await exchange.fetch_positions()
             active_positions = [p for p in positions if safe_get_attr(p, 'contracts', 'quantity', 'qty', 'size', default=0) > 0]
-            active_symbols = {p.symbol for p in active_positions}
+            active_symbols = {p.get('symbol') or p['symbol'] for p in active_positions}
 
             logger.info(f"Found {len(active_positions)} positions on {exchange_name}")
 

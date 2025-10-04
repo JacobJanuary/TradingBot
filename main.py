@@ -310,8 +310,22 @@ class TradingBot:
         """Log initial system state"""
         for name, exchange in self.exchanges.items():
             balance = await exchange.fetch_balance()
-            usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
-            logger.info(f"{name.capitalize()} balance: ${usdt_balance:.2f} USDT")
+
+            # DEBUG: Log balance structure for Bybit
+            if name == 'bybit':
+                logger.debug(f"Bybit balance keys: {list(balance.keys())}")
+                logger.debug(f"Bybit USDT via .get('USDT'): {balance.get('USDT')}")
+                logger.debug(f"Bybit USDT via ['total']: {balance.get('total', {}).get('USDT')}")
+                logger.debug(f"Bybit USDT via ['free']: {balance.get('free', {}).get('USDT')}")
+
+            # Try multiple ways to get USDT balance
+            usdt_balance = (
+                balance.get('USDT', {}).get('free') or
+                balance.get('free', {}).get('USDT') or
+                balance.get('total', {}).get('USDT') or
+                0
+            )
+            logger.info(f"{name.capitalize()} balance: ${float(usdt_balance):.2f} USDT")
 
             positions = await exchange.fetch_positions()
             if positions:
