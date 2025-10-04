@@ -394,7 +394,7 @@ class PositionManager:
                             symbol=symbol,
                             side=position.side,
                             entry_price=to_decimal(position.entry_price),
-                            quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0))
+                            quantity=to_decimal(safe_get_attr(position, 'contracts', 'quantity', 'qty', 'size', default=0))
                         )
                         position.has_trailing_stop = True
                         logger.info(f"✅ Trailing stop initialized for {symbol}")
