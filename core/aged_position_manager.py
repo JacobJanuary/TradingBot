@@ -56,7 +56,9 @@ class AgedPositionManager:
             'progressive_positions': 0,
             'emergency_closes': 0,
             'orders_updated': 0,
-            'orders_created': 0
+            'orders_created': 0,
+            'breakeven_closes': 0,
+            'gradual_liquidations': 0
         }
 
         logger.info(
@@ -478,7 +480,9 @@ class AgedPositionManager:
             'emergency_closes': self.stats['emergency_closes'],
             'orders_updated': self.stats['orders_updated'],
             'orders_created': self.stats['orders_created'],
-            'managed_positions': len(self.managed_positions)
+            'managed_positions': len(self.managed_positions),
+            'breakeven_closes': self.stats.get('breakeven_closes', 0),
+            'gradual_liquidations': self.stats.get('gradual_liquidations', 0)
         }
 
     async def cleanup(self):
