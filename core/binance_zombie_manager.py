@@ -298,9 +298,29 @@ class BinanceZombieManager:
                         active_symbols.add(f"{asset}/{quote}")
                         active_symbols.add(f"{asset}{quote}")  # Binance format
 
+            # Get open positions for SL validation (CRITICAL FOR FUTURES!)
+            active_positions = set()
+            try:
+                await self.check_and_wait_rate_limit('fetch_positions')
+                positions = await self.exchange.fetch_positions()
+                
+                for pos in positions:
+                    # Only add positions with non-zero size
+                    contracts = float(pos.get('contracts', 0) or 0)
+                    if contracts != 0:
+                        symbol = pos.get('symbol')
+                        if symbol:
+                            active_positions.add(symbol)
+                            # Also add without : suffix for comparison
+                            active_positions.add(symbol.replace(':', ''))
+                
+                logger.debug(f"Found {len(active_positions)} active positions")
+            except Exception as e:
+                logger.warning(f"Could not fetch positions for SL validation: {e}")
+
             # Process each order
             for order in all_orders:
-                zombie_order = await self._analyze_order(order, active_symbols)
+                zombie_order = await self._analyze_order(order, active_symbols, active_positions)
 
                 if zombie_order:
                     zombies[zombie_order.zombie_type].append(zombie_order)
@@ -344,13 +364,17 @@ class BinanceZombieManager:
             logger.error(f"Critical error detecting zombie orders: {e}", exc_info=True)
             return zombies
 
-    async def _analyze_order(self, order: Dict, active_symbols: Set[str]) -> Optional[BinanceZombieOrder]:
+    async def _analyze_order(self, 
+                            order: Dict, 
+                            active_symbols: Set[str],
+                            active_positions: Set[str]) -> Optional[BinanceZombieOrder]:
         """
         Analyze single order for zombie characteristics
 
         Args:
             order: Order dictionary from exchange
             active_symbols: Set of symbols with active positions/balances
+            active_positions: Set of symbols with open positions (for SL check)
 
         Returns:
             BinanceZombieOrder if zombie detected, None otherwise
@@ -372,9 +396,49 @@ class BinanceZombieManager:
             if status in ['closed', 'canceled', 'filled', 'rejected', 'expired']:
                 return None
 
-            # 1. Check for orphaned orders (no balance for symbol)
+            # Clean symbol for comparison
             symbol_clean = symbol.replace(':', '')  # Remove Binance perp suffix
+            
+            # 1. Determine if this is a Stop Loss order
+            order_type_upper = order_type.upper()
+            reduce_only = order.get('reduceOnly', False) or order.get('info', {}).get('reduceOnly', False)
+            
+            is_sl_order = (
+                order_type_upper in ['STOP_MARKET', 'STOP_LOSS_LIMIT', 'STOP_LOSS', 
+                                    'TAKE_PROFIT', 'TAKE_PROFIT_LIMIT', 'STOP', 
+                                    'STOP_LOSS_STOP_MARKET'] or
+                ('stop' in order_type.lower() and reduce_only)
+            )
+
+            # 2. SMART LOGIC FOR SL ORDERS (CHECK FIRST!)
+            # For futures SL, we ONLY check POSITION, NOT balance!
+            if is_sl_order:
+                # Check if there's an open position for this symbol
+                if symbol in active_positions or symbol_clean in active_positions:
+                    # Position exists → это защита, пропустить
+                    logger.debug(f"🛡️ Skip SL order {order_id}: has position {symbol}")
+                    return None
+                else:
+                    # Position NOT exists → это ЗОМБИ SL!
+                    logger.warning(f"🧟 Found zombie SL {order_id}: no position for {symbol}")
+                    return BinanceZombieOrder(
+                        order_id=order_id,
+                        client_order_id=client_order_id,
+                        symbol=symbol,
+                        side=side,
+                        order_type=order_type,
+                        amount=amount,
+                        price=price,
+                        status=status,
+                        timestamp=timestamp,
+                        zombie_type='orphaned',  # Use 'orphaned' to match dict key
+                        reason='Stop loss without position',
+                        order_list_id=order_list_id if order_list_id != -1 else None
+                    )
+            
+            # 3. For NON-SL orders: check balance/active_symbols
             if symbol not in active_symbols and symbol_clean not in active_symbols:
+                logger.debug(f"🔍 Orphaned order: {order_id} | type='{order_type}' | symbol={symbol}")
                 return BinanceZombieOrder(
                     order_id=order_id,
                     client_order_id=client_order_id,

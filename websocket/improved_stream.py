@@ -108,35 +108,69 @@ class ImprovedStream(ABC):
         
         logger.info(f"{self.name} WebSocket started")
     
-    async def stop(self):
-        """Stop WebSocket connection gracefully"""
-        logger.info(f"Stopping {self.name} WebSocket...")
+    async def stop(self, code: int = 1000, reason: str = "Normal closure", timeout: float = 5.0):
+        """
+        Stop WebSocket connection gracefully.
+        
+        Args:
+            code: WebSocket close code (default: 1000 = Normal Closure)
+            reason: Close reason string
+            timeout: Maximum time to wait for graceful shutdown (seconds)
+            
+        WebSocket Close Codes:
+            1000: Normal closure (successful)
+            1001: Going away (server/client is shutting down)
+            1002: Protocol error
+            1003: Unsupported data
+        """
+        logger.info(f"Stopping {self.name} WebSocket (code={code}, reason={reason})...")
         
         self.should_stop = True
         self.state = ConnectionState.DISCONNECTED
-        self.connected = False  # CRITICAL FIX: Sync connected attribute with state
+        self.connected = False
         
-        # Cancel all tasks
+        # Cancel all background tasks first
         tasks = [self.receive_task, self.heartbeat_task, self.monitor_task]
         for task in tasks:
             if task and not task.done():
                 task.cancel()
                 try:
-                    await task
-                except asyncio.CancelledError:
+                    await asyncio.wait_for(task, timeout=1.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
         
-        # Close WebSocket
+        # Gracefully close WebSocket with proper close frame
         if self.ws and not self.ws.closed:
-            await self.ws.close()
+            try:
+                # Send close frame with code and reason
+                await asyncio.wait_for(
+                    self.ws.close(code=code, message=reason.encode('utf-8')),
+                    timeout=timeout
+                )
+                logger.debug(f"{self.name} WebSocket closed gracefully")
+            except asyncio.TimeoutError:
+                logger.warning(f"{self.name} WebSocket close timeout after {timeout}s, forcing close")
+                # Force close if graceful close times out
+                if not self.ws.closed:
+                    try:
+                        await self.ws.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"Error closing {self.name} WebSocket: {e}")
         
-        # Close session
+        # Close aiohttp session
         if self.session and not self.session.closed:
-            await self.session.close()
+            try:
+                await asyncio.wait_for(self.session.close(), timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"{self.name} session close timeout")
+            except Exception as e:
+                logger.error(f"Error closing {self.name} session: {e}")
         
         self.stats['disconnected_at'] = datetime.now()
         
-        logger.info(f"{self.name} WebSocket stopped")
+        logger.info(f"✅ {self.name} WebSocket stopped")
     
     async def _connection_monitor(self):
         """Monitor and maintain connection"""

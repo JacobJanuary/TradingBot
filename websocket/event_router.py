@@ -83,6 +83,8 @@ class EventRouter:
             data: Event data dictionary
             **kwargs: Additional event metadata
         """
+        logger.debug(f"[EventRouter] emit() called: event='{event_name}', source={kwargs.get('source')}")
+        
         event = Event(
             name=event_name,
             data=data or {},
@@ -91,9 +93,11 @@ class EventRouter:
         )
 
         await self._event_queue.put(event)
+        logger.debug(f"[EventRouter] Event '{event_name}' queued (queue_size={self._event_queue.qsize()})")
 
         # Start processing if not already running
         if not self._processing:
+            logger.debug(f"[EventRouter] Starting event processing task")
             asyncio.create_task(self._process_events())
 
     async def _process_events(self):
@@ -111,6 +115,8 @@ class EventRouter:
     async def _handle_event(self, event: Event):
         """Handle single event"""
         try:
+            logger.debug(f"[EventRouter] Handling event '{event.name}'...")
+            
             # Apply middleware
             for middleware in self._middleware:
                 if asyncio.iscoroutinefunction(middleware):
@@ -119,6 +125,7 @@ class EventRouter:
                     event = middleware(event)
 
                 if not event:
+                    logger.debug(f"[EventRouter] Event '{event.name}' blocked by middleware")
                     return
 
             # Get handlers for event
@@ -127,6 +134,8 @@ class EventRouter:
             # Also check for wildcard handlers
             if '*' in self._handlers:
                 handlers.extend(self._handlers['*'])
+
+            logger.debug(f"[EventRouter] Found {len(handlers)} handler(s) for '{event.name}'")
 
             # Execute handlers
             if handlers:
@@ -139,6 +148,13 @@ class EventRouter:
 
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
+                    logger.debug(f"[EventRouter] All handlers for '{event.name}' completed")
+            else:
+                # Don't spam logs for known unhandled events (ticker, orderbook, price_update)
+                if event.name not in ['ticker', 'orderbook', 'price_update']:
+                    logger.warning(f"[EventRouter] No handlers registered for event '{event.name}'!")
+                else:
+                    logger.debug(f"[EventRouter] Ignoring unhandled market data event '{event.name}'")
 
             self.stats['events_processed'] += 1
 

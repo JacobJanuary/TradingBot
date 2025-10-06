@@ -296,6 +296,44 @@ class ExchangeManager:
             logger.error(f"Market order failed for {symbol}: {e}")
             raise
 
+    async def set_leverage(self, symbol: str, leverage: int) -> bool:
+        """
+        Set leverage for a trading pair
+        
+        CRITICAL: Must be called BEFORE opening position!
+        For Bybit: automatically adds params={'category': 'linear'}
+        
+        Args:
+            symbol: Trading pair
+            leverage: Leverage multiplier (e.g., 5, 10)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Bybit requires 'category' parameter
+            if self.name.lower() == 'bybit':
+                await self.rate_limiter.execute_request(
+                    self.exchange.set_leverage,
+                    leverage=leverage,
+                    symbol=symbol,
+                    params={'category': 'linear'}
+                )
+            else:
+                # Binance and others
+                await self.rate_limiter.execute_request(
+                    self.exchange.set_leverage,
+                    leverage=leverage,
+                    symbol=symbol
+                )
+            
+            logger.info(f"✅ Leverage set to {leverage}x for {symbol} on {self.name}")
+            return True
+            
+        except ccxt.BaseError as e:
+            logger.warning(f"⚠️ Failed to set leverage for {symbol}: {e}")
+            return False
+
     async def create_limit_order(self, symbol: str, side: str, amount: Decimal, price: Decimal) -> OrderResult:
         """Create limit order"""
         try:

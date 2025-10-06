@@ -62,6 +62,9 @@ class AdaptiveBinanceStream:
             'account_update': None
         }
 
+        # Background tasks tracking
+        self._background_tasks = []
+        
         # URLs based on mode
         if self.is_testnet:
             # For testnet, use production public stream (works better)
@@ -94,14 +97,27 @@ class AdaptiveBinanceStream:
         """
         logger.info("Starting TESTNET mode with public streams + REST polling")
         
-        # Start public price stream
+        # Start public price stream in background
         public_task = asyncio.create_task(self._run_public_stream())
+        logger.info("Public stream task started")
         
-        # Start REST polling for private data
+        # Start REST polling for private data in background
         polling_task = asyncio.create_task(self._poll_private_data())
+        logger.info("REST polling task started")
         
-        # Wait for both tasks
-        await asyncio.gather(public_task, polling_task)
+        # DON'T WAIT! Let both tasks run in background
+        # Store tasks for proper cleanup
+        self._background_tasks = [public_task, polling_task]
+        
+        # Keep this coroutine alive while running
+        try:
+            while self.running:
+                await asyncio.sleep(1)
+        finally:
+            # Cancel background tasks on stop
+            for task in self._background_tasks:
+                task.cancel()
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
     
     async def _start_mainnet_mode(self):
         """
@@ -219,8 +235,12 @@ class AdaptiveBinanceStream:
         """Poll REST API for private data (testnet fallback)"""
         logger.info("Starting REST API polling for private data (testnet mode)")
         
+        poll_count = 0
         while self.running:
             try:
+                poll_count += 1
+                logger.debug(f"[AdaptiveStream] Poll #{poll_count} starting...")
+                
                 # Fetch account data using ccxt methods
                 balance = await self.client.fetch_balance()
                 account_data = {
@@ -230,6 +250,8 @@ class AdaptiveBinanceStream:
                 
                 # Fetch positions using ccxt methods
                 positions_raw = await self.client.fetch_positions()
+                logger.debug(f"[AdaptiveStream] Fetched {len(positions_raw)} positions")
+                
                 positions = []
                 self.active_symbols.clear()  # Reset active symbols
 
@@ -243,7 +265,10 @@ class AdaptiveBinanceStream:
                             'unrealizedProfit': pos['unrealizedPnl'] or 0,
                             'markPrice': pos['markPrice'] or 0
                         })
+                
+                logger.debug(f"[AdaptiveStream] Active positions: {len(positions)}, calling callback...")
                 await self._process_positions_update(positions)
+                logger.debug(f"[AdaptiveStream] Position update callback completed")
 
                 # Fetch open orders more efficiently
                 try:
@@ -326,6 +351,8 @@ class AdaptiveBinanceStream:
     
     async def _process_positions_update(self, positions: list):
         """Process positions update from REST"""
+        logger.debug(f"[AdaptiveStream] _process_positions_update called with {len(positions)} positions")
+        
         for pos in positions:
             if float(pos['positionAmt']) != 0:
                 symbol = pos['symbol']
@@ -338,9 +365,15 @@ class AdaptiveBinanceStream:
                     'mark_price': float(pos['markPrice'])
                 }
         
+        logger.debug(f"[AdaptiveStream] Prepared {len(self.positions)} position updates")
+        
         # Trigger callback
         if self.callbacks['position_update']:
+            logger.debug(f"[AdaptiveStream] Calling position_update callback with {len(self.positions)} positions")
             await self.callbacks['position_update'](self.positions)
+            logger.debug(f"[AdaptiveStream] position_update callback completed")
+        else:
+            logger.warning(f"[AdaptiveStream] position_update callback not registered!")
     
     async def _process_orders_update(self, orders: list):
         """Process orders update from REST"""
@@ -411,23 +444,58 @@ class AdaptiveBinanceStream:
                 symbols.append(clean_symbol)
         return symbols
     
-    async def stop(self):
-        """Stop all streams"""
+    async def stop(self, code: int = 1000, reason: str = "Bot shutdown", timeout: float = 5.0):
+        """
+        Stop all streams gracefully.
+        
+        Args:
+            code: WebSocket close code (1000 = Normal Closure, 1001 = Going Away)
+            reason: Close reason string
+            timeout: Maximum time to wait for each stream to close (seconds)
+        """
+        logger.info(f"Stopping AdaptiveStream (code={code}, reason={reason})...")
         self.running = False
         
-        if self.public_ws:
-            await self.public_ws.close()
+        # Close public WebSocket gracefully
+        if self.public_ws and not self.public_ws.closed:
+            try:
+                await asyncio.wait_for(
+                    self.public_ws.close(code, reason),
+                    timeout=timeout
+                )
+                logger.debug("Public WebSocket closed gracefully")
+            except asyncio.TimeoutError:
+                logger.warning(f"Public WebSocket close timeout after {timeout}s")
+            except Exception as e:
+                logger.error(f"Error closing public WebSocket: {e}")
         
-        if self.private_ws:
-            await self.private_ws.close()
+        # Close private WebSocket gracefully
+        if self.private_ws and not self.private_ws.closed:
+            try:
+                await asyncio.wait_for(
+                    self.private_ws.close(code, reason),
+                    timeout=timeout
+                )
+                logger.debug("Private WebSocket closed gracefully")
+            except asyncio.TimeoutError:
+                logger.warning(f"Private WebSocket close timeout after {timeout}s")
+            except Exception as e:
+                logger.error(f"Error closing private WebSocket: {e}")
         
+        # Close Binance listen key (mainnet only)
         if self.listen_key and not self.is_testnet:
             try:
-                await self.client.futures_stream_close(self.listen_key)
+                await asyncio.wait_for(
+                    self.client.futures_stream_close(self.listen_key),
+                    timeout=2.0
+                )
+                logger.debug("Listen key closed")
+            except asyncio.TimeoutError:
+                logger.warning("Listen key close timeout")
             except Exception as e:
                 logger.debug(f"Failed to close futures stream: {e}")
         
-        logger.info("AdaptiveStream stopped")
+        logger.info("✅ AdaptiveStream stopped")
     
     def get_price(self, symbol: str) -> Optional[float]:
         """Get current price for symbol"""

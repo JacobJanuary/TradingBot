@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class TrailingStopState(Enum):
     """Trailing stop states"""
     INACTIVE = "inactive"  # Not activated yet
-    WAITING = "waiting"  # Waiting for activation price
+    # WAITING = "waiting"  # REMOVED: Not needed without breakeven mechanism
     ACTIVE = "active"  # Actively trailing
     TRIGGERED = "triggered"  # Stop triggered
 
@@ -40,7 +40,7 @@ class TrailingStopConfig:
         {'profit': 3.0, 'distance': 0.2},
     ])
 
-    breakeven_at: Optional[Decimal] = Decimal('0.5')  # Move SL to breakeven at X%
+    # breakeven_at: Optional[Decimal] = None  # REMOVED: Not needed, activate only at activation_percent
 
     # Time-based features
     time_based_activation: bool = False
@@ -108,11 +108,12 @@ class SmartTrailingStopManager:
         logger.info(f"SmartTrailingStopManager initialized with config: {self.config}")
 
     async def create_trailing_stop(self,
-                                   symbol: str,
-                                   side: str,
-                                   entry_price: float,
-                                   quantity: float,
-                                   initial_stop: Optional[float] = None) -> TrailingStopInstance:
+                                  symbol: str,
+                                  side: str,
+                                  entry_price: float,
+                                  quantity: float,
+                                  initial_stop: Optional[float] = None,
+                                  stop_order_id: Optional[str] = None) -> TrailingStopInstance:
         """
         Create new trailing stop instance
 
@@ -122,6 +123,10 @@ class SmartTrailingStopManager:
             entry_price: Entry price of position
             quantity: Position size
             initial_stop: Initial stop loss price (optional)
+            stop_order_id: ID of existing SL order (optional, None for Bybit position-attached SL)
+        
+        Returns:
+            TrailingStopInstance: Created trailing stop instance
         """
         async with self.lock:
             # Check if already exists
@@ -137,15 +142,21 @@ class SmartTrailingStopManager:
                 highest_price=Decimal(str(entry_price)) if side == 'long' else Decimal('999999'),
                 lowest_price=Decimal('999999') if side == 'long' else Decimal(str(entry_price)),
                 side=side.lower(),
-                quantity=Decimal(str(quantity))
+                quantity=Decimal(str(quantity)),
+                stop_order_id=stop_order_id  # ✅ СОХРАНЯЕМ ID НАЧАЛЬНОГО SL ОРДЕРА!
             )
 
             # Set initial stop if provided
+            # CRITICAL FIX: Don't create SL here - it's already created in PositionManager.open_position
+            # Trailing Stop Manager should only UPDATE existing SL, not create duplicates
             if initial_stop:
                 ts.current_stop_price = Decimal(str(initial_stop))
-
-                # Place initial stop order
-                await self._place_stop_order(ts)
+                
+                # NOTE: SL order already exists (created by PositionManager._set_stop_loss)
+                # We just track the price and order_id, don't create another order
+                # await self._place_stop_order(ts)  # REMOVED to prevent duplicate SL orders
+                
+                logger.info(f"Trailing stop initialized for {symbol} with existing SL order_id={stop_order_id}")
 
             # Calculate activation price
             if side == 'long':
@@ -193,12 +204,13 @@ class SmartTrailingStopManager:
             if profit_percent > ts.highest_profit_percent:
                 ts.highest_profit_percent = profit_percent
 
-            # State machine
+            # State machine: INACTIVE → ACTIVE → TRIGGERED
             if ts.state == TrailingStopState.INACTIVE:
                 return await self._check_activation(ts)
 
-            elif ts.state == TrailingStopState.WAITING:
-                return await self._check_activation(ts)
+            # WAITING state removed - not needed without breakeven mechanism
+            # elif ts.state == TrailingStopState.WAITING:
+            #     return await self._check_activation(ts)
 
             elif ts.state == TrailingStopState.ACTIVE:
                 return await self._update_trailing_stop(ts)
@@ -206,24 +218,12 @@ class SmartTrailingStopManager:
             return None
 
     async def _check_activation(self, ts: TrailingStopInstance) -> Optional[Dict]:
-        """Check if trailing stop should be activated"""
-
-        # Check breakeven first (if configured)
-        if self.config.breakeven_at and not ts.current_stop_price:
-            profit = self._calculate_profit_percent(ts)
-            if profit >= self.config.breakeven_at:
-                # Move stop to breakeven
-                ts.current_stop_price = ts.entry_price
-                ts.state = TrailingStopState.WAITING
-
-                await self._update_stop_order(ts)
-
-                logger.info(f"{ts.symbol}: Moving stop to breakeven at {profit:.2f}% profit")
-                return {
-                    'action': 'breakeven',
-                    'symbol': ts.symbol,
-                    'stop_price': float(ts.current_stop_price)
-                }
+        """
+        Check if trailing stop should be activated
+        
+        LOGIC: До достижения activation_percent ничего не делать!
+        Только при profit >= activation_percent активировать trailing.
+        """
 
         # Check activation conditions
         should_activate = False
@@ -382,18 +382,45 @@ class SmartTrailingStopManager:
             return False
 
     async def _update_stop_order(self, ts: TrailingStopInstance) -> bool:
-        """Update stop order on exchange"""
+        """
+        Update stop order on exchange (ATOMIC)
+        
+        CRITICAL FIX: Create new SL BEFORE canceling old one
+        This ensures position always has SL protection
+        """
         try:
-            # Cancel old order
+            # СНАЧАЛА создаем новый ордер
+            order_side = 'sell' if ts.side == 'long' else 'buy'
+            new_order = await self.exchange.create_stop_loss_order(
+                symbol=ts.symbol,
+                side=order_side,
+                amount=float(ts.quantity),
+                stop_price=float(ts.current_stop_price)
+            )
+            
+            logger.info(f"✅ New SL created for {ts.symbol} at {ts.current_stop_price}")
+            
+            # ПОТОМ отменяем старый (если есть)
             if ts.stop_order_id:
-                await self.exchange.cancel_order(ts.stop_order_id, ts.symbol)
-                await asyncio.sleep(0.1)  # Small delay
-
-            # Place new order
-            return await self._place_stop_order(ts)
+                try:
+                    await self.exchange.cancel_order(ts.stop_order_id, ts.symbol)
+                    logger.debug(f"Old SL {ts.stop_order_id} cancelled for {ts.symbol}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to cancel old SL {ts.stop_order_id} for {ts.symbol} "
+                        f"(but new one is placed): {e}"
+                    )
+            
+            # Обновляем ID
+            ts.stop_order_id = new_order.id
+            return True
 
         except Exception as e:
-            logger.error(f"Failed to update stop order for {ts.symbol}: {e}")
+            logger.error(
+                f"Failed to create new stop order for {ts.symbol}: {e}. "
+                f"OLD SL REMAINS ACTIVE (position is protected)"
+            )
+            # СТАРЫЙ SL ОСТАЕТСЯ! Позиция защищена.
             return False
 
     async def on_position_closed(self, symbol: str, realized_pnl: float = None):

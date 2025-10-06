@@ -81,6 +81,61 @@ class Repository:
         """Close connection pool"""
         if self.pool:
             await self.pool.close()
+    
+    # ============== Transaction Management ==============
+    
+    class Transaction:
+        """
+        Transaction context manager for atomic database operations.
+        
+        Usage:
+            async with repository.transaction() as conn:
+                trade_id = await repository.create_trade(..., conn=conn)
+                position_id = await repository.create_position(..., conn=conn)
+                # If any operation fails, all are rolled back
+        """
+        
+        def __init__(self, pool: asyncpg.Pool):
+            self.pool = pool
+            self.conn = None
+            self.transaction = None
+        
+        async def __aenter__(self) -> asyncpg.Connection:
+            """Acquire connection and start transaction"""
+            self.conn = await self.pool.acquire()
+            self.transaction = self.conn.transaction()
+            await self.transaction.start()
+            return self.conn
+        
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            """Commit or rollback transaction and release connection"""
+            try:
+                if exc_type is not None:
+                    # Exception occurred - rollback
+                    await self.transaction.rollback()
+                    logger.warning(f"Transaction rolled back due to {exc_type.__name__}: {exc_val}")
+                else:
+                    # No exception - commit
+                    await self.transaction.commit()
+            finally:
+                await self.pool.release(self.conn)
+            
+            # Don't suppress the exception
+            return False
+    
+    def transaction(self):
+        """
+        Create a transaction context manager.
+        
+        Returns:
+            Transaction context manager that provides a connection
+            
+        Example:
+            async with repository.transaction() as conn:
+                await conn.execute("INSERT INTO ...")
+                await conn.execute("UPDATE ...")
+        """
+        return self.Transaction(self.pool)
 
     # ============== Signal Operations ==============
 
@@ -209,8 +264,17 @@ class Repository:
 
     # ============== Trade Operations ==============
 
-    async def create_trade(self, trade_data: Dict) -> int:
-        """Create new trade record"""
+    async def create_trade(self, trade_data: Dict, conn: Optional[asyncpg.Connection] = None) -> int:
+        """
+        Create new trade record.
+        
+        Args:
+            trade_data: Trade information dictionary
+            conn: Optional connection for transaction support
+            
+        Returns:
+            Trade ID
+        """
         query = """
             INSERT INTO trading_bot.trades (
                 position_id, symbol, exchange, side, order_type,
@@ -220,7 +284,8 @@ class Repository:
             RETURNING id
         """
 
-        async with self.pool.acquire() as conn:
+        if conn:
+            # Use provided connection (transaction mode)
             trade_id = await conn.fetchval(
                 query,
                 trade_data.get('position_id'),
@@ -234,13 +299,38 @@ class Repository:
                 trade_data.get('status', 'FILLED'),
                 trade_data.get('commission', 0)
             )
+        else:
+            # Acquire connection from pool (standalone mode)
+            async with self.pool.acquire() as conn:
+                trade_id = await conn.fetchval(
+                    query,
+                    trade_data.get('position_id'),
+                    trade_data['symbol'],
+                    trade_data['exchange'],
+                    trade_data['side'],
+                    trade_data.get('order_type', 'MARKET'),
+                    trade_data['quantity'],
+                    trade_data['price'],
+                    trade_data['order_id'],
+                    trade_data.get('status', 'FILLED'),
+                    trade_data.get('commission', 0)
+                )
 
-            return trade_id
+        return trade_id
 
     # ============== Position Operations ==============
 
-    async def create_position(self, position_data: Dict) -> int:
-        """Create new position record"""
+    async def create_position(self, position_data: Dict, conn: Optional[asyncpg.Connection] = None) -> int:
+        """
+        Create new position record.
+        
+        Args:
+            position_data: Position information dictionary
+            conn: Optional connection for transaction support
+            
+        Returns:
+            Position ID
+        """
         query = """
             INSERT INTO monitoring.positions (
                 symbol, exchange, side, quantity,
@@ -249,7 +339,8 @@ class Repository:
             RETURNING id
         """
 
-        async with self.pool.acquire() as conn:
+        if conn:
+            # Use provided connection (transaction mode)
             position_id = await conn.fetchval(
                 query,
                 position_data['symbol'],
@@ -258,8 +349,19 @@ class Repository:
                 position_data['quantity'],
                 position_data['entry_price']
             )
+        else:
+            # Acquire connection from pool (standalone mode)
+            async with self.pool.acquire() as conn:
+                position_id = await conn.fetchval(
+                    query,
+                    position_data['symbol'],
+                    position_data['exchange'],
+                    position_data['side'],
+                    position_data['quantity'],
+                    position_data['entry_price']
+                )
 
-            return position_id
+        return position_id
 
     async def open_position(self, position_data: Dict) -> int:
         """
@@ -302,8 +404,17 @@ class Repository:
                 position_update['exchange']
             )
 
-    async def update_position_stop_loss(self, position_id: int, stop_price: float, order_id: str):
-        """Update position stop loss"""
+    async def update_position_stop_loss(self, position_id: int, stop_price: float, order_id: str, 
+                                        conn: Optional[asyncpg.Connection] = None):
+        """
+        Update position stop loss.
+        
+        Args:
+            position_id: Position ID
+            stop_price: Stop loss price
+            order_id: Stop loss order ID
+            conn: Optional connection for transaction support
+        """
         query = """
             UPDATE monitoring.positions
             SET stop_loss_price = $1,
@@ -311,8 +422,13 @@ class Repository:
             WHERE id = $2
         """
 
-        async with self.pool.acquire() as conn:
+        if conn:
+            # Use provided connection (transaction mode)
             await conn.execute(query, stop_price, position_id)
+        else:
+            # Acquire connection from pool (standalone mode)
+            async with self.pool.acquire() as conn:
+                await conn.execute(query, stop_price, position_id)
 
     async def update_position_trailing_stop(self, position_id: int,
                                             activation_price: float,

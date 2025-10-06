@@ -17,7 +17,7 @@ STOP LOSS OPERATIONS
 import asyncio
 import logging
 import os
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 from decimal import Decimal
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -27,7 +27,12 @@ from database.repository import Repository as TradingRepository
 from protection.trailing_stop import SmartTrailingStopManager
 from websocket.event_router import EventRouter
 from core.exchange_manager import ExchangeManager
+from core.services.zombie_cleanup_service import ZombieCleanupService
 from utils.decimal_utils import to_decimal, calculate_stop_loss, calculate_pnl, calculate_quantity
+from utils.order_helpers import (
+    safe_order_get, get_order_id, get_order_symbol, 
+    get_order_type, get_order_side, get_order_amount
+)
 
 # CRITICAL FIX: Import normalize_symbol for correct position verification
 def normalize_symbol(symbol: str) -> str:
@@ -134,8 +139,8 @@ class PositionManager:
         
         trailing_config = TrailingStopConfig(
             activation_percent=Decimal(str(config.trailing_activation_percent)),
-            callback_percent=Decimal(str(config.trailing_callback_percent)),
-            breakeven_at=None  # FIX: 2025-10-03 - Отключить breakeven механизм
+            callback_percent=Decimal(str(config.trailing_callback_percent))
+            # breakeven_at removed completely from TrailingStopConfig (2025-10-05)
         )
         
         self.trailing_managers = {
@@ -168,9 +173,14 @@ class PositionManager:
         # Periodic sync task
         self.sync_task = None
         self.sync_interval = 600  # 10 minutes (optimized to reduce API calls)
-        self.zombie_check_counter = 0  # Counter for tracking zombie checks
-        self.last_zombie_count = 0  # Track last zombie count for trend monitoring
-        self.aggressive_cleanup_threshold = 10  # Trigger aggressive cleanup if > 10 zombies
+        
+        # REFACTORING: Zombie cleanup extracted to service
+        self.zombie_cleanup = ZombieCleanupService(
+            repository=repository,
+            exchanges=exchanges,
+            sync_interval=self.sync_interval,
+            aggressive_cleanup_threshold=10
+        )
 
         logger.info("PositionManager initialized")
 
@@ -409,112 +419,21 @@ class PositionManager:
             logger.error(f"Failed to load positions from database: {e}")
             return False
 
-    async def sync_exchange_positions(self, exchange_name: str):
-        """Sync positions from specific exchange"""
-        try:
-            exchange = self.exchanges.get(exchange_name)
-            if not exchange:
-                logger.warning(f"Exchange {exchange_name} not found")
-                return
-
-            logger.info(f"🔄 Syncing positions from {exchange_name}...")
-
-            # Get positions from exchange
-            positions = await exchange.fetch_positions()
-            active_positions = [p for p in positions if safe_get_attr(p, 'contracts', 'quantity', 'qty', 'size', default=0) > 0]
-            active_symbols = {p.get('symbol') or p['symbol'] for p in active_positions}
-
-            logger.info(f"Found {len(active_positions)} positions on {exchange_name}")
-
-            # Find positions in DB but not on exchange (closed positions)
-            db_positions_to_close = []
-            for symbol, pos_state in list(self.positions.items()):
-                if pos_state.exchange == exchange_name and symbol not in active_symbols:
-                    db_positions_to_close.append(pos_state)
-
-            # Close positions that no longer exist on exchange
-            if db_positions_to_close:
-                logger.warning(f"⚠️ Found {len(db_positions_to_close)} positions in DB but not on {exchange_name}")
-                for pos_state in db_positions_to_close:
-                    logger.info(f"Closing orphaned position: {pos_state.symbol}")
-                    # Close position in database
-                    if pos_state.id:
-                        await self.repository.close_position(
-                            pos_state.id,                           # position_id: int
-                            pos_state.current_price or 0.0,        # close_price: float
-                            pos_state.unrealized_pnl or 0.0,       # pnl: float
-                            pos_state.unrealized_pnl_percent or 0.0, # pnl_percentage: float
-                            'sync_cleanup'                          # reason: str
-                        )
-                    # Remove from tracking
-                    self.positions.pop(pos_state.symbol, None)
-                    logger.info(f"✅ Closed orphaned position: {pos_state.symbol}")
-
-            # Update or add positions
-            for pos in active_positions:
-                symbol = pos.symbol
-
-                # Check if position exists in our tracking
-                if symbol not in self.positions or self.positions[symbol].exchange != exchange_name:
-                    # New position - add to database
-                    db_position = await self.repository.create_position({
-                        'symbol': symbol,
-                        'exchange': exchange_name,
-                        'side': pos.side,
-                        'quantity': pos.quantity,
-                        'entry_price': pos.entry_price,
-                        'current_price': pos.entry_price,
-                        'strategy': 'manual',
-                        'status': 'open'
-                    })
-
-                    # Create position state
-                    position_state = PositionState(
-                        id=db_position['id'],
-                        symbol=symbol,
-                        exchange=exchange_name,
-                        side=pos.side,
-                        quantity=pos.quantity,
-                        entry_price=pos.entry_price,
-                        current_price=pos.entry_price,
-                        unrealized_pnl=0,
-                        unrealized_pnl_percent=0,
-                        has_stop_loss=False,
-                        stop_loss_price=None,
-                        has_trailing_stop=False,
-                        trailing_activated=False,
-                        opened_at=datetime.now(timezone.utc),
-                        age_hours=0
-                    )
-
-                    self.positions[symbol] = position_state
-                    logger.info(f"➕ Added new position: {symbol}")
-
-                    # Set stop loss for new position
-                    stop_loss_percent = to_decimal(self.config.stop_loss_percent)
-                    stop_loss_price = calculate_stop_loss(
-                        to_decimal(pos.entry_price), pos.side, stop_loss_percent
-                    )
-
-                    if await self._set_stop_loss(exchange, position_state, stop_loss_price):
-                        position_state.has_stop_loss = True
-                        position_state.stop_loss_price = stop_loss_price
-                        logger.info(f"✅ Stop loss set for new position {symbol}")
-
-        except Exception as e:
-            logger.error(f"Error syncing {exchange_name} positions: {e}")
-
     async def start_periodic_sync(self):
-        """Start periodic position synchronization"""
+        """
+        Start periodic position synchronization
+        
+        REFACTORED: 2025-10-04
+        Now uses PositionSynchronizer instead of duplicated logic
+        """
         logger.info(f"🔄 Starting periodic sync every {self.sync_interval} seconds")
 
         while True:
             try:
                 await asyncio.sleep(self.sync_interval)
 
-                # Sync all exchanges
-                for exchange_name in self.exchanges.keys():
-                    await self.sync_exchange_positions(exchange_name)
+                # Sync all exchanges using PositionSynchronizer
+                await self.synchronize_with_exchanges()
 
                 # Check for positions without stop loss after sync
                 await self.check_positions_protection()
@@ -537,59 +456,89 @@ class PositionManager:
     def _register_event_handlers(self):
         """Register handlers for WebSocket events"""
 
-        @self.event_router.on('position.update')
+        @self.event_router.on('position_update')
         async def handle_position_update(data: Dict):
             await self._on_position_update(data)
 
-        @self.event_router.on('order.filled')
+        @self.event_router.on('order_update')
         async def handle_order_filled(data: Dict):
             await self._on_order_filled(data)
 
-        @self.event_router.on('stop_loss.triggered')
+        @self.event_router.on('stop_loss_triggered')
         async def handle_stop_loss(data: Dict):
             await self._on_stop_loss_triggered(data)
 
     async def open_position(self, request: PositionRequest) -> Optional[PositionState]:
         """
-        Open new position with complete workflow:
-        1. Validate request
-        2. Check risk limits
-        3. Calculate position size
-        4. Execute market order
-        5. Set stop loss
-        6. Initialize trailing stop
-        7. Save to database
+        Open new position with complete workflow and race condition protection.
+        
+        STEPS:
+        1. Acquire PostgreSQL advisory lock (cross-process protection)
+        2. Get exchange instance
+        3. Check if position already exists (protected by lock)
+        4. Validate risk limits
+        5. Calculate position size
+        6. Validate spread
+        7. Execute market order
+        8. Create position state
+        9. Save to database (trade + position records)
+        10. Set stop loss
+        11. Initialize trailing stop
+        12. Update internal tracking
+        
+        RACE CONDITION PROTECTION:
+        - PostgreSQL advisory lock prevents duplicate positions across bot instances
+        - In-memory lock protects against concurrent calls within same process
+        - All locks are released in finally block
+        
+        Args:
+            request: PositionRequest with symbol, exchange, side, etc.
+            
+        Returns:
+            PositionState if successful, None otherwise
         """
 
         symbol = request.symbol
         exchange_name = request.exchange.lower()
+        db_lock_acquired = False
 
-        # Acquire position lock
+        # Acquire in-memory position lock (fast check)
         lock_key = f"{exchange_name}_{symbol}"
         if lock_key in self.position_locks:
-            logger.warning(f"Position already being processed for {symbol}")
+            logger.warning(f"Position already being processed for {symbol} (in-memory lock)")
             return None
 
         self.position_locks.add(lock_key)
 
         try:
-            # 1. Get exchange
+            # 1. Acquire PostgreSQL advisory lock (protects across processes)
+            db_lock_acquired = await self.repository.acquire_position_lock(symbol, exchange_name)
+            if not db_lock_acquired:
+                logger.warning(
+                    f"Could not acquire database lock for {symbol} on {exchange_name}. "
+                    f"Position may be in process by another bot instance."
+                )
+                return None
+            
+            logger.debug(f"✅ Acquired DB advisory lock for {symbol}")
+
+            # 2. Get exchange
             exchange = self.exchanges.get(exchange_name)
             if not exchange:
                 logger.error(f"Exchange {exchange_name} not available")
                 return None
 
-            # 2. Check if position already exists
+            # 3. Check if position already exists (now protected by DB lock)
             if await self._position_exists(symbol, exchange_name):
                 logger.warning(f"Position already exists for {symbol} on {exchange_name}")
                 return None
 
-            # 3. Validate risk limits
+            # 4. Validate risk limits
             if not await self._validate_risk_limits(request):
                 logger.warning(f"Risk limits exceeded for {symbol}")
                 return None
 
-            # 4. Calculate position size
+            # 5. Calculate position size
             position_size_usd = request.position_size_usd or self.config.position_size_usd
             quantity = await self._calculate_position_size(
                 exchange, symbol, request.entry_price, position_size_usd
@@ -599,11 +548,16 @@ class PositionManager:
                 logger.error(f"Failed to calculate position size for {symbol}")
                 return None
 
-            # 5. Validate spread (временно только логирование)
+            # 6. Validate spread (временно только логирование)
             await self._validate_spread(exchange, symbol)
             # Не блокируем открытие позиций из-за спреда
 
-            # 6. Execute market order
+            # 6.5. Set leverage before opening position
+            # Use leverage from config (default: 10 for all exchanges)
+            leverage = self.config.leverage
+            await exchange.set_leverage(symbol, leverage)
+
+            # 7. Execute market order
             logger.info(f"Opening position: {symbol} {request.side} {quantity}")
 
             # Convert side: long -> buy, short -> sell for Binance
@@ -620,12 +574,12 @@ class PositionManager:
                 logger.error(f"Failed to open position for {symbol}")
                 return None
 
-            # 7. Create position state
+            # 8. Create position state
             position = PositionState(
                 id=None,  # Will be set after DB insert
                 symbol=symbol,
                 exchange=exchange_name,
-                side='long' if request.side == 'BUY' else 'short',
+                side=request.side.lower(),  # Use request.side directly (already 'long' or 'short')
                 quantity=order.filled,
                 entry_price=order.price,
                 current_price=order.price,
@@ -659,7 +613,7 @@ class PositionManager:
 
             position.id = position_id
 
-            # 9. Set stop loss
+            # 10. Set stop loss
             stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
             stop_loss_price = calculate_stop_loss(
                 to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
@@ -667,36 +621,39 @@ class PositionManager:
             
             logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
 
-            if await self._set_stop_loss(exchange, position, stop_loss_price):
+            sl_success, sl_order_id = await self._set_stop_loss(exchange, position, stop_loss_price)
+            
+            if sl_success:
                 position.has_stop_loss = True
                 position.stop_loss_price = stop_loss_price
-                logger.info(f"✅ Stop loss confirmed for {symbol}")
+                logger.info(f"✅ Stop loss confirmed for {symbol}, order_id={sl_order_id}")
 
                 await self.repository.update_position_stop_loss(
                     position_id, stop_loss_price, ""
                 )
+                
+                # 11. Initialize trailing stop WITH stop_order_id
+                trailing_manager = self.trailing_managers.get(exchange_name)
+                if trailing_manager:
+                    await trailing_manager.create_trailing_stop(
+                        symbol=symbol,
+                        side=position.side,
+                        entry_price=position.entry_price,
+                        quantity=position.quantity,
+                        initial_stop=stop_loss_price,
+                        stop_order_id=sl_order_id  # ✅ ПЕРЕДАЁМ ID ОРДЕРА!
+                    )
+                    position.has_trailing_stop = True
             else:
                 logger.warning(f"⚠️ Failed to set stop loss for {symbol}")
 
-            # 10. Initialize trailing stop
-            trailing_manager = self.trailing_managers.get(exchange_name)
-            if trailing_manager:
-                await trailing_manager.create_trailing_stop(
-                    symbol=symbol,
-                    side=position.side,
-                    entry_price=position.entry_price,
-                    quantity=position.quantity,
-                    initial_stop=stop_loss_price
-                )
-                position.has_trailing_stop = True
-
-            # 11. Update internal tracking
+            # 12. Update internal tracking
             self.positions[symbol] = position
             self.position_count += 1
             self.total_exposure += Decimal(str(position.quantity * position.entry_price))
             self.stats['positions_opened'] += 1
 
-            # Position already saved to database in steps 8-9 above
+            # Position already saved to database in step 9 above
             logger.info(f"💾 Position saved to database with ID: {position.id}")
 
             logger.info(
@@ -711,6 +668,15 @@ class PositionManager:
             return None
 
         finally:
+            # Release PostgreSQL advisory lock
+            if db_lock_acquired:
+                try:
+                    await self.repository.release_position_lock(symbol, exchange_name)
+                    logger.debug(f"🔓 Released DB advisory lock for {symbol}")
+                except Exception as lock_error:
+                    logger.error(f"Failed to release DB lock for {symbol}: {lock_error}")
+            
+            # Release in-memory lock
             self.position_locks.discard(lock_key)
 
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
@@ -885,23 +851,20 @@ class PositionManager:
 
         return True
 
-    async def _calculate_stop_loss(self, entry_price: float, side: str, percent: float) -> float:
-        """Calculate stop loss price"""
-
-        if side == 'long':
-            return entry_price * (1 - percent / 100)
-        else:
-            return entry_price * (1 + percent / 100)
-
     async def _set_stop_loss(self,
                              exchange: ExchangeManager,
                              position: PositionState,
-                             stop_price: float) -> bool:
+                             stop_price: float) -> Tuple[bool, Optional[str]]:
         """
         Set stop loss order using unified StopLossManager.
 
         This function now uses StopLossManager for ALL SL operations
         to ensure consistency across the system.
+        
+        Returns:
+            Tuple[bool, Optional[str]]: (success, order_id)
+                - success: True if SL was set successfully
+                - order_id: ID of created order (None for Bybit position-attached SL)
         """
 
         logger.info(f"Attempting to set stop loss for {position.symbol}")
@@ -921,7 +884,7 @@ class PositionManager:
 
             if has_sl:
                 logger.info(f"📌 Stop loss already exists for {position.symbol} at {existing_sl_price}")
-                return True  # Stop loss exists, no need to create new one
+                return True, None  # Stop loss exists, no need to create new one
 
             # No SL exists - create it using unified set_stop_loss
             order_side = 'sell' if position.side == 'long' else 'buy'
@@ -934,59 +897,97 @@ class PositionManager:
             )
 
             if result['status'] in ['created', 'already_exists']:
-                logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}")
-                return True
+                order_id = result.get('orderId')  # None for Bybit (position-attached)
+                logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}, order_id={order_id}")
+                return True, order_id
             else:
                 logger.warning(f"⚠️ Unexpected result from set_stop_loss: {result}")
-                return False
+                return False, None
 
         except Exception as e:
             logger.error(f"Failed to set stop loss for {position.symbol}: {e}", exc_info=True)
 
-        return False
+        return False, None
 
     async def _on_position_update(self, data: Dict):
-        """Handle position update from WebSocket"""
+        """
+        Handle position update from WebSocket
+        
+        Args:
+            data: Dict of positions {symbol: {side, quantity, mark_price, ...}}
+                  OR single position {symbol, side, quantity, mark_price, ...}
+        """
+        logger.debug(f"[PositionManager] _on_position_update called with data keys: {list(data.keys())[:5]}")
+        
+        # Handle both formats:
+        # 1. Dict of all positions: {'BTCUSDT': {...}, 'ETHUSDT': {...}}
+        # 2. Single position: {'symbol': 'BTCUSDT', 'side': 'long', ...}
+        
+        positions_to_process = []
+        
+        if 'symbol' in data:
+            # Single position format
+            positions_to_process = [(data.get('symbol'), data)]
+        else:
+            # Dict of positions format (AdaptiveStream)
+            positions_to_process = list(data.items())
+        
+        logger.debug(f"[PositionManager] Processing {len(positions_to_process)} position update(s)")
+        logger.debug(f"[PositionManager] Tracked positions: {list(self.positions.keys())}")
+        
+        for symbol, pos_data in positions_to_process:
+            if not symbol:
+                continue
+            
+            # Normalize symbol format (SHELL/USDT:USDT → SHELLUSDT)
+            normalized_symbol = symbol.replace('/', '').replace(':USDT', '')
+            
+            # Try both formats
+            position_symbol = normalized_symbol if normalized_symbol in self.positions else symbol
+            
+            if position_symbol not in self.positions:
+                logger.debug(f"[PositionManager] Skipping {symbol} (normalized: {normalized_symbol}) - not tracked")
+                continue
 
-        symbol = data.get('symbol')
-        if not symbol or symbol not in self.positions:
-            return
+            position = self.positions[position_symbol]
+            
+            # Update position state
+            position.current_price = pos_data.get('mark_price', pos_data.get('markPrice', position.current_price))
+            position.unrealized_pnl = pos_data.get('unrealized_pnl', pos_data.get('unrealizedPnl', 0))
 
-        position = self.positions[symbol]
+            # Calculate PnL percent
+            if position.entry_price > 0:
+                if position.side == 'long':
+                    position.unrealized_pnl_percent = (
+                            (position.current_price - position.entry_price) / position.entry_price * 100
+                    )
+                else:
+                    position.unrealized_pnl_percent = (
+                            (position.entry_price - position.current_price) / position.entry_price * 100
+                    )
 
-        # Update position state
-        position.current_price = data.get('mark_price', position.current_price)
-        position.unrealized_pnl = data.get('unrealized_pnl', 0)
+            logger.debug(f"[PositionManager] {position_symbol}: price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}%")
 
-        # Calculate PnL percent
-        if position.entry_price > 0:
-            if position.side == 'long':
-                position.unrealized_pnl_percent = (
-                        (position.current_price - position.entry_price) / position.entry_price * 100
-                )
-            else:
-                position.unrealized_pnl_percent = (
-                        (position.entry_price - position.current_price) / position.entry_price * 100
-                )
+            # Update trailing stop
+            trailing_manager = self.trailing_managers.get(position.exchange)
+            if trailing_manager and position.has_trailing_stop:
+                logger.debug(f"[PositionManager] Calling trailing_manager.update_price for {position_symbol}")
+                update_result = await trailing_manager.update_price(position_symbol, float(position.current_price))
+                logger.debug(f"[PositionManager] update_price result: {update_result}")
 
-        # Update trailing stop
-        trailing_manager = self.trailing_managers.get(position.exchange)
-        if trailing_manager and position.has_trailing_stop:
-            update_result = await trailing_manager.update_price(symbol, position.current_price)
+                if update_result and update_result.get('action') == 'activated':
+                    position.trailing_activated = True
+                    logger.info(f"🚀 Trailing stop activated for {position_symbol}")
 
-            if update_result and update_result.get('action') == 'activated':
-                position.trailing_activated = True
-                logger.info(f"Trailing stop activated for {symbol}")
-
-        # Update database
-        await self.repository.update_position_from_websocket({
-            'symbol': symbol,
-            'exchange': position.exchange,
-            'current_price': position.current_price,
-            'mark_price': position.current_price,
-            'unrealized_pnl': position.unrealized_pnl,
-            'unrealized_pnl_percent': position.unrealized_pnl_percent
-        })
+            # Update database (MOVED INSIDE LOOP!)
+            await self.repository.update_position_from_websocket({
+                'symbol': position_symbol,
+                'exchange': position.exchange,
+                'current_price': position.current_price,
+                'mark_price': position.current_price,
+                'unrealized_pnl': position.unrealized_pnl,
+                'unrealized_pnl_percent': position.unrealized_pnl_percent
+            })
 
     async def _on_order_filled(self, data: Dict):
         """Handle order filled event"""
@@ -1132,15 +1133,8 @@ class PositionManager:
                     price=target_price
                 )
             
-            # CRITICAL FIX: Handle OrderResult safely
-            order_id = None
-            if order:
-                if hasattr(order, 'id'):  # OrderResult
-                    order_id = order.id
-                elif hasattr(order, 'get'):  # Dict
-                    order_id = order.get('id')
-                else:
-                    order_id = getattr(order, 'id', None)
+            # Use unified order accessor
+            order_id = get_order_id(order) if order else None
 
             if order and order_id:
                 logger.info(
@@ -1158,7 +1152,7 @@ class PositionManager:
                 
                 # Update database with pending close order
                 await self.repository.update_position(position.id, {
-                    'pending_close_order_id': order['id'],
+                    'pending_close_order_id': order_id,
                     'pending_close_price': to_decimal(target_price)
                 })
             else:
@@ -1297,12 +1291,13 @@ class PositionManager:
                             continue
 
                         # Calculate stop loss price
-                        stop_loss_percent = self.config.stop_loss_percent
+                        stop_loss_percent = float(self.config.stop_loss_percent)
+                        entry_price = float(position.entry_price)
 
                         if position.side == 'long':
-                            stop_loss_price = position.entry_price * (1 - stop_loss_percent / 100)
+                            stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                         else:
-                            stop_loss_price = position.entry_price * (1 + stop_loss_percent / 100)
+                            stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
 
                         # Get current price to validate stop loss
                         ticker = await exchange.fetch_ticker(position.symbol)
@@ -1352,378 +1347,38 @@ class PositionManager:
 
     async def handle_real_zombies(self):
         """
-        Handle REAL zombie positions:
-        - PHANTOM: in DB but not on exchange
-        - UNTRACKED: on exchange but not in DB
+        Handle REAL zombie positions (delegated to ZombieCleanupService)
+        
+        REFACTORED: 2025-10-04
+        This method now delegates to ZombieCleanupService
         """
-        try:
-            logger.info("🔍 Checking for real zombie positions...")
-
-            zombies_found = False
-
-            for exchange_name, exchange in self.exchanges.items():
-                try:
-                    # Get positions from exchange
-                    exchange_positions = await exchange.fetch_positions()
-                    active_exchange_positions = [p for p in exchange_positions if p['contracts'] > 0]
-
-                    # Get local positions for this exchange
-                    local_positions = {
-                        symbol: pos for symbol, pos in self.positions.items()
-                        if pos.exchange == exchange_name
-                    }
-
-                    # Create sets for comparison
-                    exchange_symbols = {p['symbol'] for p in active_exchange_positions}
-                    local_symbols = set(local_positions.keys())
-
-                    # 1. PHANTOM POSITIONS (in DB but not on exchange)
-                    phantom_symbols = local_symbols - exchange_symbols
-
-                    if phantom_symbols:
-                        zombies_found = True
-                        logger.warning(f"👻 Found {len(phantom_symbols)} PHANTOM positions on {exchange_name}")
-
-                        for symbol in phantom_symbols:
-                            position = local_positions[symbol]
-                            logger.warning(f"Phantom position detected: {symbol} (in DB but not on {exchange_name})")
-
-                            try:
-                                # Remove from local cache
-                                if symbol in self.positions:
-                                    del self.positions[symbol]
-
-                                # Update database - mark as closed
-                                await self.repository.close_position(
-                                    position.id,
-                                    close_price=position.current_price or 0.0,
-                                    pnl=0.0,
-                                    pnl_percentage=0.0,
-                                    reason='PHANTOM_CLEANUP'
-                                )
-
-                                logger.info(f"✅ Cleaned phantom position: {symbol}")
-
-                            except Exception as cleanup_error:
-                                logger.error(f"Failed to clean phantom position {symbol}: {cleanup_error}")
-
-                    # 2. UNTRACKED POSITIONS (on exchange but not in DB)
-                    untracked_positions = []
-                    for ex_pos in active_exchange_positions:
-                        if ex_pos['symbol'] not in local_symbols:
-                            untracked_positions.append(ex_pos)
-
-                    if untracked_positions:
-                        zombies_found = True
-                        logger.warning(f"🤖 Found {len(untracked_positions)} UNTRACKED positions on {exchange_name}")
-
-                        for ex_pos in untracked_positions:
-                            symbol = ex_pos['symbol']
-                            size = ex_pos['contracts']
-                            side = ex_pos['side']
-                            entry_price = ex_pos.get('entryPrice', 0)
-
-                            logger.warning(f"Untracked position: {symbol} {side} {size} @ {entry_price}")
-
-                            # Options for handling untracked positions:
-                            # Option 1: Import into system (safer for positions we might have created)
-                            # Option 2: Close immediately (safer for unknown positions)
-
-                            # For now, just log and alert - don't auto-close
-                            # Manual decision required
-                            logger.critical(f"⚠️ MANUAL REVIEW REQUIRED: Untracked position {symbol} on {exchange_name}")
-
-                            # Save to monitoring table for review
-                            if hasattr(self.repository, 'log_untracked_position'):
-                                await self.repository.log_untracked_position({
-                                    'exchange': exchange_name,
-                                    'symbol': symbol,
-                                    'side': side,
-                                    'size': size,
-                                    'entry_price': entry_price,
-                                    'detected_at': datetime.now(),
-                                    'raw_data': ex_pos
-                                })
-
-                except Exception as exchange_error:
-                    logger.error(f"Error checking zombies on {exchange_name}: {exchange_error}")
-
-            if not zombies_found:
-                logger.info("✅ No zombie positions found")
-
-        except Exception as e:
-            logger.error(f"Error in zombie position handling: {e}", exc_info=True)
+        # Delegate to service and sync local cache
+        results = await self.zombie_cleanup.handle_real_zombies(self.positions)
+        
+        # Clean up local positions cache for phantom positions
+        for symbol, pos in list(self.positions.items()):
+            # Re-verify position exists after cleanup
+            if not await self.verify_position_exists(symbol, pos.exchange):
+                if symbol in self.positions:
+                    del self.positions[symbol]
+                    logger.debug(f"Removed phantom position from local cache: {symbol}")
+        
+        return results
 
     async def cleanup_zombie_orders(self):
         """
-        Enhanced zombie order cleanup using specialized cleaners:
-        - BybitZombieOrderCleaner for Bybit exchanges
-        - BinanceZombieManager for Binance exchanges with weight-based rate limiting
-        Falls back to basic cleanup for other exchanges
+        Enhanced zombie order cleanup (delegated to ZombieCleanupService)
+        
+        REFACTORED: 2025-10-04
+        This method now delegates to ZombieCleanupService
         """
-        try:
-            cleanup_start_time = asyncio.get_event_loop().time()
-            logger.info("🧹 Starting enhanced zombie order cleanup...")
-            logger.info(f"📊 Cleanup interval: {self.sync_interval} seconds")
-            total_zombies_cleaned = 0
-            total_zombies_found = 0
-
-            for exchange_name, exchange in self.exchanges.items():
-                try:
-                    # Use specialized cleaner for Bybit
-                    if 'bybit' in exchange_name.lower():
-                        # Import and use the advanced Bybit cleaner
-                        try:
-                            from core.bybit_zombie_cleaner import BybitZombieOrderCleaner
-
-                            # Initialize the cleaner with the exchange
-                            cleaner = BybitZombieOrderCleaner(exchange.exchange)
-
-                            # Run comprehensive cleanup
-                            logger.info(f"🔧 Running advanced Bybit zombie cleanup for {exchange_name}")
-                            results = await cleaner.cleanup_zombie_orders(
-                                symbols=None,  # Check all symbols
-                                category="linear",  # For perpetual futures
-                                dry_run=False  # Actually cancel orders
-                            )
-
-                            # Log results
-                            if results['zombies_found'] > 0:
-                                logger.warning(
-                                    f"🧟 Bybit: Found {results['zombies_found']} zombies, "
-                                    f"cancelled {results['zombies_cancelled']}, "
-                                    f"TP/SL cleared: {results.get('tpsl_cleared', 0)}"
-                                )
-                                total_zombies_found += results['zombies_found']
-                                total_zombies_cleaned += results['zombies_cancelled']
-
-                                # Log individual zombie details for monitoring
-                                logger.info(f"📈 Zombie cleanup metrics for {exchange_name}:")
-                                logger.info(f"  - Detection rate: {results['zombies_found']}/{results.get('total_scanned', 0)} orders")
-                                logger.info(f"  - Cleanup success rate: {results['zombies_cancelled']}/{results['zombies_found']}")
-                                logger.info(f"  - Errors: {len(results.get('errors', []))}")
-                            else:
-                                logger.debug(f"✨ No zombie orders found on {exchange_name}")
-
-                            # Print detailed stats
-                            if results.get('errors'):
-                                logger.error(f"⚠️ Errors during cleanup: {results['errors'][:3]}")
-
-                        except ImportError as ie:
-                            logger.warning(f"BybitZombieOrderCleaner not available, using basic cleanup: {ie}")
-                            # Fall back to basic cleanup for Bybit
-                            await self._basic_zombie_cleanup(exchange_name, exchange)
-
-                    # Use specialized cleaner for Binance
-                    elif 'binance' in exchange_name.lower():
-                        try:
-                            from core.binance_zombie_manager import BinanceZombieIntegration
-
-                            # Initialize the Binance zombie manager integration
-                            integration = BinanceZombieIntegration(exchange.exchange)
-
-                            # Enable zombie protection with advanced features
-                            logger.info(f"🔧 Running advanced Binance zombie cleanup for {exchange_name}")
-                            await integration.enable_zombie_protection()
-
-                            # Perform cleanup
-                            results = await integration.cleanup_zombies(dry_run=False)
-
-                            # Log results
-                            if results['zombie_orders_found'] > 0:
-                                logger.warning(
-                                    f"🧟 Binance: Found {results['zombie_orders_found']} zombies, "
-                                    f"cancelled {results['zombie_orders_cancelled']}, "
-                                    f"OCO handled: {results.get('oco_orders_handled', 0)}"
-                                )
-                                total_zombies_found += results['zombie_orders_found']
-                                total_zombies_cleaned += results['zombie_orders_cancelled']
-
-                                # Log metrics
-                                logger.info(f"📈 Zombie cleanup metrics for {exchange_name}:")
-                                logger.info(f"  - Empty responses mitigated: {results.get('empty_responses_mitigated', 0)}")
-                                logger.info(f"  - API weight used: {results.get('weight_used', 0)}")
-                                logger.info(f"  - Async delays detected: {results.get('async_delays_detected', 0)}")
-                                logger.info(f"  - Errors: {len(results.get('errors', []))}")
-                            else:
-                                logger.debug(f"✨ No zombie orders found on {exchange_name}")
-
-                            # Check if weight limit is approaching
-                            if results.get('weight_used', 0) > 900:
-                                logger.warning(f"⚠️ Binance API weight high: {results['weight_used']}/1200")
-
-                        except ImportError as ie:
-                            logger.warning(f"BinanceZombieManager not available, using basic cleanup: {ie}")
-                            # Fall back to basic cleanup for Binance
-                            await self._basic_zombie_cleanup(exchange_name, exchange)
-
-                    else:
-                        # Use basic cleanup for other exchanges
-                        cleaned = await self._basic_zombie_cleanup(exchange_name, exchange)
-                        if cleaned > 0:
-                            total_zombies_found += cleaned
-                            total_zombies_cleaned += cleaned
-
-                except Exception as exchange_error:
-                    logger.error(f"Error cleaning zombie orders on {exchange_name}: {exchange_error}")
-
-            # Log final summary with timing
-            cleanup_duration = asyncio.get_event_loop().time() - cleanup_start_time
-
-            # Update zombie tracking
-            self.zombie_check_counter += 1
-            self.last_zombie_count = total_zombies_found
-
-            if total_zombies_found > 0:
-                logger.warning(f"⚠️ ZOMBIE CLEANUP SUMMARY:")
-                logger.warning(f"  🧟 Total found: {total_zombies_found}")
-                logger.warning(f"  ✅ Total cleaned: {total_zombies_cleaned}")
-                logger.warning(f"  ❌ Failed to clean: {total_zombies_found - total_zombies_cleaned}")
-                logger.warning(f"  ⏱️ Duration: {cleanup_duration:.2f} seconds")
-                logger.warning(f"  📊 Check #: {self.zombie_check_counter}")
-
-                # Alert and adjust if too many zombies
-                if total_zombies_found > self.aggressive_cleanup_threshold:
-                    logger.critical(f"🚨 HIGH ZOMBIE COUNT DETECTED: {total_zombies_found} zombies!")
-                    logger.critical(f"🔄 Temporarily reducing sync interval from {self.sync_interval}s to 300s")
-
-                    # Temporarily reduce sync interval to clean up faster
-                    self.sync_interval = min(300, self.sync_interval)  # Max 5 minutes for emergency cleanup
-
-                    logger.critical("📢 Manual intervention may be required - check exchange UI")
-                elif total_zombies_found > 5:
-                    logger.warning(f"⚠️ Moderate zombie count: {total_zombies_found}")
-                    # Slightly reduce interval if persistent zombies
-                    if self.sync_interval > 300:
-                        self.sync_interval = 450  # 7.5 minutes
-                        logger.info(f"📉 Reduced sync interval to {self.sync_interval}s")
-            else:
-                logger.info(f"✨ No zombie orders found (check #{self.zombie_check_counter}, duration: {cleanup_duration:.2f}s)")
-
-                # Gradually increase interval if no zombies found for multiple checks
-                if self.zombie_check_counter > 3 and self.last_zombie_count == 0:
-                    if self.sync_interval < 600:
-                        self.sync_interval = min(600, self.sync_interval + 60)
-                        logger.info(f"📈 Increased sync interval back to {self.sync_interval}s")
-
-        except Exception as e:
-            logger.error(f"Error in enhanced zombie order cleanup: {e}")
-
-    async def _basic_zombie_cleanup(self, exchange_name: str, exchange) -> int:
-        """
-        Basic zombie order cleanup for non-Bybit exchanges
-        Returns number of orders cancelled
-        """
-        cancelled_count = 0
-
-        try:
-            # Get all open orders from exchange
-            open_orders = await exchange.exchange.fetch_open_orders()
-
-            # Get current positions
-            positions = await exchange.fetch_positions()
-            position_symbols = {p.get('symbol') for p in positions if p.get('contracts', 0) > 0}
-
-            # Find zombie orders (orders for symbols without positions)
-            zombie_orders = []
-            for order in open_orders:
-                # CRITICAL FIX: Handle OrderResult objects safely - check type first
-                if isinstance(order, dict):
-                    # Direct dict access
-                    symbol = order.get('symbol')
-                    order_type = order.get('type', '').lower()
-                else:
-                    # Object attribute access (for OrderResult objects)
-                    try:
-                        symbol = getattr(order, 'symbol', '')
-                        order_type = getattr(order, 'type', '').lower()
-                    except (AttributeError, TypeError):
-                        # Skip this order if we can't access its properties
-                        continue
-
-                # Check if this is a limit order for a symbol without position
-                if symbol and symbol not in position_symbols:
-                    # Skip stop orders as they might be protective orders
-                    if 'stop' not in order_type and 'limit' in order_type:
-                        zombie_orders.append(order)
-
-            if zombie_orders:
-                logger.warning(f"🧟 Found {len(zombie_orders)} zombie orders on {exchange_name}")
-
-                # Cancel zombie orders
-                for order in zombie_orders:
-                    try:
-                        # CRITICAL FIX: Handle OrderResult objects safely - check type first
-                        if isinstance(order, dict):
-                            # Direct dict access
-                            symbol = order.get('symbol')
-                            order_id = order.get('id')
-                            order_side = order.get('side')
-                            order_amount = order.get('amount', 0)
-                        else:
-                            # Object attribute access (for OrderResult objects)
-                            try:
-                                symbol = getattr(order, 'symbol', '')
-                                order_id = getattr(order, 'id', '')
-                                order_side = getattr(order, 'side', '')
-                                order_amount = getattr(order, 'amount', 0)
-                            except (AttributeError, TypeError):
-                                # Skip this order if we can't access its properties
-                                continue
-
-                        logger.info(f"Cancelling zombie order: {symbol} {order_side} {order_amount} (ID: {order_id})")
-                        await exchange.exchange.cancel_order(order_id, symbol)
-                        logger.info(f"✅ Cancelled zombie order {order_id} for {symbol}")
-                        cancelled_count += 1
-
-                        # Small delay to avoid rate limits
-                        await asyncio.sleep(0.5)
-
-                    except Exception as cancel_error:
-                        # CRITICAL FIX: Handle OrderResult safely
-                        order_id = order.id if hasattr(order, 'id') else order.get('id', 'unknown')
-                        logger.error(f"Failed to cancel zombie order {order_id}: {cancel_error}")
-
-            # Also check for orphaned stop orders
-            # CRITICAL FIX: Handle OrderResult safely
-            stop_orders = []
-            for o in open_orders:
-                order_type = o.type.lower() if hasattr(o, 'type') else o.get('type', '').lower()
-                if 'stop' in order_type:
-                    stop_orders.append(o)
-            orphaned_stops = []
-
-            for order in stop_orders:
-                # CRITICAL FIX: Handle OrderResult safely
-                symbol = order.symbol if hasattr(order, 'symbol') else order.get('symbol')
-                if symbol and symbol not in position_symbols:
-                    orphaned_stops.append(order)
-
-            if orphaned_stops:
-                logger.warning(f"🛑 Found {len(orphaned_stops)} orphaned stop orders on {exchange_name}")
-
-                for order in orphaned_stops:
-                    try:
-                        # CRITICAL FIX: Handle OrderResult safely
-                        symbol = order.symbol if hasattr(order, 'symbol') else order.get('symbol')
-                        order_id = order.id if hasattr(order, 'id') else order.get('id')
-
-                        logger.info(f"Cancelling orphaned stop order for {symbol} (ID: {order_id})")
-                        await exchange.exchange.cancel_order(order_id, symbol)
-                        logger.info(f"✅ Cancelled orphaned stop order {order_id}")
-                        cancelled_count += 1
-
-                        await asyncio.sleep(0.5)
-
-                    except Exception as cancel_error:
-                        # CRITICAL FIX: Handle OrderResult safely
-                        order_id = order.id if hasattr(order, 'id') else order.get('id', 'unknown')
-                        logger.error(f"Failed to cancel orphaned stop order {order_id}: {cancel_error}")
-
-        except Exception as e:
-            logger.error(f"Error in basic zombie cleanup for {exchange_name}: {e}")
-
-        return cancelled_count
+        # Delegate to service
+        results = await self.zombie_cleanup.cleanup_zombie_orders()
+        
+        # Sync interval adjustment (service updates its own interval)
+        self.sync_interval = self.zombie_cleanup.sync_interval
+        
+        return results
 
     def _calculate_age_hours(self, opened_at: datetime) -> float:
         """
@@ -1756,6 +1411,15 @@ class PositionManager:
         if self.stats['win_count'] + self.stats['loss_count'] > 0:
             win_rate = self.stats['win_count'] / (self.stats['win_count'] + self.stats['loss_count']) * 100
 
+        zombie_stats = {}
+        if self.zombie_cleanup:
+            zombie_stats = {
+                'checks_performed': self.zombie_cleanup.zombie_check_counter,
+                'last_zombie_count': self.zombie_cleanup.last_zombie_count,
+                'current_sync_interval': self.sync_interval,
+                'aggressive_threshold': self.zombie_cleanup.aggressive_cleanup_threshold
+            }
+        
         return {
             'open_positions': self.position_count,
             'total_exposure': to_decimal(self.total_exposure),
@@ -1764,11 +1428,6 @@ class PositionManager:
             'total_pnl': to_decimal(self.stats['total_pnl']),
             'win_rate': win_rate,
             'wins': self.stats['win_count'],
-            'zombie_cleanup': {
-                'checks_performed': self.zombie_check_counter,
-                'last_zombie_count': self.last_zombie_count,
-                'current_sync_interval': self.sync_interval,
-                'aggressive_threshold': self.aggressive_cleanup_threshold
-            },
+            'zombie_cleanup': zombie_stats,
             'losses': self.stats['loss_count']
         }

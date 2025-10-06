@@ -47,6 +47,7 @@ class TradingConfig:
     stop_loss_percent: Decimal = Decimal('2.0')
     trailing_activation_percent: Decimal = Decimal('1.5')
     trailing_callback_percent: Decimal = Decimal('0.5')
+    leverage: int = 10  # Default leverage for all exchanges
 
     # Aged positions
     max_position_age_hours: int = 3
@@ -172,6 +173,8 @@ class Config:
             config.trailing_activation_percent = Decimal(val)
         if val := os.getenv('TRAILING_CALLBACK_PERCENT'):
             config.trailing_callback_percent = Decimal(val)
+        if val := os.getenv('LEVERAGE'):
+            config.leverage = int(val)
 
         # Aged positions
         if val := os.getenv('MAX_POSITION_AGE_HOURS'):
@@ -188,6 +191,10 @@ class Config:
             config.aged_check_interval_minutes = int(val)
         if val := os.getenv('COMMISSION_PERCENT'):
             config.commission_percent = Decimal(val)
+        
+        # Signal processing
+        if val := os.getenv('SIGNAL_TIME_WINDOW_MINUTES'):
+            config.signal_time_window_minutes = int(val)
 
         # Signal filtering
         if val := os.getenv('MIN_SCORE_WEEK'):

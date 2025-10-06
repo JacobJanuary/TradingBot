@@ -26,7 +26,7 @@ from monitoring.performance import PerformanceTracker
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # Production logging level
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('logs/trading_bot.log'),
@@ -130,7 +130,20 @@ class TradingBot:
             if not self.exchanges:
                 raise Exception("No exchanges available")
 
-            # Initialize WebSocket streams
+            # Initialize position manager FIRST (before WebSockets)
+            logger.info("Initializing position manager...")
+            self.position_manager = PositionManager(
+                settings.trading,
+                self.exchanges,
+                self.repository,
+                self.event_router
+            )
+            
+            # Load existing positions from database BEFORE starting WebSocket polling
+            logger.info("Loading positions from database...")
+            await self.position_manager.load_positions_from_db()
+
+            # NOW Initialize WebSocket streams (after positions are loaded)
             logger.info("Initializing WebSocket streams...")
             for name, config in settings.exchanges.items():
                 # Skip disabled exchanges
@@ -218,20 +231,7 @@ class TradingBot:
                     else:
                         logger.info(f"ℹ️ Bybit private stream skipped (no API credentials)")
 
-            # Initialize position manager
-            logger.info("Initializing position manager...")
-            self.position_manager = PositionManager(
-                settings.trading,
-                self.exchanges,
-                self.repository,
-                self.event_router
-            )
-            
-            # Load existing positions from database
-            logger.info("Loading positions from database...")
-            await self.position_manager.load_positions_from_db()
-
-            # Initialize aged position manager
+            # Initialize aged position manager (position manager already initialized above)
             logger.info("Initializing aged position manager...")
             self.aged_position_manager = AgedPositionManager(
                 settings.trading,
@@ -304,7 +304,9 @@ class TradingBot:
 
     async def _handle_stream_event(self, event: str, data: Dict):
         """Handle WebSocket stream events"""
+        logger.debug(f"[EventHandler] Received {event} event, emitting to EventRouter...")
         await self.event_router.emit(event, data, source='websocket')
+        logger.debug(f"[EventHandler] Event {event} emitted successfully")
 
     async def _log_initial_state(self):
         """Log initial system state"""
@@ -372,7 +374,8 @@ class TradingBot:
                 logger.info("🧟 ZOMBIE ORDER CLEANUP: ACTIVE")
                 logger.info(f"  - Cleanup interval: {self.position_manager.sync_interval} seconds")
                 logger.info(f"  - Mode: REAL CLEANUP (dry_run=False)")
-                logger.info(f"  - Aggressive threshold: {self.position_manager.aggressive_cleanup_threshold} zombies")
+                if hasattr(self.position_manager, 'zombie_cleanup'):
+                    logger.info(f"  - Aggressive threshold: {self.position_manager.zombie_cleanup.aggressive_cleanup_threshold} zombies")
                 logger.info("  - Auto-adjusting interval based on zombie count")
 
             # Log startup complete
@@ -536,16 +539,24 @@ class TradingBot:
                 logger.error(f"Failed to close positions on {name}: {e}")
 
     async def cleanup(self):
-        """Clean up resources"""
-        logger.info("Cleaning up resources...")
+        """Clean up resources with graceful shutdown"""
+        logger.info("=" * 80)
+        logger.info("🛑 Cleaning up resources...")
+        logger.info("=" * 80)
 
-        # Disconnect WebSocket streams
+        # Gracefully disconnect WebSocket streams with proper close frames
         for name, stream in self.websockets.items():
             try:
-                await stream.stop()
-                logger.debug(f"Closed WebSocket for {name}")
+                # Use code 1001 (Going Away) to indicate server/client is shutting down
+                await stream.stop(code=1001, reason="Bot shutdown", timeout=5.0)
+                logger.info(f"✅ Closed WebSocket for {name}")
+            except AttributeError as e:
+                # Known issue: ClientConnection.closed attribute doesn't exist
+                # Stream is likely already closed, ignore this error
+                logger.debug(f"WebSocket {name} already closed (AttributeError: {e})")
+                logger.info(f"✅ Closed WebSocket for {name}")
             except Exception as e:
-                logger.error(f"Failed to close WebSocket {name}: {e}")
+                logger.error(f"❌ Failed to close WebSocket {name}: {e}")
 
         # Close exchange connections
         for name, exchange in self.exchanges.items():

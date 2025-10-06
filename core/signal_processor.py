@@ -25,6 +25,10 @@ class SignalProcessor:
     """
     Process trading signals from database
     Handles signal filtering, validation, and execution
+    
+    TEST_MODE support:
+    - Set TEST_MODE=true in environment to read from test.scoring_history
+    - Uses fas.scoring_history by default (production)
     """
 
     def __init__(self,
@@ -37,7 +41,16 @@ class SignalProcessor:
         self.repository = repository
         self.position_manager = position_manager
         self.event_router = event_router
-
+        
+        # TEST MODE support: Read from test.scoring_history instead of fas.scoring_history
+        self.test_mode = os.getenv('TEST_MODE', 'false').lower() in ('true', '1', 'yes')
+        self.signal_table = 'test.scoring_history' if self.test_mode else 'fas.scoring_history'
+        
+        if self.test_mode:
+            logger.warning("="*80)
+            logger.warning("🧪 TEST MODE ENABLED - Reading signals from test.scoring_history")
+            logger.warning("="*80)
+        
         # Wave processor for duplicate handling
         self.wave_processor = WaveSignalProcessor(config, position_manager)
 
@@ -51,16 +64,30 @@ class SignalProcessor:
         self.processed_waves = {}  # Track signals per wave {timestamp: {signal_ids, count, first_seen}}
 
         # Wave timing configuration from environment variables
-        # Waves check at: 04, 18, 33, 48 minutes (3 mins after candle close)
-        wave_minutes_str = os.getenv('WAVE_CHECK_MINUTES', '4,18,33,48')
+        # All defaults configured in .env file - NO MAGIC NUMBERS IN CODE!
+        wave_minutes_str = os.getenv('WAVE_CHECK_MINUTES')
+        if not wave_minutes_str:
+            raise ValueError("WAVE_CHECK_MINUTES must be set in .env file")
         self.wave_check_minutes = [int(m.strip()) for m in wave_minutes_str.split(',')]
-        self.wave_check_duration = int(os.getenv('WAVE_CHECK_DURATION_SECONDS', '120'))  # Check for up to 120 seconds
-        self.wave_check_interval = int(os.getenv('WAVE_CHECK_INTERVAL_SECONDS', '1'))  # Check every second during wave detection
+        
+        wave_duration = os.getenv('WAVE_CHECK_DURATION_SECONDS')
+        if not wave_duration:
+            raise ValueError("WAVE_CHECK_DURATION_SECONDS must be set in .env file")
+        self.wave_check_duration = int(wave_duration)
+        
+        wave_interval = os.getenv('WAVE_CHECK_INTERVAL_SECONDS')
+        if not wave_interval:
+            raise ValueError("WAVE_CHECK_INTERVAL_SECONDS must be set in .env file")
+        self.wave_check_interval = int(wave_interval)
 
         # Signal processing limits
         self.signal_time_window = config.signal_time_window_minutes
         self.max_trades_per_window = config.max_trades_per_15min
-        self.wave_cleanup_hours = 2  # Clean up wave data older than 2 hours
+        
+        wave_cleanup = os.getenv('WAVE_CLEANUP_HOURS')
+        if not wave_cleanup:
+            raise ValueError("WAVE_CLEANUP_HOURS must be set in .env file")
+        self.wave_cleanup_hours = int(wave_cleanup)
 
         # Statistics
         self.stats = {
@@ -180,17 +207,18 @@ class SignalProcessor:
         current_minute = now.minute
 
         # Determine which 15-minute candle we're checking for
-        # 04 -> 45 (previous hour), 18 -> 00, 33 -> 15, 48 -> 30
-        if current_minute in [4, 5, 6]:
+        # UPDATED: 07 -> 45 (previous hour), 22 -> 00, 37 -> 15, 52 -> 30
+        # Signals created at xx:05, xx:20, xx:35, xx:50 → Check at xx:07, xx:22, xx:37, xx:52
+        if current_minute in [7, 8, 9]:
             wave_minute = 45
             wave_time = now.replace(minute=wave_minute, second=0, microsecond=0) - timedelta(hours=1)
-        elif current_minute in [18, 19, 20]:
+        elif current_minute in [22, 23, 24]:
             wave_minute = 0
             wave_time = now.replace(minute=wave_minute, second=0, microsecond=0)
-        elif current_minute in [33, 34, 35]:
+        elif current_minute in [37, 38, 39]:
             wave_minute = 15
             wave_time = now.replace(minute=wave_minute, second=0, microsecond=0)
-        elif current_minute in [48, 49, 50]:
+        elif current_minute in [52, 53, 54]:
             wave_minute = 30
             wave_time = now.replace(minute=wave_minute, second=0, microsecond=0)
         else:
@@ -293,54 +321,99 @@ class SignalProcessor:
     async def _fetch_wave_signals(self, wave_time: datetime) -> List[Dict]:
         """
         Fetch signals for a specific wave timestamp
+        Supports TEST_MODE: reads from test.scoring_history or fas.scoring_history
         """
         try:
-            # Query for signals with the specific wave timestamp
-            # The timestamp field in fas.scoring_history represents the candle start time
-            # Join with trading_pairs to get exchange info (exchange_id=1 is Binance, =2 is Bybit)
-            query = """
-                SELECT
-                    sc.id,
-                    sc.pair_symbol as symbol,
-                    CASE
-                        WHEN tp.exchange_id::integer = 1 THEN 'binance'  -- CAST to INTEGER for comparison
-                        WHEN tp.exchange_id::integer = 2 THEN 'bybit'    -- CAST to INTEGER for comparison
-                        ELSE 'unknown'
-                    END as exchange,
-                    sc.recommended_action as action,
-                    sc.score_week,
-                    sc.score_month,
-                    sc.created_at,
-                    sc.timestamp,
-                    sc.is_active
-                FROM fas.scoring_history sc
-                JOIN public.trading_pairs tp ON sc.trading_pair_id::integer = tp.id  -- EXPLICIT CAST to INTEGER
-                WHERE sc.timestamp = $1
-                    AND sc.score_week >= $2
-                    AND sc.score_month >= $3
-                    AND sc.is_active = true
-                    AND sc.recommended_action IN ('BUY', 'SELL', 'LONG', 'SHORT')
-                    AND NOT EXISTS (
-                        SELECT 1 FROM trading_bot.processed_signals ps
-                        WHERE ps.signal_id = sc.id::varchar  -- CAST id to match signal_id type if needed
-                    )
-                ORDER BY
-                    GREATEST(sc.score_week, sc.score_month) DESC,
-                    sc.score_week DESC,
-                    sc.score_month DESC
-                LIMIT $4;
-            """
+            # Different queries for test mode vs production
+            if self.test_mode:
+                # TEST MODE: Simplified query for test.scoring_history
+                # test.scoring_history has exchange field directly (no JOIN needed)
+                # Note: test mode uses same parameters as production for consistency
+                # Generate random LONG/SHORT for each signal (50/50)
+                query = f"""
+                    SELECT
+                        id,
+                        symbol,
+                        exchange,
+                        CASE WHEN random() < 0.5 THEN 'SHORT' ELSE 'LONG' END as action,
+                        score as score_week,
+                        score as score_month,
+                        created_at,
+                        timestamp,
+                        true as is_active
+                    FROM {self.signal_table}
+                    WHERE timestamp = $1
+                        AND score >= $2
+                        AND score >= $3
+                        AND NOT processed
+                    ORDER BY score DESC
+                    LIMIT $4;
+                """
+            else:
+                # PRODUCTION MODE: Query for fas.scoring_history with trading_pairs join
+                # The timestamp field in fas.scoring_history represents the candle start time
+                # Join with trading_pairs to get exchange info (exchange_id=1 is Binance, =2 is Bybit)
+                # CRITICAL: Filter by created_at to get FRESH signals only (not older than 1 hour)
+                query = f"""
+                    SELECT
+                        sc.id,
+                        sc.pair_symbol as symbol,
+                        CASE
+                            WHEN tp.exchange_id::integer = 1 THEN 'binance'  -- CAST to INTEGER for comparison
+                            WHEN tp.exchange_id::integer = 2 THEN 'bybit'    -- CAST to INTEGER for comparison
+                            ELSE 'unknown'
+                        END as exchange,
+                        sc.recommended_action as action,
+                        sc.score_week,
+                        sc.score_month,
+                        sc.created_at,
+                        sc.timestamp,
+                        sc.is_active
+                    FROM {self.signal_table} sc
+                    JOIN public.trading_pairs tp ON sc.trading_pair_id::integer = tp.id  -- EXPLICIT CAST to INTEGER
+                    WHERE sc.timestamp = $1
+                        AND sc.score_week >= $2
+                        AND sc.score_month >= $3
+                        AND sc.is_active = true
+                        AND sc.recommended_action IN ('BUY', 'SELL', 'LONG', 'SHORT')
+                        AND NOT EXISTS (
+                            SELECT 1 FROM trading_bot.processed_signals ps
+                            WHERE ps.signal_id = sc.id::varchar  -- CAST id to match signal_id type if needed
+                        )
+                    ORDER BY
+                        GREATEST(sc.score_week, sc.score_month) DESC,
+                        sc.score_week DESC,
+                        sc.score_month DESC
+                    LIMIT $4;
+                """
 
             async with self.repository.pool.acquire() as conn:
                 # Use buffer size from wave processor
                 buffer_size = self.wave_processor.buffer_size
+                
+                # CRITICAL FIX: PostgreSQL с timezone 'Etc/UTC' правильно интерпретирует datetime с tzinfo=UTC
+                # AsyncPG автоматически конвертирует в правильный формат для БД
+                # НЕ удаляем tzinfo! Иначе PostgreSQL интерпретирует как локальное время!
+                
+                # DEBUG: Log what we're querying
+                logger.debug(f"Querying DB with wave_time: {wave_time} (UTC aware)")
+                
                 signals = await conn.fetch(
                     query,
-                    wave_time,
+                    wave_time,  # Use UTC-aware datetime directly
                     float(self.config.min_score_week),
                     float(self.config.min_score_month),
                     buffer_size  # Fetch with buffer for duplicate replacement
                 )
+                
+                # DEBUG: Log to understand timezone issue
+                if signals:
+                    first_signal = signals[0]
+                    db_timestamp = first_signal.get('timestamp')
+                    logger.info(f"🔍 DEBUG TIMEZONE: DB returned {len(signals)} signals")
+                    logger.info(f"   First signal timestamp: {db_timestamp} (type: {type(db_timestamp).__name__})")
+                    logger.info(f"   Queried with: {wave_time} (UTC aware)")
+                    logger.info(f"   Current UTC: {datetime.now(timezone.utc)}")
 
             # CRITICAL FIX 1: Apply STOPLIST_SYMBOLS filtering in wave mode
             # Convert to list of dicts for filtering
@@ -484,7 +557,7 @@ class SignalProcessor:
                 return
 
             current_price = ticker.get('last', 0)
-            if current_price <= 0:
+            if current_price is None or current_price <= 0:
                 logger.error(f"Invalid price for {symbol}: {current_price}")
                 self.failed_signals.add(signal_id)
                 self.stats['signals_failed'] += 1
@@ -572,7 +645,8 @@ class SignalProcessor:
         """
 
         # Check signal age
-        signal_time = signal.get('created_at')
+        # CRITICAL: Use 'timestamp' field (wave time in UTC), not 'created_at' (record creation time)
+        signal_time = signal.get('timestamp') or signal.get('created_at')
         if isinstance(signal_time, str):
             signal_time = datetime.fromisoformat(signal_time)
 
