@@ -26,7 +26,7 @@ from monitoring.performance import PerformanceTracker
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,  # Production logging level
+    level=logging.DEBUG,  # DEBUG for final troubleshooting
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('logs/trading_bot.log'),
@@ -281,14 +281,14 @@ class TradingBot:
 
         @self.event_router.on('position.opened')
         async def handle_position_opened(data: Dict):
-            logger.info(f"📈 Position opened: {data['symbol']} {data['side']}")
+            logger.debug(f"📈 Position opened event received: {data['symbol']} {data['side']}")
             await self.performance_tracker.record_trade(data)
 
         @self.event_router.on('position.closed')
         async def handle_position_closed(data: Dict):
             pnl = data.get('realized_pnl', 0)
             emoji = "✅" if pnl > 0 else "❌"
-            logger.info(f"{emoji} Position closed: {data['symbol']} PnL: ${pnl:.2f}")
+            logger.debug(f"{emoji} Position closed event received: {data['symbol']} PnL: ${pnl:.2f}")
             await self.performance_tracker.record_trade_close(data)
 
         @self.event_router.on('stop_loss.triggered')

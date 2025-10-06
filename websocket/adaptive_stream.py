@@ -249,22 +249,40 @@ class AdaptiveBinanceStream:
                 await self._process_account_update(account_data)
                 
                 # Fetch positions using ccxt methods
+                # CRITICAL FIX: For Binance futures, fetch_account doesn't exist
+                # Use fetch_positions() but process ALL returned positions (not just contracts > 0)
+                # The issue was filtering too early - need to get full list first
                 positions_raw = await self.client.fetch_positions()
-                logger.debug(f"[AdaptiveStream] Fetched {len(positions_raw)} positions")
+                logger.debug(f"[AdaptiveStream] Fetched {len(positions_raw)} positions (total from API)")
                 
                 positions = []
                 self.active_symbols.clear()  # Reset active symbols
 
                 for pos in positions_raw:
-                    if pos['contracts'] > 0:
-                        self.active_symbols.add(pos['symbol'])  # Track active symbols
+                    # Handle both fetch_account and fetch_positions formats
+                    contracts = float(pos.get('contracts', 0) or pos.get('positionAmt', 0))
+                    
+                    if abs(contracts) > 0:  # Include both long and short (check absolute value)
+                        symbol = pos.get('symbol')
+                        if not symbol:
+                            continue
+                            
+                        self.active_symbols.add(symbol)  # Track active symbols
+                        
+                        # Get prices from various possible fields
+                        entry_price = float(pos.get('entryPrice', 0) or pos.get('avgPrice', 0) or 0)
+                        mark_price = float(pos.get('markPrice', 0))
+                        unrealized_pnl = float(pos.get('unrealizedPnl', 0) or pos.get('unrealizedProfit', 0) or 0)
+                        
                         positions.append({
-                            'symbol': pos['symbol'],
-                            'positionAmt': pos['contracts'],
-                            'entryPrice': pos['markPrice'] or 0,
-                            'unrealizedProfit': pos['unrealizedPnl'] or 0,
-                            'markPrice': pos['markPrice'] or 0
+                            'symbol': symbol,
+                            'positionAmt': contracts,
+                            'entryPrice': entry_price,
+                            'unrealizedProfit': unrealized_pnl,
+                            'markPrice': mark_price
                         })
+                        
+                        logger.debug(f"[AdaptiveStream] Active position: {symbol} ({contracts} contracts, entry: {entry_price})")
                 
                 logger.debug(f"[AdaptiveStream] Active positions: {len(positions)}, calling callback...")
                 await self._process_positions_update(positions)

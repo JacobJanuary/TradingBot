@@ -538,7 +538,25 @@ class PositionManager:
                 logger.warning(f"Risk limits exceeded for {symbol}")
                 return None
 
-            # 5. Calculate position size
+            # 5. Validate symbol exists on exchange
+            # CRITICAL: Check if symbol is available for trading before attempting order
+            if not exchange.has_market(symbol):
+                logger.error(
+                    f"❌ Symbol {symbol} not available on {exchange_name}. "
+                    f"Symbol may be delisted, not supported, or invalid."
+                )
+                return None
+            
+            # Additional check: verify market is active
+            market_info = exchange.get_market_info(symbol)
+            if market_info and market_info.get('active') is False:
+                logger.error(
+                    f"❌ Symbol {symbol} is not active on {exchange_name}. "
+                    f"Market status: {market_info.get('info', {}).get('status', 'unknown')}"
+                )
+                return None
+
+            # 6. Calculate position size
             position_size_usd = request.position_size_usd or self.config.position_size_usd
             quantity = await self._calculate_position_size(
                 exchange, symbol, request.entry_price, position_size_usd
@@ -570,8 +588,42 @@ class PositionManager:
 
             order = await exchange.create_market_order(symbol, order_side, quantity)
 
-            if not order or order.status != 'closed':
-                logger.error(f"Failed to open position for {symbol}")
+            if not order:
+                logger.error(f"Failed to create order for {symbol}")
+                return None
+
+            # CRITICAL FIX: Different check for Bybit vs Binance
+            if exchange_name == 'bybit':
+                # Bybit testnet: market orders may have status='new' or 'active' initially
+                # Check filled amount instead of status
+                if not order.filled or order.filled == 0:
+                    logger.info(f"Bybit order created but not filled yet, waiting 3 seconds...")
+                    await asyncio.sleep(3)  # Give testnet time to fill
+                    
+                    # Re-fetch order to get updated status
+                    try:
+                        order = await exchange.fetch_order(order.id, symbol)
+                        logger.info(f"Order refetched: filled={order.filled}, status={order.status}")
+                    except Exception as e:
+                        logger.warning(f"Could not refetch order, using original: {e}")
+                
+                # Check if still not filled (None or 0)
+                if not order.filled or order.filled == 0:
+                    logger.error(f"Bybit order not filled for {symbol} (filled={order.filled})")
+                    return None
+            else:
+                # Binance: status check is reliable
+                if order.status != 'closed':
+                    logger.error(f"Binance order not filled for {symbol} (status: {order.status})")
+                    return None
+            
+            # Additional safety check for all exchanges
+            if not order.filled or order.filled <= 0:
+                logger.error(f"Invalid order filled quantity for {symbol}: {order.filled}")
+                return None
+            
+            if not order.price or order.price <= 0:
+                logger.error(f"Invalid order price for {symbol}: {order.price}")
                 return None
 
             # 8. Create position state
@@ -608,7 +660,8 @@ class PositionManager:
                 'exchange': exchange_name,
                 'side': position.side,
                 'quantity': position.quantity,
-                'entry_price': position.entry_price
+                'entry_price': position.entry_price,
+                'leverage': leverage  # CRITICAL: Save leverage to database
             })
 
             position.id = position_id
@@ -936,48 +989,70 @@ class PositionManager:
         logger.debug(f"[PositionManager] Tracked positions: {list(self.positions.keys())}")
         
         for symbol, pos_data in positions_to_process:
+            logger.info(f"[DEBUG] Processing symbol: {symbol}")  # DEBUG
+            
             if not symbol:
+                logger.info(f"[DEBUG] Symbol is None, skipping")  # DEBUG
                 continue
             
             # Normalize symbol format (SHELL/USDT:USDT → SHELLUSDT)
             normalized_symbol = symbol.replace('/', '').replace(':USDT', '')
+            logger.info(f"[DEBUG] Normalized: {symbol} → {normalized_symbol}")  # DEBUG
             
             # Try both formats
             position_symbol = normalized_symbol if normalized_symbol in self.positions else symbol
+            logger.info(f"[DEBUG] Position symbol: {position_symbol}, exists: {position_symbol in self.positions}")  # DEBUG
             
             if position_symbol not in self.positions:
                 logger.debug(f"[PositionManager] Skipping {symbol} (normalized: {normalized_symbol}) - not tracked")
                 continue
 
             position = self.positions[position_symbol]
+            logger.info(f"[DEBUG] Found position {position_symbol}, has_TS: {position.has_trailing_stop}")  # DEBUG
             
             # Update position state
-            position.current_price = pos_data.get('mark_price', pos_data.get('markPrice', position.current_price))
-            position.unrealized_pnl = pos_data.get('unrealized_pnl', pos_data.get('unrealizedPnl', 0))
+            try:
+                old_price = position.current_price
+                # CRITICAL: Convert to float to avoid Decimal/float TypeError
+                position.current_price = float(pos_data.get('mark_price', pos_data.get('markPrice', position.current_price)))
+                position.unrealized_pnl = float(pos_data.get('unrealized_pnl', pos_data.get('unrealizedPnl', 0)))
+                logger.info(f"[DEBUG] Price updated: {old_price} → {position.current_price}")  # DEBUG
 
-            # Calculate PnL percent
-            if position.entry_price > 0:
-                if position.side == 'long':
-                    position.unrealized_pnl_percent = (
-                            (position.current_price - position.entry_price) / position.entry_price * 100
-                    )
+                # Calculate PnL percent
+                # CRITICAL: Convert entry_price to float for calculation
+                entry_price_float = float(position.entry_price)
+                if entry_price_float > 0:
+                    if position.side == 'long':
+                        position.unrealized_pnl_percent = (
+                                (position.current_price - entry_price_float) / entry_price_float * 100
+                        )
+                    else:
+                        position.unrealized_pnl_percent = (
+                                (entry_price_float - position.current_price) / entry_price_float * 100
+                        )
+                    logger.info(f"[DEBUG] PnL calculated: {position.unrealized_pnl_percent:.2f}%")  # DEBUG
+
+                logger.debug(f"[PositionManager] {position_symbol}: price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}%")
+
+                # Update trailing stop
+                trailing_manager = self.trailing_managers.get(position.exchange)
+                logger.info(f"[DEBUG] Trailing manager: {trailing_manager is not None}, has_TS: {position.has_trailing_stop}")  # DEBUG
+                
+                if trailing_manager and position.has_trailing_stop:
+                    logger.info(f"[DEBUG] Calling update_price for {position_symbol}")  # DEBUG
+                    logger.debug(f"[PositionManager] Calling trailing_manager.update_price for {position_symbol}")
+                    update_result = await trailing_manager.update_price(position_symbol, float(position.current_price))
+                    logger.info(f"[DEBUG] update_price completed, result: {update_result}")  # DEBUG
+                    logger.debug(f"[PositionManager] update_price result: {update_result}")
+                    
+                    if update_result and update_result.get('action') == 'activated':
+                        position.trailing_activated = True
+                        logger.info(f"🚀 Trailing stop activated for {position_symbol}")
                 else:
-                    position.unrealized_pnl_percent = (
-                            (position.entry_price - position.current_price) / position.entry_price * 100
-                    )
-
-            logger.debug(f"[PositionManager] {position_symbol}: price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}%")
-
-            # Update trailing stop
-            trailing_manager = self.trailing_managers.get(position.exchange)
-            if trailing_manager and position.has_trailing_stop:
-                logger.debug(f"[PositionManager] Calling trailing_manager.update_price for {position_symbol}")
-                update_result = await trailing_manager.update_price(position_symbol, float(position.current_price))
-                logger.debug(f"[PositionManager] update_price result: {update_result}")
-
-                if update_result and update_result.get('action') == 'activated':
-                    position.trailing_activated = True
-                    logger.info(f"🚀 Trailing stop activated for {position_symbol}")
+                    logger.info(f"[DEBUG] Skipping update_price: TM={trailing_manager is not None}, has_TS={position.has_trailing_stop}")  # DEBUG
+                    
+            except Exception as e:
+                logger.error(f"[DEBUG] Exception in position update loop: {e}", exc_info=True)  # DEBUG
 
             # Update database (MOVED INSIDE LOOP!)
             await self.repository.update_position_from_websocket({

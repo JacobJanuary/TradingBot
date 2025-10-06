@@ -247,7 +247,11 @@ class RateLimiter:
                     
             except Exception as e:
                 self.stats.failed_requests += 1
-                logger.error(f"Unexpected error in rate limited function: {e}")
+                func_name = getattr(func, '__name__', str(func))
+                logger.error(
+                    f"Unexpected error in rate limited function '{func_name}': {type(e).__name__}: {e}",
+                    exc_info=True
+                )
                 raise
         
         self.stats.failed_requests += 1

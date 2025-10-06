@@ -146,6 +146,33 @@ class ExchangeManager:
         """Close exchange connection"""
         await self.exchange.close()
 
+    # ============== Market Information ==============
+    
+    def has_market(self, symbol: str) -> bool:
+        """
+        Check if symbol exists in loaded markets
+        
+        Args:
+            symbol: Trading symbol (e.g., 'BTCUSDT', 'BTC/USDT:USDT')
+        
+        Returns:
+            bool: True if symbol is available on this exchange
+        """
+        return symbol in self.markets
+    
+    def get_market_info(self, symbol: str) -> Optional[Dict]:
+        """
+        Get market information for symbol
+        
+        Args:
+            symbol: Trading symbol
+        
+        Returns:
+            Dict with market info or None if not found
+            Contains: active, limits, precision, info, etc.
+        """
+        return self.markets.get(symbol)
+
     # ============== Market Data ==============
 
     async def fetch_ticker(self, symbol: str, use_cache: bool = True) -> Dict:
@@ -331,6 +358,14 @@ class ExchangeManager:
             return True
             
         except ccxt.BaseError as e:
+            error_str = str(e)
+            
+            # CRITICAL FIX: Bybit error 110043 "leverage not modified" is NOT an error
+            # It means leverage is already set to the requested value
+            if self.name.lower() == 'bybit' and ('110043' in error_str or 'leverage not modified' in error_str):
+                logger.debug(f"Leverage already set to {leverage}x for {symbol} (not an error)")
+                return True  # Success! Leverage is already correct
+            
             logger.warning(f"⚠️ Failed to set leverage for {symbol}: {e}")
             return False
 

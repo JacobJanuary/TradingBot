@@ -159,8 +159,6 @@ class Repository:
                 sc.recommended_action as action,  -- Может быть BUY, SELL, LONG, SHORT
                 sc.score_week, 
                 sc.score_month,
-                sc.patterns_details, 
-                sc.combinations_details,
                 sc.created_at,
                 LOWER(ex.exchange_name) as exchange,
                 -- Round to 15-minute candle for wave grouping
@@ -334,10 +332,13 @@ class Repository:
         query = """
             INSERT INTO monitoring.positions (
                 symbol, exchange, side, quantity,
-                entry_price, status
-            ) VALUES ($1, $2, $3, $4, $5, 'active')
+                entry_price, leverage, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'active')
             RETURNING id
         """
+        
+        # Get leverage from position_data or default to 1
+        leverage = position_data.get('leverage', 1)
 
         if conn:
             # Use provided connection (transaction mode)
@@ -347,7 +348,8 @@ class Repository:
                 position_data['exchange'],
                 position_data['side'],
                 position_data['quantity'],
-                position_data['entry_price']
+                position_data['entry_price'],
+                leverage
             )
         else:
             # Acquire connection from pool (standalone mode)
@@ -358,7 +360,8 @@ class Repository:
                     position_data['exchange'],
                     position_data['side'],
                     position_data['quantity'],
-                    position_data['entry_price']
+                    position_data['entry_price'],
+                    leverage
                 )
 
         return position_id
