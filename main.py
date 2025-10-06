@@ -16,6 +16,7 @@ from utils.process_lock import ProcessLock, ensure_single_instance, check_runnin
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
 from core.signal_processor import SignalProcessor
+from core.signal_processor_websocket import WebSocketSignalProcessor
 from database.repository import Repository as TradingRepository
 from websocket.binance_stream import BinancePrivateStream
 from websocket.event_router import EventRouter
@@ -241,13 +242,27 @@ class TradingBot:
             logger.info("✅ Aged position manager ready")
 
             # Initialize signal processor
-            logger.info("Initializing signal processor...")
-            self.signal_processor = SignalProcessor(
-                settings.trading,
-                self.repository,
-                self.position_manager,
-                self.event_router
-            )
+            # Check if WebSocket mode is enabled
+            use_websocket = os.getenv('USE_WEBSOCKET_SIGNALS', 'false').lower() == 'true'
+            
+            if use_websocket:
+                logger.info("Initializing WebSocket signal processor...")
+                self.signal_processor = WebSocketSignalProcessor(
+                    settings.trading,
+                    self.position_manager,
+                    self.repository,
+                    self.event_router
+                )
+                logger.info("✅ WebSocket signal processor initialized")
+            else:
+                logger.info("Initializing database signal processor...")
+                self.signal_processor = SignalProcessor(
+                    settings.trading,
+                    self.repository,
+                    self.position_manager,
+                    self.event_router
+                )
+                logger.info("✅ Database signal processor initialized")
 
             # Stop-list symbols are now loaded from configuration (.env file)
             # via SymbolFilter in signal_processor
@@ -544,6 +559,17 @@ class TradingBot:
         logger.info("🛑 Cleaning up resources...")
         logger.info("=" * 80)
 
+        # Stop signal processor (WebSocket or Database)
+        if self.signal_processor:
+            try:
+                # WebSocketSignalProcessor has stop() method
+                if hasattr(self.signal_processor, 'stop'):
+                    logger.info("Stopping signal processor...")
+                    await self.signal_processor.stop()
+                    logger.info("✅ Signal processor stopped")
+            except Exception as e:
+                logger.error(f"❌ Failed to stop signal processor: {e}")
+        
         # Gracefully disconnect WebSocket streams with proper close frames
         for name, stream in self.websockets.items():
             try:
@@ -642,11 +668,18 @@ def main():
             import time
             time.sleep(2)
 
-    # Acquire process lock
-    process_lock = ProcessLock('bot.pid')
+    # Acquire process lock with absolute path for reliability
+    lock_file = '/tmp/trading_bot.lock'
+    process_lock = ProcessLock(lock_file)
+    
+    # Check for stale lock first
+    if process_lock.check_stale_lock():
+        logger.info("🧹 Removed stale lock file")
+    
     if not process_lock.acquire():
         logger.error("❌ Cannot start: another instance is already running")
-        logger.error("Use --force to kill existing instances, or --check-instances to verify")
+        logger.error(f"💡 To force start, run: rm {lock_file}")
+        logger.error("   Or use --force to kill existing instances")
         sys.exit(1)
 
     try:

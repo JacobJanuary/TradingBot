@@ -150,8 +150,8 @@ class EventRouter:
                     await asyncio.gather(*tasks, return_exceptions=True)
                     logger.debug(f"[EventRouter] All handlers for '{event.name}' completed")
             else:
-                # Don't spam logs for known unhandled events (ticker, orderbook, price_update)
-                if event.name not in ['ticker', 'orderbook', 'price_update']:
+                # Don't spam logs for known unhandled events (ticker, orderbook, price_update, trade, signal.received)
+                if event.name not in ['ticker', 'orderbook', 'price_update', 'trade', 'signal.received']:
                     logger.warning(f"[EventRouter] No handlers registered for event '{event.name}'!")
                 else:
                     logger.debug(f"[EventRouter] Ignoring unhandled market data event '{event.name}'")

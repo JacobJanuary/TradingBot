@@ -158,7 +158,23 @@ class ExchangeManager:
         Returns:
             bool: True if symbol is available on this exchange
         """
-        return symbol in self.markets
+        # Try direct match first
+        if symbol in self.markets:
+            return True
+        
+        # Try normalized format (BTCUSDT → BTC/USDT:USDT)
+        if symbol.endswith('USDT') and '/' not in symbol:
+            normalized = f"{symbol[:-4]}/USDT:USDT"
+            if normalized in self.markets:
+                return True
+        
+        # Try without settlement currency (BTC/USDT:USDT → BTC/USDT)
+        if ':' in symbol:
+            without_settlement = symbol.split(':')[0]
+            if without_settlement in self.markets:
+                return True
+        
+        return False
     
     def get_market_info(self, symbol: str) -> Optional[Dict]:
         """
@@ -171,7 +187,23 @@ class ExchangeManager:
             Dict with market info or None if not found
             Contains: active, limits, precision, info, etc.
         """
-        return self.markets.get(symbol)
+        # Try direct match first
+        if symbol in self.markets:
+            return self.markets[symbol]
+        
+        # Try normalized format (BTCUSDT → BTC/USDT:USDT)
+        if symbol.endswith('USDT') and '/' not in symbol:
+            normalized = f"{symbol[:-4]}/USDT:USDT"
+            if normalized in self.markets:
+                return self.markets[normalized]
+        
+        # Try without settlement currency (BTC/USDT:USDT → BTC/USDT)
+        if ':' in symbol:
+            without_settlement = symbol.split(':')[0]
+            if without_settlement in self.markets:
+                return self.markets[without_settlement]
+        
+        return None
 
     # ============== Market Data ==============
 

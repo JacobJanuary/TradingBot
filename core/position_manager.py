@@ -28,6 +28,7 @@ from protection.trailing_stop import SmartTrailingStopManager
 from websocket.event_router import EventRouter
 from core.exchange_manager import ExchangeManager
 from core.services.zombie_cleanup_service import ZombieCleanupService
+from core.balance_checker import BalanceChecker
 from utils.decimal_utils import to_decimal, calculate_stop_loss, calculate_pnl, calculate_quantity
 from utils.order_helpers import (
     safe_order_get, get_order_id, get_order_symbol, 
@@ -153,6 +154,14 @@ class PositionManager:
 
         # Position locks
         self.position_locks: set = set()
+        
+        # ✅ CRITICAL FIX: SL creation locks to prevent race condition
+        self._sl_creation_locks: Dict[str, asyncio.Lock] = {}  # {symbol: lock}
+        self._sl_creation_locks_lock = asyncio.Lock()  # Meta-lock for creating locks safely
+        
+        # ✅ CRITICAL FIX: Position opening locks to prevent duplicate positions
+        self._position_opening_locks: Dict[str, asyncio.Lock] = {}  # {symbol: lock}
+        self._position_opening_locks_lock = asyncio.Lock()  # Meta-lock for creating locks safely
 
         # Risk management
         self.total_exposure = Decimal('0')
@@ -180,6 +189,12 @@ class PositionManager:
             exchanges=exchanges,
             sync_interval=self.sync_interval,
             aggressive_cleanup_threshold=10
+        )
+        
+        # Balance checker for pre-validation
+        self.balance_checker = BalanceChecker(
+            exchanges=exchanges,
+            position_size_usd=float(config.position_size_usd)
         )
 
         logger.info("PositionManager initialized")
@@ -473,20 +488,22 @@ class PositionManager:
         Open new position with complete workflow and race condition protection.
         
         STEPS:
-        1. Acquire PostgreSQL advisory lock (cross-process protection)
-        2. Get exchange instance
-        3. Check if position already exists (protected by lock)
-        4. Validate risk limits
-        5. Calculate position size
-        6. Validate spread
-        7. Execute market order
-        8. Create position state
-        9. Save to database (trade + position records)
-        10. Set stop loss
-        11. Initialize trailing stop
-        12. Update internal tracking
+        1. Acquire asyncio Lock (prevents race conditions within same process)
+        2. Acquire PostgreSQL advisory lock (cross-process protection)
+        3. Get exchange instance
+        4. Check if position already exists (protected by locks)
+        5. Validate risk limits
+        6. Calculate position size
+        7. Validate spread
+        8. Execute market order
+        9. Create position state
+        10. Save to database (trade + position records)
+        11. Set stop loss
+        12. Initialize trailing stop
+        13. Update internal tracking
         
-        RACE CONDITION PROTECTION:
+        RACE CONDITION PROTECTION (2 layers):
+        - ✅ asyncio.Lock: Prevents multiple async tasks from opening same position
         - PostgreSQL advisory lock prevents duplicate positions across bot instances
         - In-memory lock protects against concurrent calls within same process
         - All locks are released in finally block
@@ -501,14 +518,33 @@ class PositionManager:
         symbol = request.symbol
         exchange_name = request.exchange.lower()
         db_lock_acquired = False
-
-        # Acquire in-memory position lock (fast check)
+        
+        # ✅ CRITICAL FIX: Acquire asyncio Lock to prevent race condition
+        # Use meta-lock to safely create per-symbol lock
         lock_key = f"{exchange_name}_{symbol}"
-        if lock_key in self.position_locks:
-            logger.warning(f"Position already being processed for {symbol} (in-memory lock)")
-            return None
+        async with self._position_opening_locks_lock:
+            if lock_key not in self._position_opening_locks:
+                self._position_opening_locks[lock_key] = asyncio.Lock()
+            position_lock = self._position_opening_locks[lock_key]
+        
+        async with position_lock:
+            logger.debug(f"🔒 Acquired position opening lock for {symbol}")
+            
+            # ✅ CRITICAL: Check if position already exists in DB (atomic check under lock)
+            existing_position = await self.repository.get_open_position(symbol, exchange_name)
+            if existing_position:
+                logger.warning(f"Position for {symbol} already exists (ID: {existing_position.get('id')}), skipping duplicate")
+                logger.debug(f"🔓 Released position opening lock for {symbol} (already exists)")
+                return None
+            
+            # Check if already being processed (fast check with set)
+            if lock_key in self.position_locks:
+                logger.warning(f"Position already being processed for {symbol} (in-memory lock)")
+                logger.debug(f"🔓 Released position opening lock for {symbol} (already processing)")
+                return None
 
-        self.position_locks.add(lock_key)
+            self.position_locks.add(lock_key)
+            logger.debug(f"🔓 Released position opening lock for {symbol} (checks passed, proceeding)")
 
         try:
             # 1. Acquire PostgreSQL advisory lock (protects across processes)
@@ -566,11 +602,26 @@ class PositionManager:
                 logger.error(f"Failed to calculate position size for {symbol}")
                 return None
 
-            # 6. Validate spread (временно только логирование)
+            # 6.1. Check available balance BEFORE attempting to open position
+            # CRITICAL: Prevents failed order attempts and allows continuing with other exchanges
+            has_balance = await self.balance_checker.has_sufficient_balance(
+                exchange_name=exchange_name,
+                required_usd=to_decimal(position_size_usd)
+            )
+            
+            if not has_balance:
+                logger.warning(
+                    f"⏸️ Skipping {symbol} on {exchange_name}: insufficient funds. "
+                    f"Required: {position_size_usd} USDT. "
+                    f"Position will be attempted when funds become available."
+                )
+                return None
+
+            # 6.2. Validate spread (временно только логирование)
             await self._validate_spread(exchange, symbol)
             # Не блокируем открытие позиций из-за спреда
 
-            # 6.5. Set leverage before opening position
+            # 6.3. Set leverage before opening position
             # Use leverage from config (default: 10 for all exchanges)
             leverage = self.config.leverage
             await exchange.set_leverage(symbol, leverage)
@@ -713,6 +764,11 @@ class PositionManager:
                 f"✅ Position opened: {symbol} {position.side} "
                 f"{position.quantity:.6f} @ ${position.entry_price:.4f}"
             )
+            
+            # CRITICAL: Invalidate balance cache so spent funds are reflected immediately
+            # This prevents opening too many positions in quick succession
+            self.balance_checker.invalidate_cache(exchange_name)
+            logger.debug(f"✅ Invalidated balance cache for {exchange_name} (funds spent)")
 
             return position
 
@@ -914,6 +970,9 @@ class PositionManager:
         This function now uses StopLossManager for ALL SL operations
         to ensure consistency across the system.
         
+        ✅ CRITICAL FIX: Uses per-symbol lock to prevent race condition
+        when multiple async tasks try to create SL simultaneously.
+        
         Returns:
             Tuple[bool, Optional[str]]: (success, order_id)
                 - success: True if SL was set successfully
@@ -924,43 +983,56 @@ class PositionManager:
         logger.info(f"  Position: {position.side} {position.quantity} @ {position.entry_price}")
         logger.info(f"  Stop price: ${stop_price:.4f}")
 
-        try:
-            # ============================================================
-            # UNIFIED APPROACH: Use StopLossManager for ALL SL operations
-            # ============================================================
-            from core.stop_loss_manager import StopLossManager
+        # ✅ CRITICAL FIX: Acquire lock for this symbol to prevent race condition
+        # Use meta-lock to safely create per-symbol lock
+        async with self._sl_creation_locks_lock:
+            if position.symbol not in self._sl_creation_locks:
+                self._sl_creation_locks[position.symbol] = asyncio.Lock()
+            symbol_lock = self._sl_creation_locks[position.symbol]
+        
+        async with symbol_lock:
+            logger.debug(f"🔒 Acquired SL creation lock for {position.symbol}")
+            
+            try:
+                # ============================================================
+                # UNIFIED APPROACH: Use StopLossManager for ALL SL operations
+                # ============================================================
+                from core.stop_loss_manager import StopLossManager
 
-            sl_manager = StopLossManager(exchange.exchange, position.exchange)
+                sl_manager = StopLossManager(exchange.exchange, position.exchange)
 
-            # CRITICAL: Check using unified has_stop_loss (checks both position.info.stopLoss AND orders)
-            has_sl, existing_sl_price = await sl_manager.has_stop_loss(position.symbol)
+                # CRITICAL: Check using unified has_stop_loss (checks both position.info.stopLoss AND orders)
+                has_sl, existing_sl_price = await sl_manager.has_stop_loss(position.symbol)
 
-            if has_sl:
-                logger.info(f"📌 Stop loss already exists for {position.symbol} at {existing_sl_price}")
-                return True, None  # Stop loss exists, no need to create new one
+                if has_sl:
+                    logger.info(f"📌 Stop loss already exists for {position.symbol} at {existing_sl_price}")
+                    logger.debug(f"🔓 Released SL creation lock for {position.symbol} (already exists)")
+                    return True, None  # Stop loss exists, no need to create new one
 
-            # No SL exists - create it using unified set_stop_loss
-            order_side = 'sell' if position.side == 'long' else 'buy'
+                # No SL exists - create it using unified set_stop_loss
+                order_side = 'sell' if position.side == 'long' else 'buy'
 
-            result = await sl_manager.set_stop_loss(
-                symbol=position.symbol,
-                side=order_side,
-                amount=float(position.quantity),
-                stop_price=stop_price
-            )
+                result = await sl_manager.set_stop_loss(
+                    symbol=position.symbol,
+                    side=order_side,
+                    amount=float(position.quantity),
+                    stop_price=stop_price
+                )
 
-            if result['status'] in ['created', 'already_exists']:
-                order_id = result.get('orderId')  # None for Bybit (position-attached)
-                logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}, order_id={order_id}")
-                return True, order_id
-            else:
-                logger.warning(f"⚠️ Unexpected result from set_stop_loss: {result}")
+                if result['status'] in ['created', 'already_exists']:
+                    order_id = result.get('orderId')  # None for Bybit (position-attached)
+                    logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}, order_id={order_id}")
+                    logger.debug(f"🔓 Released SL creation lock for {position.symbol} (created)")
+                    return True, order_id
+                else:
+                    logger.warning(f"⚠️ Unexpected result from set_stop_loss: {result}")
+                    logger.debug(f"🔓 Released SL creation lock for {position.symbol} (failed)")
+                    return False, None
+
+            except Exception as e:
+                logger.error(f"Failed to set stop loss for {position.symbol}: {e}", exc_info=True)
+                logger.debug(f"🔓 Released SL creation lock for {position.symbol} (exception)")
                 return False, None
-
-        except Exception as e:
-            logger.error(f"Failed to set stop loss for {position.symbol}: {e}", exc_info=True)
-
-        return False, None
 
     async def _on_position_update(self, data: Dict):
         """
@@ -1144,6 +1216,11 @@ class PositionManager:
                     f"Position closed: {symbol} {reason} "
                     f"PnL: ${realized_pnl:.2f} ({realized_pnl_percent:.2f}%)"
                 )
+                
+                # CRITICAL: Invalidate balance cache so freed funds are immediately available
+                # This allows opening new positions right after closing without waiting for cache TTL
+                self.balance_checker.invalidate_cache(position.exchange)
+                logger.debug(f"✅ Invalidated balance cache for {position.exchange} (funds freed)")
 
         except Exception as e:
             logger.error(f"Error closing position {symbol}: {e}", exc_info=True)

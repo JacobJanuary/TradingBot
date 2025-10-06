@@ -176,16 +176,22 @@ class WaveSignalProcessor:
                 continue  # ✅ Продолжаем с остальными
 
             except ccxt.InsufficientFunds as e:
-                # Недостаточно средств - останавливаем весь batch
-                logger.error(f"💰 Insufficient funds at signal {idx} ({symbol}): {e}")
+                # Недостаточно средств на конкретной бирже
+                # ИЗМЕНЕНО: Продолжаем с другими сигналами (могут быть на другой бирже)
+                exchange = signal.get('exchange', 'unknown')
+                logger.warning(
+                    f"💰 Insufficient funds for signal {idx} ({symbol} on {exchange}): {e}\n"
+                    f"   ⏭️ Continuing with remaining signals (may be on other exchanges)"
+                )
                 failed_signals.append({
                     'signal_number': idx,
                     'symbol': symbol,
                     'error_type': 'insufficient_funds',
+                    'exchange': exchange,
                     'message': str(e),
                     'retryable': False
                 })
-                break  # ❌ Останавливаем - средства кончились
+                continue  # ✅ Продолжаем - другие биржи могут иметь средства
 
             except Exception as e:
                 # Неожиданные ошибки - логируем и продолжаем
