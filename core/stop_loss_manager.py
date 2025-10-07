@@ -16,6 +16,7 @@ import logging
 from typing import Optional, Dict, Tuple, List
 from decimal import Decimal
 import ccxt
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ class StopLossManager:
         self.exchange = exchange
         self.exchange_name = exchange_name.lower()
         self.logger = logger
+        
+        # 🔒 CRITICAL: Per-symbol locks to prevent race conditions
+        self._sl_locks: Dict[str, asyncio.Lock] = {}
+        self._sl_locks_lock = asyncio.Lock()  # Meta-lock for safe lock creation
 
     async def has_stop_loss(self, symbol: str) -> Tuple[bool, Optional[str]]:
         """
@@ -156,32 +161,44 @@ class StopLossManager:
 
         Источник логики: core/exchange_manager.py:create_stop_loss_order (ПРОВЕРЕН)
         """
-        self.logger.info(f"Setting Stop Loss for {symbol} at {stop_price}")
+        # 🔒 CRITICAL: Acquire symbol-specific lock to prevent race conditions
+        async with self._sl_locks_lock:
+            if symbol not in self._sl_locks:
+                self._sl_locks[symbol] = asyncio.Lock()
+            symbol_lock = self._sl_locks[symbol]
+        
+        async with symbol_lock:
+            self.logger.info(f"🔒 [StopLossManager] Acquired lock for {symbol}")
+            
+            try:
+                # ШАГ 1: Проверить что SL еще не установлен
+                has_sl, existing_sl = await self.has_stop_loss(symbol)
 
-        try:
-            # ШАГ 1: Проверить что SL еще не установлен
-            has_sl, existing_sl = await self.has_stop_loss(symbol)
+                if has_sl:
+                    self.logger.info(
+                        f"⚠️ Stop Loss already exists at {existing_sl}, skipping"
+                    )
+                    self.logger.debug(f"🔓 [StopLossManager] Released lock for {symbol} (already exists)")
+                    return {
+                        'status': 'already_exists',
+                        'stopPrice': existing_sl,
+                        'reason': 'Stop Loss already set'
+                    }
 
-            if has_sl:
-                self.logger.info(
-                    f"⚠️ Stop Loss already exists at {existing_sl}, skipping"
-                )
-                return {
-                    'status': 'already_exists',
-                    'stopPrice': existing_sl,
-                    'reason': 'Stop Loss already set'
-                }
+                # ШАГ 2: Установка через ExchangeManager
+                # Используем проверенную логику из core/exchange_manager.py
+                if self.exchange_name == 'bybit':
+                    result = await self._set_bybit_stop_loss(symbol, stop_price)
+                else:
+                    result = await self._set_generic_stop_loss(symbol, side, amount, stop_price)
+                
+                self.logger.debug(f"🔓 [StopLossManager] Released lock for {symbol} (created)")
+                return result
 
-            # ШАГ 2: Установка через ExchangeManager
-            # Используем проверенную логику из core/exchange_manager.py
-            if self.exchange_name == 'bybit':
-                return await self._set_bybit_stop_loss(symbol, stop_price)
-            else:
-                return await self._set_generic_stop_loss(symbol, side, amount, stop_price)
-
-        except Exception as e:
-            self.logger.error(f"Failed to set Stop Loss for {symbol}: {e}")
-            raise
+            except Exception as e:
+                self.logger.error(f"Failed to set Stop Loss for {symbol}: {e}")
+                self.logger.debug(f"🔓 [StopLossManager] Released lock for {symbol} (error)")
+                raise
 
     async def _set_bybit_stop_loss(self, symbol: str, stop_price: float) -> Dict:
         """

@@ -48,6 +48,10 @@ class AgedPositionManager:
         # Track managed positions to avoid duplicate processing
         self.managed_positions = {}  # position_id: {'last_update': datetime, 'order_id': str}
 
+        # 🔒 CRITICAL: Locks for preventing duplicate exit order creation (same as SL locks)
+        self._exit_order_locks: Dict[str, asyncio.Lock] = {}  # {symbol: Lock}
+        self._exit_order_locks_lock = asyncio.Lock()  # Meta-lock for creating locks safely
+
         # Statistics
         self.stats = {
             'positions_checked': 0,
@@ -267,57 +271,97 @@ class AgedPositionManager:
         - Check for existing order first
         - Cancel old order before creating new one
         - Use EnhancedExchangeManager for duplicate prevention
+        - 🔒 USE LOCK to prevent race condition (same as SL)
         """
-        try:
-            position_id = f"{position.symbol}_{position.exchange}"
+        # 🔒 CRITICAL: Acquire meta-lock to safely get/create per-symbol lock
+        async with self._exit_order_locks_lock:
+            if position.symbol not in self._exit_order_locks:
+                self._exit_order_locks[position.symbol] = asyncio.Lock()
+            symbol_lock = self._exit_order_locks[position.symbol]
 
-            # Get exchange
-            exchange = self.exchanges.get(position.exchange)
-            if not exchange:
-                logger.error(f"Exchange {position.exchange} not available")
-                return
-
-            # Determine order side (opposite of position)
-            order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
-
-            # Try to use enhanced manager for better order management
+        # 🔒 CRITICAL: Hold lock for ENTIRE order creation/update process
+        async with symbol_lock:
+            logger.debug(f"🔒 Acquired exit order lock for {position.symbol}")
+            
             try:
-                from core.exchange_manager_enhanced import EnhancedExchangeManager
+                position_id = f"{position.symbol}_{position.exchange}"
 
-                # Create enhanced manager
-                enhanced_manager = EnhancedExchangeManager(exchange.exchange)
+                # Get exchange
+                exchange = self.exchanges.get(position.exchange)
+                if not exchange:
+                    logger.error(f"Exchange {position.exchange} not available")
+                    logger.debug(f"🔓 Released exit order lock for {position.symbol} (no exchange)")
+                    return
 
-                # Check for existing exit order
-                existing = await enhanced_manager._check_existing_exit_order(
-                    position.symbol, order_side
-                )
+                # Determine order side (opposite of position)
+                order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
 
-                if existing:
-                    # Check if price needs update
-                    existing_price = float(existing.get('price', 0))
-                    price_diff_pct = abs(target_price - existing_price) / existing_price * 100
+                # Try to use enhanced manager for better order management
+                try:
+                    from core.exchange_manager_enhanced import EnhancedExchangeManager
 
-                    if price_diff_pct > 0.5:  # Update if > 0.5% difference
+                    # Create enhanced manager
+                    enhanced_manager = EnhancedExchangeManager(exchange.exchange)
+
+                    # Check for existing exit order
+                    existing = await enhanced_manager._check_existing_exit_order(
+                        position.symbol, order_side
+                    )
+
+                    if existing:
+                        # Check if price needs update
+                        existing_price = float(existing.get('price', 0))
+                        price_diff_pct = abs(target_price - existing_price) / existing_price * 100
+
+                        if price_diff_pct > 0.5:  # Update if > 0.5% difference
+                            logger.info(
+                                f"📊 Updating exit order for {position.symbol}:\n"
+                                f"  Old price: ${existing_price:.4f}\n"
+                                f"  New price: ${target_price:.4f}\n"
+                                f"  Difference: {price_diff_pct:.1f}%\n"
+                                f"  Phase: {phase}"
+                            )
+
+                            # Cancel old order
+                            try:
+                                await enhanced_manager.safe_cancel_with_verification(
+                                    existing['id'], position.symbol
+                                )
+                            except Exception as e:
+                                logger.warning(f"Could not cancel old order: {e}")
+
+                            # Wait for cancellation to process
+                            await asyncio.sleep(0.2)
+
+                            # Create new order with updated price
+                            order = await enhanced_manager.create_limit_exit_order(
+                                symbol=position.symbol,
+                                side=order_side,
+                                amount=abs(float(position.quantity)),
+                                price=target_price,
+                                check_duplicates=True
+                            )
+
+                            if order:
+                                self.managed_positions[position_id] = {
+                                    'last_update': datetime.now(),
+                                    'order_id': order['id'],
+                                    'phase': phase
+                                }
+                                self.stats['orders_updated'] += 1
+                        else:
+                            logger.debug(
+                                f"Exit order price acceptable (diff {price_diff_pct:.1f}% < 0.5%), "
+                                f"keeping existing order at ${existing_price:.4f}"
+                            )
+                    else:
+                        # No existing order, create new one
                         logger.info(
-                            f"📊 Updating exit order for {position.symbol}:\n"
-                            f"  Old price: ${existing_price:.4f}\n"
-                            f"  New price: ${target_price:.4f}\n"
-                            f"  Difference: {price_diff_pct:.1f}%\n"
+                            f"📝 Creating initial exit order for {position.symbol}:\n"
+                            f"  Price: ${target_price:.4f}\n"
                             f"  Phase: {phase}"
                         )
 
-                        # Cancel old order
-                        try:
-                            await enhanced_manager.safe_cancel_with_verification(
-                                existing['id'], position.symbol
-                            )
-                        except Exception as e:
-                            logger.warning(f"Could not cancel old order: {e}")
-
-                        # Wait for cancellation to process
-                        await asyncio.sleep(0.2)
-
-                        # Create new order with updated price
                         order = await enhanced_manager.create_limit_exit_order(
                             symbol=position.symbol,
                             side=order_side,
@@ -332,26 +376,57 @@ class AgedPositionManager:
                                 'order_id': order['id'],
                                 'phase': phase
                             }
-                            self.stats['orders_updated'] += 1
-                    else:
-                        logger.debug(
-                            f"Exit order price acceptable (diff {price_diff_pct:.1f}% < 0.5%), "
-                            f"keeping existing order at ${existing_price:.4f}"
-                        )
-                else:
-                    # No existing order, create new one
-                    logger.info(
-                        f"📝 Creating initial exit order for {position.symbol}:\n"
-                        f"  Price: ${target_price:.4f}\n"
-                        f"  Phase: {phase}"
-                    )
+                            self.stats['orders_created'] += 1
 
-                    order = await enhanced_manager.create_limit_exit_order(
+                except ImportError:
+                    # Fallback to standard method if enhanced manager not available
+                    logger.warning("Enhanced ExchangeManager not available, using standard method")
+
+                    # Get all open orders for the symbol
+                    orders = await exchange.fetch_open_orders(position.symbol)
+
+                    # Find existing limit exit order
+                    existing_order = None
+                    for order in orders:
+                        if (order.get('type') == 'limit' and
+                            order.get('side') == order_side and
+                            order.get('reduceOnly') == True):
+                            # Check it's not a stop loss
+                            info = order.get('info', {})
+                            if not info.get('stopOrderType'):
+                                existing_order = order
+                                break
+
+                    if existing_order:
+                        # Check if price needs update
+                        existing_price = float(existing_order.get('price', 0))
+                        price_diff_pct = abs(target_price - existing_price) / existing_price * 100
+
+                        if price_diff_pct > 0.5:
+                            # Cancel old order
+                            try:
+                                await exchange.cancel_order(existing_order['id'], position.symbol)
+                                logger.info(f"Cancelled old order {existing_order['id'][:12]}...")
+                                await asyncio.sleep(0.2)
+                            except Exception as e:
+                                logger.warning(f"Could not cancel order: {e}")
+
+                    # Create new order
+                    params = {
+                        'reduceOnly': True,
+                        'timeInForce': 'GTC'
+                    }
+
+                    if exchange.id == 'bybit':
+                        params['positionIdx'] = 0
+
+                    order = await exchange.create_order(
                         symbol=position.symbol,
+                        type='limit',
                         side=order_side,
                         amount=abs(float(position.quantity)),
                         price=target_price,
-                        check_duplicates=True
+                        params=params
                     )
 
                     if order:
@@ -360,72 +435,15 @@ class AgedPositionManager:
                             'order_id': order['id'],
                             'phase': phase
                         }
-                        self.stats['orders_created'] += 1
+                        logger.info(
+                            f"✅ Placed limit order for {position.symbol}: "
+                            f"{order_side} @ ${target_price:.4f}"
+                        )
 
-            except ImportError:
-                # Fallback to standard method if enhanced manager not available
-                logger.warning("Enhanced ExchangeManager not available, using standard method")
-
-                # Get all open orders for the symbol
-                orders = await exchange.fetch_open_orders(position.symbol)
-
-                # Find existing limit exit order
-                existing_order = None
-                for order in orders:
-                    if (order.get('type') == 'limit' and
-                        order.get('side') == order_side and
-                        order.get('reduceOnly') == True):
-                        # Check it's not a stop loss
-                        info = order.get('info', {})
-                        if not info.get('stopOrderType'):
-                            existing_order = order
-                            break
-
-                if existing_order:
-                    # Check if price needs update
-                    existing_price = float(existing_order.get('price', 0))
-                    price_diff_pct = abs(target_price - existing_price) / existing_price * 100
-
-                    if price_diff_pct > 0.5:
-                        # Cancel old order
-                        try:
-                            await exchange.cancel_order(existing_order['id'], position.symbol)
-                            logger.info(f"Cancelled old order {existing_order['id'][:12]}...")
-                            await asyncio.sleep(0.2)
-                        except Exception as e:
-                            logger.warning(f"Could not cancel order: {e}")
-
-                # Create new order
-                params = {
-                    'reduceOnly': True,
-                    'timeInForce': 'GTC'
-                }
-
-                if exchange.id == 'bybit':
-                    params['positionIdx'] = 0
-
-                order = await exchange.create_order(
-                    symbol=position.symbol,
-                    type='limit',
-                    side=order_side,
-                    amount=abs(float(position.quantity)),
-                    price=target_price,
-                    params=params
-                )
-
-                if order:
-                    self.managed_positions[position_id] = {
-                        'last_update': datetime.now(),
-                        'order_id': order['id'],
-                        'phase': phase
-                    }
-                    logger.info(
-                        f"✅ Placed limit order for {position.symbol}: "
-                        f"{order_side} @ ${target_price:.4f}"
-                    )
-
-        except Exception as e:
-            logger.error(f"Error updating exit order: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error updating exit order: {e}", exc_info=True)
+            finally:
+                logger.debug(f"🔓 Released exit order lock for {position.symbol}")
 
     async def _get_current_price(self, symbol: str, exchange_name: str) -> Optional[float]:
         """

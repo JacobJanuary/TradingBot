@@ -68,7 +68,7 @@ class SignalProcessor:
         wave_minutes_str = os.getenv('WAVE_CHECK_MINUTES')
         if not wave_minutes_str:
             raise ValueError("WAVE_CHECK_MINUTES must be set in .env file")
-        self.wave_check_minutes = [int(m.strip()) for m in wave_minutes_str.split(',')]
+        self.wave_check_minutes = sorted([int(m.strip()) for m in wave_minutes_str.split(',')])  # CRITICAL: Sort for correct next-wave logic
         
         wave_duration = os.getenv('WAVE_CHECK_DURATION_SECONDS')
         if not wave_duration:

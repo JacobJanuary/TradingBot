@@ -159,9 +159,15 @@ class PositionManager:
         self._sl_creation_locks: Dict[str, asyncio.Lock] = {}  # {symbol: lock}
         self._sl_creation_locks_lock = asyncio.Lock()  # Meta-lock for creating locks safely
         
+        # ✅ CRITICAL: In-memory cache of created SL to prevent race condition with exchange API lag
+        self._sl_cache: Dict[str, bool] = {}  # {symbol: has_sl}
+        
         # ✅ CRITICAL FIX: Position opening locks to prevent duplicate positions
         self._position_opening_locks: Dict[str, asyncio.Lock] = {}  # {symbol: lock}
         self._position_opening_locks_lock = asyncio.Lock()  # Meta-lock for creating locks safely
+        
+        # ✅ CRITICAL: In-memory cache of opened positions to prevent race condition with DB lag
+        self._position_cache: Dict[str, bool] = {}  # {exchange_symbol: position_opened}
 
         # Risk management
         self.total_exposure = Decimal('0')
@@ -530,10 +536,17 @@ class PositionManager:
         async with position_lock:
             logger.debug(f"🔒 Acquired position opening lock for {symbol}")
             
+            # ✅ CRITICAL: Check in-memory cache FIRST to prevent race condition with DB lag
+            if self._position_cache.get(lock_key, False):
+                logger.warning(f"📌 Position {symbol} already marked as opened (cache), skipping duplicate")
+                logger.debug(f"🔓 Released position opening lock for {symbol} (cache hit)")
+                return None
+            
             # ✅ CRITICAL: Check if position already exists in DB (atomic check under lock)
             existing_position = await self.repository.get_open_position(symbol, exchange_name)
             if existing_position:
                 logger.warning(f"Position for {symbol} already exists (ID: {existing_position.get('id')}), skipping duplicate")
+                self._position_cache[lock_key] = True  # Update cache
                 logger.debug(f"🔓 Released position opening lock for {symbol} (already exists)")
                 return None
             
@@ -544,7 +557,10 @@ class PositionManager:
                 return None
 
             self.position_locks.add(lock_key)
-            logger.debug(f"🔓 Released position opening lock for {symbol} (checks passed, proceeding)")
+            
+            # ✅ CRITICAL: Mark in cache to prevent duplicate position from concurrent tasks
+            self._position_cache[lock_key] = True
+            logger.debug(f"✅ Position opening lock held - proceeding with creation (cache updated)")
 
         try:
             # 1. Acquire PostgreSQL advisory lock (protects across processes)
@@ -790,28 +806,36 @@ class PositionManager:
 
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
         """Check if position already exists"""
+        logger.debug(f"[_position_exists] Checking {symbol} on {exchange}")
+        
         # Check local tracking
         if symbol in self.positions:
+            logger.debug(f"[_position_exists] ✅ Found in local tracking: {symbol}")
             return True
 
         # Check database
         db_position = await self.repository.get_open_position(symbol, exchange)
         if db_position:
+            logger.debug(f"[_position_exists] ✅ Found in DB: {symbol}")
             return True
 
         # Check exchange
         exchange_obj = self.exchanges.get(exchange)
         if exchange_obj:
+            logger.debug(f"[_position_exists] Checking exchange API for {symbol}")
             # CRITICAL FIX: Same issue as verify_position_exists - use fetch_positions() without [symbol]
             positions = await exchange_obj.fetch_positions()
             # Find position using normalize_symbol comparison
             normalized_symbol = normalize_symbol(symbol)
+            logger.debug(f"[_position_exists] Normalized: {symbol} → {normalized_symbol}, checking {len(positions)} positions")
             for pos in positions:
-                if normalize_symbol(pos.get('symbol')) == normalized_symbol:
-                    contracts = float(pos.get('contracts') or 0)
-                    if abs(contracts) > 0:
-                        return True
+                pos_symbol = normalize_symbol(pos.get('symbol'))
+                contracts = float(pos.get('contracts') or 0)
+                if pos_symbol == normalized_symbol and abs(contracts) > 0:
+                    logger.warning(f"[_position_exists] ✅ FOUND ON EXCHANGE: {pos.get('symbol')} ({contracts} contracts)")
+                    return True
 
+        logger.debug(f"[_position_exists] ❌ NOT FOUND: {symbol}")
         return False
 
     async def has_open_position(self, symbol: str, exchange: str = None) -> bool:
@@ -994,6 +1018,12 @@ class PositionManager:
             logger.debug(f"🔒 Acquired SL creation lock for {position.symbol}")
             
             try:
+                # ✅ CRITICAL: Check in-memory cache FIRST to prevent race condition with exchange API lag
+                if self._sl_cache.get(position.symbol, False):
+                    logger.info(f"📌 Stop loss already marked as created for {position.symbol} (cache)")
+                    logger.debug(f"🔓 Released SL creation lock for {position.symbol} (cache hit)")
+                    return True, None
+                
                 # ============================================================
                 # UNIFIED APPROACH: Use StopLossManager for ALL SL operations
                 # ============================================================
@@ -1006,6 +1036,7 @@ class PositionManager:
 
                 if has_sl:
                     logger.info(f"📌 Stop loss already exists for {position.symbol} at {existing_sl_price}")
+                    self._sl_cache[position.symbol] = True  # Update cache
                     logger.debug(f"🔓 Released SL creation lock for {position.symbol} (already exists)")
                     return True, None  # Stop loss exists, no need to create new one
 
@@ -1022,6 +1053,10 @@ class PositionManager:
                 if result['status'] in ['created', 'already_exists']:
                     order_id = result.get('orderId')  # None for Bybit (position-attached)
                     logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}, order_id={order_id}")
+                    
+                    # ✅ CRITICAL: Mark in cache to prevent duplicate SL from concurrent tasks
+                    self._sl_cache[position.symbol] = True
+                    
                     logger.debug(f"🔓 Released SL creation lock for {position.symbol} (created)")
                     return True, order_id
                 else:
@@ -1161,6 +1196,18 @@ class PositionManager:
         if symbol not in self.positions:
             logger.warning(f"No position found for {symbol}")
             return
+        
+        # ✅ CRITICAL: Clear position cache when position closes
+        position = self.positions[symbol]
+        lock_key = f"{position.exchange}_{symbol}"
+        if lock_key in self._position_cache:
+            del self._position_cache[lock_key]
+            logger.debug(f"Cleared position cache for {symbol}")
+        
+        # ✅ CRITICAL: Clear SL cache when position closes
+        if symbol in self._sl_cache:
+            del self._sl_cache[symbol]
+            logger.debug(f"Cleared SL cache for {symbol}")
 
         position = self.positions[symbol]
         exchange = self.exchanges.get(position.exchange)
@@ -1405,7 +1452,8 @@ class PositionManager:
             unprotected_positions = []
 
             # Check all positions for stop loss - verify on exchange using unified manager
-            for symbol, position in self.positions.items():
+            # ✅ FIX: Create snapshot to avoid "dictionary changed size during iteration"
+            for symbol, position in list(self.positions.items()):
                 exchange = self.exchanges.get(position.exchange)
                 if not exchange:
                     continue
