@@ -244,6 +244,27 @@ class RateLimiter:
                     await asyncio.sleep(delay)
                 else:
                     logger.error(f"Max retries exceeded for network error: {e}")
+            
+            except ccxt.BadRequest as e:
+                # ✅ CRITICAL FIX: Bybit "leverage not modified" (110043) is NOT an error
+                # It means leverage is already set correctly - treat as success
+                error_str = str(e)
+                if '110043' in error_str or 'leverage not modified' in error_str.lower():
+                    func_name = getattr(func, '__name__', str(func))
+                    logger.debug(
+                        f"Bybit leverage already set correctly in '{func_name}' (110043 - not an error)"
+                    )
+                    self.stats.successful_requests += 1
+                    return None  # Success! Leverage already correct
+                else:
+                    # Other BadRequest errors should be raised
+                    self.stats.failed_requests += 1
+                    func_name = getattr(func, '__name__', str(func))
+                    logger.error(
+                        f"BadRequest in rate limited function '{func_name}': {type(e).__name__}: {e}",
+                        exc_info=True
+                    )
+                    raise
                     
             except Exception as e:
                 self.stats.failed_requests += 1

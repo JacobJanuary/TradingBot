@@ -415,7 +415,7 @@ class ExchangeManager:
             
             # Bybit requires 'category' parameter
             if self.name.lower() == 'bybit':
-                await self.rate_limiter.execute_request(
+                result = await self.rate_limiter.execute_request(
                     self.exchange.set_leverage,
                     leverage=leverage,
                     symbol=symbol,
@@ -423,22 +423,27 @@ class ExchangeManager:
                 )
             else:
                 # Binance and others
-                await self.rate_limiter.execute_request(
+                result = await self.rate_limiter.execute_request(
                     self.exchange.set_leverage,
                     leverage=leverage,
                     symbol=symbol
                 )
             
-            logger.info(f"✅ Leverage set to {leverage}x for {symbol} on {self.name}")
+            # ✅ CRITICAL: rate_limiter returns None if leverage already set (110043)
+            # This is a success case, not an error
+            if result is None and self.name.lower() == 'bybit':
+                logger.debug(f"✅ Leverage already set to {leverage}x for {symbol} (110043 handled)")
+            else:
+                logger.info(f"✅ Leverage set to {leverage}x for {symbol} on {self.name}")
+            
             return True
             
         except ccxt.BaseError as e:
             error_str = str(e)
             
-            # CRITICAL FIX: Bybit error 110043 "leverage not modified" is NOT an error
-            # It means leverage is already set to the requested value
+            # Fallback: should not reach here due to rate_limiter handling, but keep for safety
             if self.name.lower() == 'bybit' and ('110043' in error_str or 'leverage not modified' in error_str):
-                logger.debug(f"Leverage already set to {leverage}x for {symbol} (not an error)")
+                logger.debug(f"Leverage already set to {leverage}x for {symbol} (fallback handler)")
                 return True  # Success! Leverage is already correct
             
             # ✅ FIX: Handle invalid leverage error gracefully
