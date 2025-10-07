@@ -21,16 +21,61 @@ class ProcessLock:
         """
         Acquire the process lock.
         Returns True if lock acquired, False if another instance is running.
+        
+        Uses fcntl.flock() which is:
+        - Process-safe (works across multiple processes)
+        - Automatically released on process death
+        - Works on Unix-like systems (Linux, macOS)
         """
         try:
-            # Open or create lock file
-            self.lock_fd = os.open(self.lock_file, os.O_CREAT | os.O_WRONLY)
+            # Open or create lock file with O_RDWR for better compatibility
+            # O_TRUNC to clear old PID before writing new one
+            self.lock_fd = os.open(
+                self.lock_file, 
+                os.O_CREAT | os.O_RDWR | os.O_TRUNC,
+                0o644  # rw-r--r--
+            )
 
             # Try to acquire exclusive lock (non-blocking)
-            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # This is the CRITICAL part - flock is atomic and process-safe
+            try:
+                fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (IOError, OSError) as lock_error:
+                # Lock is held by another process
+                if lock_error.errno in (11, 35):  # EAGAIN or EWOULDBLOCK
+                    try:
+                        # Try to read PID from lock file
+                        # Use os.read() instead of open() to avoid conflicts
+                        os.lseek(self.lock_fd, 0, os.SEEK_SET)
+                        pid_bytes = os.read(self.lock_fd, 100)
+                        pid = pid_bytes.decode().strip()
+                        
+                        # Verify the process is actually running
+                        try:
+                            os.kill(int(pid), 0)  # Signal 0 = check if alive
+                            logger.error(f"❌ Another instance is already running (PID: {pid})")
+                            logger.error(f"   Lock file: {self.lock_file}")
+                            logger.error(f"   To force kill: kill -9 {pid}")
+                        except (OSError, ValueError):
+                            # Process is dead but lock still held (shouldn't happen with flock)
+                            logger.error(f"⚠️ Stale lock detected for dead PID: {pid}")
+                            logger.error(f"   This shouldn't happen with flock - investigating...")
+                    except Exception as read_error:
+                        logger.error(f"❌ Another instance is already running (couldn't read PID: {read_error})")
+                    
+                    # Close FD and return failure
+                    os.close(self.lock_fd)
+                    self.lock_fd = None
+                    return False
+                else:
+                    raise  # Re-raise unexpected errors
 
-            # Write PID to lock file
-            os.write(self.lock_fd, str(os.getpid()).encode())
+            # Lock acquired! Write our PID to the file
+            # Truncate first to ensure clean write
+            os.ftruncate(self.lock_fd, 0)
+            os.lseek(self.lock_fd, 0, os.SEEK_SET)
+            pid_str = f"{os.getpid()}\n"
+            os.write(self.lock_fd, pid_str.encode())
             os.fsync(self.lock_fd)
 
             # Register cleanup handlers
@@ -39,24 +84,18 @@ class ProcessLock:
             signal.signal(signal.SIGINT, self._signal_handler)
 
             self.acquired = True
-            logger.info(f"✅ Process lock acquired (PID: {os.getpid()})")
+            logger.info(f"✅ Process lock acquired (PID: {os.getpid()}, lock_file: {self.lock_file})")
+            logger.info(f"   flock is active - lock will auto-release if process dies")
             return True
 
-        except IOError as e:
-            # Lock is held by another process
-            if e.errno == 11:  # Resource temporarily unavailable
-                try:
-                    # Try to read PID from lock file
-                    with open(self.lock_file, 'r') as f:
-                        pid = f.read().strip()
-                    logger.error(f"❌ Another instance is already running (PID: {pid})")
-                except:
-                    logger.error("❌ Another instance is already running")
-            else:
-                logger.error(f"❌ Failed to acquire lock: {e}")
-            return False
         except Exception as e:
-            logger.error(f"❌ Unexpected error acquiring lock: {e}")
+            logger.error(f"❌ Unexpected error acquiring lock: {e}", exc_info=True)
+            if self.lock_fd is not None:
+                try:
+                    os.close(self.lock_fd)
+                except:
+                    pass
+                self.lock_fd = None
             return False
 
     def release(self):

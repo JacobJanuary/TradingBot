@@ -542,25 +542,24 @@ class AdaptiveBinanceStream:
         Args:
             symbols: List of trading pairs to subscribe to
         """
-        async with self._subscription_lock:
-            # Normalize all symbols
-            target_symbols = {s.lower().replace('/', '').replace(':', '') for s in symbols}
-            
-            # Calculate differences
-            to_add = target_symbols - self.subscribed_symbols
-            to_remove = self.subscribed_symbols - target_symbols
-            
-            logger.info(f"🔄 Syncing subscriptions: +{len(to_add)} -{len(to_remove)} (target: {len(target_symbols)})")
-            
-            # Remove old subscriptions
-            for symbol in to_remove:
-                await self.remove_symbol_subscription(symbol)
-            
-            # Add new subscriptions
-            for symbol in to_add:
-                await self.add_symbol_subscription(symbol)
-            
-            logger.info(f"✅ Subscription sync complete: {len(self.subscribed_symbols)} active")
+        # Normalize all symbols
+        target_symbols = {s.lower().replace('/', '').replace(':', '') for s in symbols}
+        
+        # Calculate differences (outside lock to avoid deadlock)
+        to_add = target_symbols - self.subscribed_symbols
+        to_remove = self.subscribed_symbols - target_symbols
+        
+        logger.info(f"🔄 Syncing subscriptions: +{len(to_add)} -{len(to_remove)} (target: {len(target_symbols)})")
+        
+        # Remove old subscriptions (each call handles its own lock)
+        for symbol in to_remove:
+            await self.remove_symbol_subscription(symbol)
+        
+        # Add new subscriptions (each call handles its own lock)
+        for symbol in to_add:
+            await self.add_symbol_subscription(symbol)
+        
+        logger.info(f"✅ Subscription sync complete: {len(self.subscribed_symbols)} active")
     
     def _get_active_symbols(self) -> list:
         """Get list of active symbols from subscribed_symbols (new approach)"""

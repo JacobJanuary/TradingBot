@@ -723,6 +723,42 @@ def main():
     if process_lock.check_stale_lock():
         logger.info("🧹 Removed stale lock file")
     
+    # CRITICAL: Additional check for running instances via ps
+    # This catches cases where lock file exists but flock was released
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['pgrep', '-f', 'python.*main.py'],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
+            current_pid = str(os.getpid())
+            other_pids = [p for p in pids if p != current_pid]
+            
+            if other_pids:
+                logger.error(f"❌ Found {len(other_pids)} other bot instance(s) running:")
+                for pid in other_pids:
+                    logger.error(f"   PID: {pid}")
+                logger.error(f"💡 To kill them: kill -9 {' '.join(other_pids)}")
+                logger.error(f"   Or use --force flag")
+                
+                if not args.force:
+                    sys.exit(1)
+                else:
+                    logger.warning(f"⚠️  --force flag used, killing other instances...")
+                    for pid in other_pids:
+                        try:
+                            os.kill(int(pid), signal.SIGKILL)
+                            logger.info(f"✅ Killed PID {pid}")
+                        except Exception as e:
+                            logger.error(f"Failed to kill PID {pid}: {e}")
+                    import time
+                    time.sleep(2)
+    except Exception as e:
+        logger.warning(f"Could not check for running instances: {e}")
+    
     if not process_lock.acquire():
         logger.error("❌ Cannot start: another instance is already running")
         logger.error(f"💡 To force start, run: rm {lock_file}")
