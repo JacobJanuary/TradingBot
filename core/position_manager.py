@@ -488,6 +488,12 @@ class PositionManager:
         @self.event_router.on('stop_loss_triggered')
         async def handle_stop_loss(data: Dict):
             await self._on_stop_loss_triggered(data)
+        
+        # ✅ CRITICAL FIX: Register price_update handler for Trailing Stop
+        @self.event_router.on('price_update')
+        async def handle_price_update(data: Dict):
+            """Handle price updates for Trailing Stop monitoring"""
+            await self._on_price_update(data)
 
     async def open_position(self, request: PositionRequest) -> Optional[PositionState]:
         """
@@ -524,7 +530,7 @@ class PositionManager:
         symbol = request.symbol
         exchange_name = request.exchange.lower()
         db_lock_acquired = False
-        
+
         # ✅ CRITICAL FIX: Acquire asyncio Lock to prevent race condition
         # Use meta-lock to safely create per-symbol lock
         lock_key = f"{exchange_name}_{symbol}"
@@ -533,6 +539,7 @@ class PositionManager:
                 self._position_opening_locks[lock_key] = asyncio.Lock()
             position_lock = self._position_opening_locks[lock_key]
         
+        # ✅ CRITICAL FIX: Hold lock for ENTIRE position creation process
         async with position_lock:
             logger.debug(f"🔒 Acquired position opening lock for {symbol}")
             
@@ -562,9 +569,9 @@ class PositionManager:
             self._position_cache[lock_key] = True
             logger.debug(f"✅ Position opening lock held - proceeding with creation (cache updated)")
 
-        try:
-            # 1. Acquire PostgreSQL advisory lock (protects across processes)
-            db_lock_acquired = await self.repository.acquire_position_lock(symbol, exchange_name)
+            try:
+                # 1. Acquire PostgreSQL advisory lock (protects across processes)
+                db_lock_acquired = await self.repository.acquire_position_lock(symbol, exchange_name)
             if not db_lock_acquired:
                 logger.warning(
                     f"Could not acquire database lock for {symbol} on {exchange_name}. "
@@ -601,7 +608,16 @@ class PositionManager:
             
             # Additional check: verify market is active
             market_info = exchange.get_market_info(symbol)
-            if market_info and market_info.get('active') is False:
+            
+            # ✅ CRITICAL FIX: Handle missing market_info
+            if not market_info:
+                logger.error(
+                    f"❌ Cannot open position for {symbol} on {exchange_name}: market_info unavailable. "
+                    f"Symbol may be delisted or markets not loaded. Skipping to avoid blind trading."
+                )
+                return None
+            
+            if market_info.get('active') is False:
                 logger.error(
                     f"❌ Symbol {symbol} is not active on {exchange_name}. "
                     f"Market status: {market_info.get('info', {}).get('status', 'unknown')}"
@@ -638,9 +654,12 @@ class PositionManager:
             # Не блокируем открытие позиций из-за спреда
 
             # 6.3. Set leverage before opening position
-            # Use leverage from config (default: 10 for all exchanges)
+            # ✅ CRITICAL FIX: Calculate notional and use smart leverage selection
             leverage = self.config.leverage
-            await exchange.set_leverage(symbol, leverage)
+            notional = float(quantity) * float(request.entry_price)
+            
+            # Smart leverage selection based on notional and brackets
+            await exchange.set_leverage(symbol, leverage, notional=notional)
 
             # 7. Execute market order
             logger.info(f"Opening position: {symbol} {request.side} {quantity}")
@@ -667,12 +686,33 @@ class PositionManager:
                     logger.info(f"Bybit order created but not filled yet, waiting 3 seconds...")
                     await asyncio.sleep(3)  # Give testnet time to fill
                     
-                    # Re-fetch order to get updated status
+                    # ✅ CRITICAL FIX: Bybit API limitation - fetchOrder() only works for last 500 orders
+                    # Use fetchOpenOrder() or check position directly instead
                     try:
-                        order = await exchange.fetch_order(order.id, symbol)
-                        logger.info(f"Order refetched: filled={order.filled}, status={order.status}")
-                    except Exception as e:
-                        logger.warning(f"Could not refetch order, using original: {e}")
+                        # Try to fetch as open order first
+                        order = await exchange.fetch_open_order(order.id, symbol)
+                        logger.info(f"Order refetched (open): filled={order.filled}, status={order.status}")
+                    except Exception as e1:
+                        # If not in open orders, try closed orders
+                        try:
+                            order = await exchange.fetch_closed_order(order.id, symbol)
+                            logger.info(f"Order refetched (closed): filled={order.filled}, status={order.status}")
+                        except Exception as e2:
+                            # If both fail, check position directly
+                            logger.warning(f"Could not refetch order via API, checking position directly...")
+                            try:
+                                positions = await exchange.fetch_positions([symbol])
+                                for pos in positions:
+                                    if pos.get('symbol') == symbol and abs(float(pos.get('contracts', 0))) > 0:
+                                        logger.info(f"✅ Position found on exchange: {pos.get('contracts')} contracts")
+                                        # Create a fake order object with filled data
+                                        order.filled = abs(float(pos.get('contracts', 0)))
+                                        order.status = 'closed'
+                                        break
+                                else:
+                                    logger.warning(f"Could not verify order via position check: {e1}, {e2}")
+                            except Exception as e3:
+                                logger.warning(f"All verification methods failed: {e3}")
                 
                 # Check if still not filled (None or 0)
                 if not order.filled or order.filled == 0:
@@ -751,19 +791,19 @@ class PositionManager:
                 await self.repository.update_position_stop_loss(
                     position_id, stop_loss_price, ""
                 )
-                
+
                 # 11. Initialize trailing stop WITH stop_order_id
-                trailing_manager = self.trailing_managers.get(exchange_name)
-                if trailing_manager:
-                    await trailing_manager.create_trailing_stop(
-                        symbol=symbol,
-                        side=position.side,
-                        entry_price=position.entry_price,
-                        quantity=position.quantity,
+            trailing_manager = self.trailing_managers.get(exchange_name)
+            if trailing_manager:
+                await trailing_manager.create_trailing_stop(
+                    symbol=symbol,
+                    side=position.side,
+                    entry_price=position.entry_price,
+                    quantity=position.quantity,
                         initial_stop=stop_loss_price,
                         stop_order_id=sl_order_id  # ✅ ПЕРЕДАЁМ ID ОРДЕРА!
-                    )
-                    position.has_trailing_stop = True
+                )
+                position.has_trailing_stop = True
             else:
                 logger.warning(f"⚠️ Failed to set stop loss for {symbol}")
 
@@ -785,24 +825,34 @@ class PositionManager:
             # This prevents opening too many positions in quick succession
             self.balance_checker.invalidate_cache(exchange_name)
             logger.debug(f"✅ Invalidated balance cache for {exchange_name} (funds spent)")
-
-            return position
-
-        except Exception as e:
-            logger.error(f"Error opening position for {symbol}: {e}", exc_info=True)
-            return None
-
-        finally:
-            # Release PostgreSQL advisory lock
-            if db_lock_acquired:
-                try:
-                    await self.repository.release_position_lock(symbol, exchange_name)
-                    logger.debug(f"🔓 Released DB advisory lock for {symbol}")
-                except Exception as lock_error:
-                    logger.error(f"Failed to release DB lock for {symbol}: {lock_error}")
             
-            # Release in-memory lock
-            self.position_locks.discard(lock_key)
+            # ✅ CRITICAL: Emit position_opened event for dynamic WebSocket subscription
+            await self.event_router.emit('position_opened', {
+                'symbol': symbol,
+                'exchange': exchange_name,
+                'side': position.side,
+                'quantity': position.quantity,
+                'entry_price': position.entry_price
+            })
+
+                return position
+
+            except Exception as e:
+                logger.error(f"Error opening position for {symbol}: {e}", exc_info=True)
+                return None
+
+            finally:
+                # Release PostgreSQL advisory lock
+                if db_lock_acquired:
+                    try:
+                        await self.repository.release_position_lock(symbol, exchange_name)
+                        logger.debug(f"🔓 Released DB advisory lock for {symbol}")
+                    except Exception as lock_error:
+                        logger.error(f"Failed to release DB lock for {symbol}: {lock_error}")
+                
+                # Release in-memory lock
+                self.position_locks.discard(lock_key)
+                logger.debug(f"🔓 Released position opening lock for {symbol} (completed)")
 
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
         """Check if position already exists"""
@@ -1069,6 +1119,82 @@ class PositionManager:
                 logger.debug(f"🔓 Released SL creation lock for {position.symbol} (exception)")
                 return False, None
 
+    async def _on_price_update(self, data: Dict):
+        """
+        Handle price update from WebSocket for Trailing Stop monitoring
+        
+        Args:
+            data: {'symbol': 'BTCUSDT', 'price': 50000.0}
+        """
+        symbol = data.get('symbol')
+        price = data.get('price')
+        
+        if not symbol or not price:
+            return
+
+        # Normalize symbol format
+        normalized_symbol = symbol.replace('/', '').replace(':USDT', '')
+        position_symbol = normalized_symbol if normalized_symbol in self.positions else symbol
+        
+        if position_symbol not in self.positions:
+            # Position not tracked - this is normal for market data we're not trading
+            return
+        
+        position = self.positions[position_symbol]
+        
+        # Update current price
+        old_price = position.current_price
+        position.current_price = float(price)
+        
+        # Calculate PnL percent
+        entry_price_float = float(position.entry_price)
+        if entry_price_float > 0:
+            if position.side == 'long':
+                position.unrealized_pnl_percent = (
+                    (position.current_price - entry_price_float) / entry_price_float * 100
+                )
+            else:
+                position.unrealized_pnl_percent = (
+                    (entry_price_float - position.current_price) / entry_price_float * 100
+                )
+        
+        # Log price update every 3 updates (for monitoring)
+        if not hasattr(self, '_price_update_counter'):
+            self._price_update_counter = {}
+        self._price_update_counter[position_symbol] = self._price_update_counter.get(position_symbol, 0) + 1
+        
+        if self._price_update_counter[position_symbol] % 3 == 0:
+            logger.info(
+                f"💹 Price update for {position_symbol}: ${old_price:.4f} → ${position.current_price:.4f}, "
+                f"PnL: {position.unrealized_pnl_percent:+.2f}%, has_TS: {position.has_trailing_stop}"
+            )
+        
+        # ✅ CRITICAL: Update Trailing Stop with new price
+        if position.has_trailing_stop:
+            trailing_manager = self.trailing_managers.get(position.exchange)
+            if trailing_manager:
+                try:
+                    update_result = await trailing_manager.update_price(
+                        position_symbol, 
+                        float(position.current_price)
+                    )
+                    
+                    if update_result and update_result.get('action') == 'activated':
+                        position.trailing_activated = True
+                        # Update database to record activation
+                        await self.repository.execute(
+                            """
+                            UPDATE positions 
+                            SET trailing_activated = TRUE 
+                            WHERE symbol = $1 AND exchange = $2 AND status = 'open'
+                            """,
+                            position_symbol,
+                            position.exchange
+                        )
+                        logger.info(f"🚀 Smart Trailing Stop ACTIVATED for {position_symbol} at {position.current_price}")
+                except Exception as e:
+                    logger.error(f"Error updating trailing stop for {position_symbol}: {e}")
+
     async def _on_position_update(self, data: Dict):
         """
         Handle position update from WebSocket
@@ -1116,7 +1242,7 @@ class PositionManager:
 
             position = self.positions[position_symbol]
             logger.info(f"[DEBUG] Found position {position_symbol}, has_TS: {position.has_trailing_stop}")  # DEBUG
-            
+
             # Update position state
             try:
                 old_price = position.current_price
@@ -1131,11 +1257,11 @@ class PositionManager:
                 if entry_price_float > 0:
                     if position.side == 'long':
                         position.unrealized_pnl_percent = (
-                                (position.current_price - entry_price_float) / entry_price_float * 100
+                            (position.current_price - entry_price_float) / entry_price_float * 100
                         )
                     else:
                         position.unrealized_pnl_percent = (
-                                (entry_price_float - position.current_price) / entry_price_float * 100
+                            (entry_price_float - position.current_price) / entry_price_float * 100
                         )
                     logger.info(f"[DEBUG] PnL calculated: {position.unrealized_pnl_percent:.2f}%")  # DEBUG
 
@@ -1144,32 +1270,34 @@ class PositionManager:
                 # Update trailing stop
                 trailing_manager = self.trailing_managers.get(position.exchange)
                 logger.info(f"[DEBUG] Trailing manager: {trailing_manager is not None}, has_TS: {position.has_trailing_stop}")  # DEBUG
-                
+                        
                 if trailing_manager and position.has_trailing_stop:
                     logger.info(f"[DEBUG] Calling update_price for {position_symbol}")  # DEBUG
                     logger.debug(f"[PositionManager] Calling trailing_manager.update_price for {position_symbol}")
-                    update_result = await trailing_manager.update_price(position_symbol, float(position.current_price))
-                    logger.info(f"[DEBUG] update_price completed, result: {update_result}")  # DEBUG
-                    logger.debug(f"[PositionManager] update_price result: {update_result}")
-                    
-                    if update_result and update_result.get('action') == 'activated':
-                        position.trailing_activated = True
-                        logger.info(f"🚀 Trailing stop activated for {position_symbol}")
+                    try:
+                        update_result = await trailing_manager.update_price(position_symbol, float(position.current_price))
+                        logger.info(f"[DEBUG] update_price completed, result: {update_result}")  # DEBUG
+                        logger.debug(f"[PositionManager] update_price result: {update_result}")
+
+                        if update_result and update_result.get('action') == 'activated':
+                            position.trailing_activated = True
+                            logger.info(f"🚀 Trailing stop activated for {position_symbol}")
+                    except Exception as e:
+                        logger.error(f"[DEBUG] Exception in trailing stop update: {e}", exc_info=True)  # DEBUG
                 else:
                     logger.info(f"[DEBUG] Skipping update_price: TM={trailing_manager is not None}, has_TS={position.has_trailing_stop}")  # DEBUG
-                    
-            except Exception as e:
-                logger.error(f"[DEBUG] Exception in position update loop: {e}", exc_info=True)  # DEBUG
 
-            # Update database (MOVED INSIDE LOOP!)
-            await self.repository.update_position_from_websocket({
-                'symbol': position_symbol,
-                'exchange': position.exchange,
-                'current_price': position.current_price,
-                'mark_price': position.current_price,
-                'unrealized_pnl': position.unrealized_pnl,
-                'unrealized_pnl_percent': position.unrealized_pnl_percent
-            })
+                # Update database
+                await self.repository.update_position_from_websocket({
+                    'symbol': position_symbol,
+                    'exchange': position.exchange,
+                    'current_price': position.current_price,
+                    'mark_price': position.current_price,
+                    'unrealized_pnl': position.unrealized_pnl,
+                    'unrealized_pnl_percent': position.unrealized_pnl_percent
+                })
+            except Exception as e:
+                logger.error(f"Error updating position {position_symbol}: {e}", exc_info=True)
 
     async def _on_order_filled(self, data: Dict):
         """Handle order filled event"""
@@ -1268,6 +1396,15 @@ class PositionManager:
                 # This allows opening new positions right after closing without waiting for cache TTL
                 self.balance_checker.invalidate_cache(position.exchange)
                 logger.debug(f"✅ Invalidated balance cache for {position.exchange} (funds freed)")
+                
+                # ✅ CRITICAL: Emit position_closed event for dynamic WebSocket subscription
+                await self.event_router.emit('position_closed', {
+                    'symbol': symbol,
+                    'exchange': position.exchange,
+                    'reason': reason,
+                    'realized_pnl': realized_pnl,
+                    'realized_pnl_percent': realized_pnl_percent
+                })
 
         except Exception as e:
             logger.error(f"Error closing position {symbol}: {e}", exc_info=True)
@@ -1561,7 +1698,7 @@ class PositionManager:
             if not await self.verify_position_exists(symbol, pos.exchange):
                 if symbol in self.positions:
                     del self.positions[symbol]
-                    logger.debug(f"Removed phantom position from local cache: {symbol}")
+                logger.debug(f"Removed phantom position from local cache: {symbol}")
         
         return results
 
@@ -1619,7 +1756,7 @@ class PositionManager:
                 'current_sync_interval': self.sync_interval,
                 'aggressive_threshold': self.zombie_cleanup.aggressive_cleanup_threshold
             }
-        
+
         return {
             'open_positions': self.position_count,
             'total_exposure': to_decimal(self.total_exposure),

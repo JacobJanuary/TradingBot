@@ -15,6 +15,7 @@ import time
 from utils.crypto_manager import decrypt_env_value
 from utils.decimal_utils import to_decimal
 from utils.rate_limiter import get_rate_limiter
+from core.leverage_manager import get_leverage_manager
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,9 @@ class ExchangeManager:
 
         # Initialize rate limiter
         self.rate_limiter = get_rate_limiter(self.name)
+        
+        # Initialize leverage manager
+        self.leverage_manager = get_leverage_manager(self.name)
 
         logger.info(f"Exchange {self.name} initialized {'(TESTNET)' if config.get('testnet') else ''}")
 
@@ -355,21 +359,60 @@ class ExchangeManager:
             logger.error(f"Market order failed for {symbol}: {e}")
             raise
 
-    async def set_leverage(self, symbol: str, leverage: int) -> bool:
+    async def set_leverage(self, symbol: str, leverage: int, notional: Optional[float] = None) -> bool:
         """
-        Set leverage for a trading pair
+        Set leverage for a trading pair with smart bracket-aware selection
         
         CRITICAL: Must be called BEFORE opening position!
         For Bybit: automatically adds params={'category': 'linear'}
         
         Args:
             symbol: Trading pair
-            leverage: Leverage multiplier (e.g., 5, 10)
+            leverage: Requested leverage multiplier (e.g., 5, 10)
+            notional: Optional position notional (price * quantity) for bracket calculation
             
         Returns:
             True if successful, False otherwise
         """
         try:
+            market_info = self.get_market_info(symbol)
+            
+            # ✅ CRITICAL FIX: Smart leverage selection based on notional and brackets
+            if notional is not None and notional > 0:
+                optimal_leverage, reason = self.leverage_manager.calculate_optimal_leverage(
+                    symbol=symbol,
+                    notional=notional,
+                    requested_leverage=leverage,
+                    market_info=market_info
+                )
+                
+                if optimal_leverage != leverage:
+                    logger.info(
+                        f"📊 Adjusted leverage for {symbol}: {leverage}x → {optimal_leverage}x "
+                        f"(notional: ${notional:.2f}, reason: {reason})"
+                    )
+                    leverage = optimal_leverage
+            else:
+                # Fallback to simple validation if no notional provided
+                if market_info:
+                    limits = market_info.get('limits', {})
+                    leverage_limits = limits.get('leverage', {})
+                    min_leverage = leverage_limits.get('min', 1)
+                    max_leverage = leverage_limits.get('max', 125)
+                    
+                    # Handle None values
+                    if min_leverage is None:
+                        min_leverage = 1
+                    if max_leverage is None:
+                        max_leverage = 125
+                    
+                    if leverage < min_leverage or leverage > max_leverage:
+                        logger.warning(
+                            f"⚠️ Leverage {leverage}x outside valid range [{min_leverage}-{max_leverage}] "
+                            f"for {symbol}. Using {max_leverage}x"
+                        )
+                        leverage = min(leverage, max_leverage)
+            
             # Bybit requires 'category' parameter
             if self.name.lower() == 'bybit':
                 await self.rate_limiter.execute_request(
@@ -397,6 +440,11 @@ class ExchangeManager:
             if self.name.lower() == 'bybit' and ('110043' in error_str or 'leverage not modified' in error_str):
                 logger.debug(f"Leverage already set to {leverage}x for {symbol} (not an error)")
                 return True  # Success! Leverage is already correct
+            
+            # ✅ FIX: Handle invalid leverage error gracefully
+            if '-4028' in error_str or 'not valid' in error_str.lower():
+                logger.warning(f"⚠️ Leverage {leverage}x not valid for {symbol}, will use exchange default")
+                return True  # Don't fail position opening, exchange will use default leverage
             
             logger.warning(f"⚠️ Failed to set leverage for {symbol}: {e}")
             return False

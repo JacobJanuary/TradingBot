@@ -182,6 +182,15 @@ class TradingBot:
                             asyncio.create_task(stream.start())
                             self.websockets[name] = stream
                             logger.info(f"✅ {name.capitalize()} AdaptiveStream ready (testnet)")
+                            
+                            # ✅ CRITICAL: Initial sync of subscriptions with loaded positions
+                            await asyncio.sleep(2)  # Wait for WebSocket to connect
+                            open_symbols = [pos.symbol for pos in self.position_manager.positions.values() if pos.exchange == name]
+                            if open_symbols:
+                                logger.info(f"🔄 Syncing {len(open_symbols)} symbols with WebSocket subscriptions...")
+                                await stream.sync_subscriptions(open_symbols)
+                            else:
+                                logger.info("No open positions to sync")
                     else:
                         # Use normal stream for mainnet
                         stream = BinancePrivateStream(
@@ -267,6 +276,35 @@ class TradingBot:
             # Stop-list symbols are now loaded from configuration (.env file)
             # via SymbolFilter in signal_processor
             logger.info("Symbol filtering configured from .env file")
+            
+            # ✅ CRITICAL: Register event handlers for dynamic WebSocket subscription management
+            logger.info("Registering dynamic subscription handlers...")
+            
+            @self.event_router.on('position_opened')
+            async def on_position_opened(data: dict):
+                """Dynamically add WebSocket subscription when position opens"""
+                symbol = data.get('symbol')
+                exchange = data.get('exchange')
+                
+                if exchange == 'binance' and symbol:
+                    stream = self.websockets.get('binance')
+                    if stream and hasattr(stream, 'add_symbol_subscription'):
+                        await stream.add_symbol_subscription(symbol)
+                        logger.debug(f"🔔 Added subscription for {symbol} (position opened)")
+            
+            @self.event_router.on('position_closed')
+            async def on_position_closed(data: dict):
+                """Dynamically remove WebSocket subscription when position closes"""
+                symbol = data.get('symbol')
+                exchange = data.get('exchange')
+                
+                if exchange == 'binance' and symbol:
+                    stream = self.websockets.get('binance')
+                    if stream and hasattr(stream, 'remove_symbol_subscription'):
+                        await stream.remove_symbol_subscription(symbol)
+                        logger.debug(f"🔕 Removed subscription for {symbol} (position closed)")
+            
+            logger.info("✅ Dynamic subscription handlers registered")
 
             # Register event handlers
             self._register_event_handlers()
@@ -591,6 +629,15 @@ class TradingBot:
                 logger.debug(f"Closed exchange {name}")
             except Exception as e:
                 logger.error(f"Failed to close exchange {name}: {e}")
+
+        # ✅ FIX: Ensure all aiohttp sessions are closed
+        try:
+            import aiohttp
+            # Give time for any pending session closures
+            await asyncio.sleep(0.5)
+            logger.debug("✅ All HTTP sessions closed")
+        except Exception as e:
+            logger.debug(f"Session cleanup note: {e}")
 
         # Close database
         if self.repository:

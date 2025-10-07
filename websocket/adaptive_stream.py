@@ -48,6 +48,10 @@ class AdaptiveBinanceStream:
         self.running = False
         self.connected = False  # Compatibility attribute
         self.active_symbols = set()  # Track symbols with positions for efficient order fetching
+        
+        # ✅ CRITICAL: Dynamic subscription management
+        self.subscribed_symbols: set = set()  # Currently subscribed symbols
+        self._subscription_lock = asyncio.Lock()  # Thread-safe subscription updates
 
         # WebSocket connections
         self.public_ws = None
@@ -142,11 +146,8 @@ class AdaptiveBinanceStream:
         """Run public price stream (works for both testnet and mainnet)"""
         while self.running:
             try:
-                # Get active symbols from positions
+                # ✅ NEW: Use subscribed_symbols for initial connection
                 symbols = self._get_active_symbols()
-                if not symbols:
-                    symbols = ['btcusdt', 'ethusdt']  # Default symbols
-                
                 streams = [f"{symbol.lower()}@ticker" for symbol in symbols]
                 
                 # websockets 13.1: Use new asyncio API with explicit config
@@ -160,15 +161,18 @@ class AdaptiveBinanceStream:
                     self.connected = True  # Mark as connected
                     logger.info(f"✅ Connected to public stream for {len(symbols)} symbols")
                     
-                    # Subscribe to streams
-                    subscribe_msg = {
-                        "method": "SUBSCRIBE",
-                        "params": streams,
-                        "id": 1
-                    }
-                    await websocket.send(json.dumps(subscribe_msg))
+                    # Subscribe to initial streams
+                    if streams:
+                        subscribe_msg = {
+                            "method": "SUBSCRIBE",
+                            "params": streams,
+                            "id": 1
+                        }
+                        await websocket.send(json.dumps(subscribe_msg))
+                        logger.info(f"📡 Initial subscription: {', '.join(symbols[:5])}{'...' if len(symbols) > 5 else ''}")
                     
                     # Listen for updates
+                    # ✅ CRITICAL: Now subscriptions can be updated dynamically via add_symbol_subscription/remove_symbol_subscription
                     while self.running:
                         try:
                             message = await asyncio.wait_for(websocket.recv(), timeout=30)
@@ -296,14 +300,26 @@ class AdaptiveBinanceStream:
                         for symbol in self.active_symbols:
                             try:
                                 symbol_orders = await self.client.fetch_open_orders(symbol)
-                                all_orders.extend(symbol_orders)
+                                # ✅ FIX: Handle OrderResult object (has .orders attribute)
+                                if hasattr(symbol_orders, 'orders'):
+                                    all_orders.extend(symbol_orders.orders)
+                                elif isinstance(symbol_orders, list):
+                                    all_orders.extend(symbol_orders)
+                                else:
+                                    logger.debug(f"Unexpected order format for {symbol}: {type(symbol_orders)}")
                             except Exception as e:
                                 logger.debug(f"No orders for {symbol}: {e}")
                         await self._process_orders_update(all_orders)
                     else:
                         # No active positions, fetch all orders
                         orders = await self.client.fetch_open_orders()
-                        await self._process_orders_update(orders)
+                        # ✅ FIX: Handle OrderResult object
+                        if hasattr(orders, 'orders'):
+                            await self._process_orders_update(orders.orders)
+                        elif isinstance(orders, list):
+                            await self._process_orders_update(orders)
+                        else:
+                            logger.debug(f"Unexpected order format: {type(orders)}")
                 except Exception as e:
                     logger.debug(f"Order fetch error (non-critical): {e}")
                 
@@ -452,15 +468,104 @@ class AdaptiveBinanceStream:
                 logger.error(f"Failed to renew listen key: {e}")
                 await self._create_listen_key()
     
-    def _get_active_symbols(self) -> list:
-        """Get list of active symbols from positions"""
-        symbols = []
-        for symbol in self.positions.keys():
-            # Convert format: HOME/USDT:USDT -> homeusdt
+    async def add_symbol_subscription(self, symbol: str):
+        """
+        Dynamically add subscription to a symbol without reconnecting WebSocket
+        
+        Args:
+            symbol: Trading pair (e.g., 'BTCUSDT', 'BTC/USDT:USDT')
+        """
+        async with self._subscription_lock:
+            # Normalize symbol format
             clean_symbol = symbol.lower().replace('/', '').replace(':', '')
-            if 'usdt' in clean_symbol:
-                symbols.append(clean_symbol)
-        return symbols
+            
+            if clean_symbol in self.subscribed_symbols:
+                logger.debug(f"Already subscribed to {clean_symbol}")
+                return
+            
+            if self.public_ws and self.connected:
+                try:
+                    # Subscribe to ticker stream
+                    subscribe_msg = {
+                        "method": "SUBSCRIBE",
+                        "params": [f"{clean_symbol}@ticker"],
+                        "id": int(asyncio.get_event_loop().time() * 1000)
+                    }
+                    await self.public_ws.send(json.dumps(subscribe_msg))
+                    self.subscribed_symbols.add(clean_symbol)
+                    logger.info(f"✅ Subscribed to {clean_symbol} (total: {len(self.subscribed_symbols)})")
+                except Exception as e:
+                    logger.error(f"Failed to subscribe to {clean_symbol}: {e}")
+            else:
+                # Queue for later subscription when connected
+                self.subscribed_symbols.add(clean_symbol)
+                logger.debug(f"Queued subscription for {clean_symbol} (not connected yet)")
+    
+    async def remove_symbol_subscription(self, symbol: str):
+        """
+        Dynamically remove subscription from a symbol without reconnecting WebSocket
+        
+        Args:
+            symbol: Trading pair (e.g., 'BTCUSDT', 'BTC/USDT:USDT')
+        """
+        async with self._subscription_lock:
+            # Normalize symbol format
+            clean_symbol = symbol.lower().replace('/', '').replace(':', '')
+            
+            if clean_symbol not in self.subscribed_symbols:
+                logger.debug(f"Not subscribed to {clean_symbol}")
+                return
+            
+            if self.public_ws and self.connected:
+                try:
+                    # Unsubscribe from ticker stream
+                    unsubscribe_msg = {
+                        "method": "UNSUBSCRIBE",
+                        "params": [f"{clean_symbol}@ticker"],
+                        "id": int(asyncio.get_event_loop().time() * 1000)
+                    }
+                    await self.public_ws.send(json.dumps(unsubscribe_msg))
+                    self.subscribed_symbols.discard(clean_symbol)
+                    logger.info(f"🔕 Unsubscribed from {clean_symbol} (total: {len(self.subscribed_symbols)})")
+                except Exception as e:
+                    logger.error(f"Failed to unsubscribe from {clean_symbol}: {e}")
+            else:
+                # Remove from queue
+                self.subscribed_symbols.discard(clean_symbol)
+                logger.debug(f"Removed {clean_symbol} from subscription queue")
+    
+    async def sync_subscriptions(self, symbols: list):
+        """
+        Synchronize subscriptions with a given list of symbols
+        Adds new symbols and removes old ones
+        
+        Args:
+            symbols: List of trading pairs to subscribe to
+        """
+        async with self._subscription_lock:
+            # Normalize all symbols
+            target_symbols = {s.lower().replace('/', '').replace(':', '') for s in symbols}
+            
+            # Calculate differences
+            to_add = target_symbols - self.subscribed_symbols
+            to_remove = self.subscribed_symbols - target_symbols
+            
+            logger.info(f"🔄 Syncing subscriptions: +{len(to_add)} -{len(to_remove)} (target: {len(target_symbols)})")
+            
+            # Remove old subscriptions
+            for symbol in to_remove:
+                await self.remove_symbol_subscription(symbol)
+            
+            # Add new subscriptions
+            for symbol in to_add:
+                await self.add_symbol_subscription(symbol)
+            
+            logger.info(f"✅ Subscription sync complete: {len(self.subscribed_symbols)} active")
+    
+    def _get_active_symbols(self) -> list:
+        """Get list of active symbols from subscribed_symbols (new approach)"""
+        # Use subscribed_symbols instead of positions for more reliable tracking
+        return list(self.subscribed_symbols) if self.subscribed_symbols else ['btcusdt', 'ethusdt']
     
     async def stop(self, code: int = 1000, reason: str = "Bot shutdown", timeout: float = 5.0):
         """
