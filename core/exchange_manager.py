@@ -735,6 +735,60 @@ class ExchangeManager:
             orders = await self.exchange.fetch_open_orders(symbol)
         return [self._parse_order(order) for order in orders]
 
+    async def fetch_open_order(self, order_id: str, symbol: str) -> Optional[OrderResult]:
+        """
+        Fetch a single open order by ID
+        
+        Args:
+            order_id: Order ID to fetch
+            symbol: Symbol of the order
+            
+        Returns:
+            OrderResult if found, None otherwise
+        """
+        try:
+            # Try to fetch from open orders
+            open_orders = await self.fetch_open_orders(symbol)
+            for order in open_orders:
+                if order.id == order_id:
+                    return order
+            return None
+        except ccxt.BaseError as e:
+            logger.error(f"Failed to fetch open order {order_id}: {e}")
+            return None
+
+    async def fetch_closed_order(self, order_id: str, symbol: str) -> Optional[OrderResult]:
+        """
+        Fetch a single closed order by ID
+        
+        Args:
+            order_id: Order ID to fetch
+            symbol: Symbol of the order
+            
+        Returns:
+            OrderResult if found, None otherwise
+        """
+        try:
+            # Try to fetch from closed orders (if exchange supports it)
+            if self.exchange.has.get('fetchClosedOrders'):
+                closed_orders = await self.exchange.fetch_closed_orders(symbol, limit=100)
+                for order in closed_orders:
+                    if order['id'] == order_id:
+                        return self._parse_order(order)
+            
+            # Fallback: try fetch_order (works for recent orders)
+            try:
+                order = await self.exchange.fetch_order(order_id, symbol)
+                if order and order.get('status') in ['closed', 'filled', 'canceled']:
+                    return self._parse_order(order)
+            except ccxt.OrderNotFound:
+                pass
+            
+            return None
+        except ccxt.BaseError as e:
+            logger.error(f"Failed to fetch closed order {order_id}: {e}")
+            return None
+
     # ============== Position Management ==============
 
     async def close_position(self, symbol: str) -> bool:

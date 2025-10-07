@@ -273,39 +273,72 @@ class SignalProcessor:
         failed_signals = result.get('failed', [])
         skipped_signals = result.get('skipped', [])
 
-        # CRITICAL FIX 2: Limit execution to MAX_TRADES_PER_15MIN
-        # Buffer helps get enough signals after filtering, but we only execute MAX
-        if len(final_signals) > self.max_trades_per_window:
-            original_count = len(final_signals)
-            final_signals = final_signals[:self.max_trades_per_window]
-            logger.info(
-                f"🎯 EXECUTION LIMITED: {original_count} -> {len(final_signals)} "
-                f"(max_trades_per_15min={self.max_trades_per_window})"
-            )
+        # ✅ IMPROVED LOGIC: Don't cut signals, try to open all until we reach MAX
+        # This ensures we use backup signals if some fail to open
+        logger.info(
+            f"🎯 Will attempt to open up to {self.max_trades_per_window} positions "
+            f"from {len(final_signals)} available signals"
+        )
 
         logger.info(
             f"Wave processing results: "
-            f"✅ {len(final_signals)} to execute, "
-            f"❌ {len(failed_signals)} failed, "
-            f"⏭️ {len(skipped_signals)} skipped "
+            f"✅ {len(final_signals)} signals to attempt, "
+            f"❌ {len(failed_signals)} failed processing, "
+            f"⏭️ {len(skipped_signals)} skipped (duplicates) "
             f"(from {len(signals_found)} total signals)"
         )
 
-        # Execute successful signals
+        # Execute signals with smart retry logic
+        opened_count = 0
+        attempted_count = 0
+        
         for idx, signal_result in enumerate(final_signals):
             if not self.running:
                 break
 
+            # CRITICAL: Check if we've reached the target
+            if opened_count >= self.max_trades_per_window:
+                logger.info(
+                    f"✅ Target reached: {opened_count}/{self.max_trades_per_window} positions opened. "
+                    f"Skipping remaining {len(final_signals) - attempted_count} signals."
+                )
+                break
+
             # Extract the original signal data from the result
             signal = signal_result.get('signal_data') if isinstance(signal_result, dict) else signal_result
+            attempted_count += 1
 
-            logger.info(f"Executing signal {idx+1}/{len(final_signals)}")
-            await self._process_signal(signal)
-            self.processed_waves[wave_timestamp]['count'] += 1
+            logger.info(
+                f"Executing signal {attempted_count}/{len(final_signals)} "
+                f"(opened: {opened_count}/{self.max_trades_per_window})"
+            )
+            
+            # Process signal and track success
+            success = await self._process_signal(signal)
+            
+            if success:
+                opened_count += 1
+                self.processed_waves[wave_timestamp]['count'] += 1
+                logger.info(f"✅ Position opened successfully ({opened_count}/{self.max_trades_per_window})")
+            else:
+                logger.warning(
+                    f"⚠️ Failed to open position, trying next signal "
+                    f"({len(final_signals) - attempted_count} remaining)"
+                )
 
             # Delay between signals
-            if len(final_signals) > 1:
+            if attempted_count < len(final_signals):
                 await asyncio.sleep(1)
+        
+        # Final statistics
+        unused_count = len(final_signals) - attempted_count
+        logger.info(
+            f"📊 Wave execution complete: "
+            f"✅ {opened_count} opened, "
+            f"❌ {attempted_count - opened_count} failed, "
+            f"⏭️ {unused_count} unused "
+            f"(target: {self.max_trades_per_window})"
+        )
 
         # Log wave completion
         logger.info(
@@ -488,8 +521,13 @@ class SignalProcessor:
             traceback.print_exc()
             return []
 
-    async def _process_signal(self, signal: Dict):
-        """Process individual signal with validation"""
+    async def _process_signal(self, signal: Dict) -> bool:
+        """
+        Process individual signal with validation
+        
+        Returns:
+            bool: True if position opened successfully, False otherwise
+        """
         signal_id = signal['id']
 
         # Log raw signal for debugging
@@ -547,21 +585,21 @@ class SignalProcessor:
                 logger.error(f"Exchange {exchange} not available")
                 self.failed_signals.add(signal_id)
                 self.stats['signals_failed'] += 1
-                return
+                return False
 
             ticker = await exchange_manager.fetch_ticker(symbol)
             if not ticker:
                 logger.error(f"Cannot get ticker for {symbol}")
                 self.failed_signals.add(signal_id)
                 self.stats['signals_failed'] += 1
-                return
+                return False
 
             current_price = ticker.get('last', 0)
             if current_price is None or current_price <= 0:
                 logger.error(f"Invalid price for {symbol}: {current_price}")
                 self.failed_signals.add(signal_id)
                 self.stats['signals_failed'] += 1
-                return
+                return False
 
             # Use validated signal action
             if validated_signal.action in [OrderSide.BUY, OrderSide.LONG]:
@@ -571,7 +609,7 @@ class SignalProcessor:
             else:
                 logger.error(f"Invalid signal action: {validated_signal.action}")
                 self.failed_signals.add(signal_id)
-                return
+                return False
             
             # Create position request with validated data
             request = PositionRequest(
@@ -598,14 +636,22 @@ class SignalProcessor:
                     'quantity': position.quantity,
                     'entry_price': position.entry_price
                 })
+                
+                # Mark signal as processed
+                await self.repository.mark_signal_processed(signal_id)
+                self.stats['signals_processed'] += 1
+                
+                return True  # ✅ SUCCESS
             else:
                 logger.warning(f"Failed to execute signal #{signal_id}")
                 self.failed_signals.add(signal_id)
                 self.stats['signals_failed'] += 1
-
-            # Mark signal as processed and track in wave
-            await self.repository.mark_signal_processed(signal_id)
-            self.stats['signals_processed'] += 1
+                
+                # Mark signal as processed even if failed
+                await self.repository.mark_signal_processed(signal_id)
+                self.stats['signals_processed'] += 1
+                
+                return False  # ❌ FAILED
             
             # Track successful processing in wave using timestamp field
             wave_timestamp = self._get_wave_timestamp(signal.get('timestamp', signal['created_at']))

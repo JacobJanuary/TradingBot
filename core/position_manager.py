@@ -1205,16 +1205,12 @@ class PositionManager:
                     if update_result and update_result.get('action') == 'activated':
                         position.trailing_activated = True
                         # Update database to record activation
-                        await self.repository.execute(
-                            """
-                            UPDATE positions 
-                            SET trailing_activated = TRUE 
-                            WHERE symbol = $1 AND exchange = $2 AND status = 'open'
-                            """,
-                            position_symbol,
-                            position.exchange
-                        )
-                        logger.info(f"🚀 Smart Trailing Stop ACTIVATED for {position_symbol} at {position.current_price}")
+                        if position.id:
+                            await self.repository.update_position(
+                                position.id,
+                                trailing_activated=True
+                            )
+                        logger.info(f"🚀 Trailing stop activated for {position_symbol}")
                 except Exception as e:
                     logger.error(f"Error updating trailing stop for {position_symbol}: {e}")
 
