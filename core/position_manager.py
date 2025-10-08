@@ -820,13 +820,13 @@ class PositionManager:
                     })
 
                     position.id = position_id
+                    logger.info(f"💾 Position saved to database with ID: {position.id}")
 
                     # Update SL in database
                     await self.repository.update_position_stop_loss(
                         position_id, stop_loss_price, ""
                     )
-                    
-                    logger.info(f"💾 Position saved to database with ID: {position.id}")
+                    logger.info(f"✅ Stop Loss status updated in DB for {symbol}: has_stop_loss=TRUE")
 
                 except Exception as db_error:
                     # ✅ COMPENSATING TRANSACTION: DB save failed, close position and cancel SL
@@ -1065,9 +1065,8 @@ class PositionManager:
         max_spread = to_decimal(self.config.max_spread_percent)
 
         if spread_percent > max_spread:
-            logger.warning(f"Spread too wide for {symbol}: {spread_percent:.2f}% > {max_spread}%")
-            # Временно пропускаем проверку для тестов
-            pass  # Продолжаем несмотря на широкий спред
+            logger.warning(f"❌ Spread too wide for {symbol}: {spread_percent:.2f}% > {max_spread}% - REJECTING")
+            return False
 
         return True
 

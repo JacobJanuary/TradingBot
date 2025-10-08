@@ -312,6 +312,10 @@ class AdaptiveBinanceStream:
                         await self._process_orders_update(all_orders)
                     else:
                         # No active positions, fetch all orders
+                        # Suppress CCXT warning about fetching without symbol
+                        if hasattr(self.client, 'options'):
+                            self.client.options['warnOnFetchOpenOrdersWithoutSymbol'] = False
+                        
                         orders = await self.client.fetch_open_orders()
                         # ✅ FIX: Handle OrderResult object
                         if hasattr(orders, 'orders'):
@@ -321,7 +325,9 @@ class AdaptiveBinanceStream:
                         else:
                             logger.debug(f"Unexpected order format: {type(orders)}")
                 except Exception as e:
-                    logger.debug(f"Order fetch error (non-critical): {e}")
+                    # Filter out CCXT warning that's treated as exception
+                    if 'warnOnFetchOpenOrdersWithoutSymbol' not in str(e):
+                        logger.debug(f"Order fetch error (non-critical): {e}")
                 
                 # Wait before next poll (adjust based on needs)
                 await asyncio.sleep(5)  # Poll every 5 seconds

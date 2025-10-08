@@ -194,11 +194,10 @@ class Repository:
         """
         query = """
             INSERT INTO monitoring.trades (
-                signal_id, symbol, exchange, side, order_type,
-                quantity, price, executed_qty, average_price,
-                order_id, client_order_id, status, fee, fee_currency,
-                executed_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+                signal_id, symbol, exchange, side,
+                quantity, price, executed_qty,
+                order_id, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id
         """
 
@@ -210,16 +209,11 @@ class Repository:
                 trade_data['symbol'],
                 trade_data['exchange'],
                 trade_data['side'],
-                trade_data.get('order_type', 'MARKET'),
                 trade_data.get('quantity'),
                 trade_data.get('price'),
                 trade_data.get('executed_qty'),
-                trade_data.get('average_price'),
                 trade_data.get('order_id'),
-                trade_data.get('client_order_id'),
-                trade_data.get('status', 'FILLED'),
-                trade_data.get('commission', 0),  # commission -> fee
-                trade_data.get('fee_currency', 'USDT')
+                trade_data.get('status', 'FILLED')
             )
         else:
             # Acquire connection from pool (standalone mode)
@@ -230,16 +224,11 @@ class Repository:
                     trade_data['symbol'],
                     trade_data['exchange'],
                     trade_data['side'],
-                    trade_data.get('order_type', 'MARKET'),
                     trade_data.get('quantity'),
                     trade_data.get('price'),
                     trade_data.get('executed_qty'),
-                    trade_data.get('average_price'),
                     trade_data.get('order_id'),
-                    trade_data.get('client_order_id'),
-                    trade_data.get('status', 'FILLED'),
-                    trade_data.get('commission', 0),  # commission -> fee
-                    trade_data.get('fee_currency', 'USDT')
+                    trade_data.get('status', 'FILLED')
                 )
 
         return trade_id
@@ -363,6 +352,7 @@ class Repository:
         query = """
             UPDATE monitoring.positions
             SET stop_loss_price = $1,
+                has_stop_loss = TRUE,
                 updated_at = NOW()
             WHERE id = $2
         """

@@ -855,10 +855,20 @@ class ExchangeManager:
         """
         try:
             # Load market data if not cached
-            if symbol not in self.markets:
-                await self.exchange.load_markets()
+            await self.exchange.load_markets()
 
+            # Try to find market by symbol directly
             market = self.markets.get(symbol)
+            
+            # If not found, try to search by market_id (e.g., BTCUSDT → BTC/USDT:USDT)
+            if not market:
+                # Search through all markets to find matching id
+                for market_symbol, market_data in self.markets.items():
+                    if market_data.get('id') == symbol or market_data.get('symbol') == symbol:
+                        market = market_data
+                        logger.debug(f"Found market by id: {symbol} → {market_symbol}")
+                        break
+            
             if not market:
                 logger.warning(f"Market info not found for {symbol}, using original amount")
                 return amount

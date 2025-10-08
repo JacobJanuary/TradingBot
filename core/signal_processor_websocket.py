@@ -172,11 +172,18 @@ class WebSocketSignalProcessor:
             logger.info(f"✅ Adapted {len(adapted_signals)} signals to bot format")
             
             # Group signals by wave_timestamp and store in pending
+            # CRITICAL: Only add signals for waves that haven't been processed yet
             async with self._pending_lock:
                 for signal in adapted_signals:
                     wave_ts = signal.get('wave_timestamp')
                     if wave_ts:
                         wave_ts_str = str(wave_ts)
+                        
+                        # Skip if wave already processed
+                        if wave_ts_str in self.processed_waves:
+                            logger.debug(f"Skipping signal for already processed wave {wave_ts_str}")
+                            continue
+                        
                         if wave_ts_str not in self.pending_signals:
                             self.pending_signals[wave_ts_str] = []
                         self.pending_signals[wave_ts_str].append(signal)
@@ -272,20 +279,23 @@ class WebSocketSignalProcessor:
                         extra_successful = extra_result.get('successful', [])
                         final_signals.extend(extra_successful[:remaining_needed])
                     
-                    # Final limit (just in case)
-                    final_signals = final_signals[:max_trades]
-                    
                     logger.info(
                         f"✅ Wave {expected_wave_timestamp} validated: "
-                        f"{len(final_signals)} signals ready for execution"
+                        f"{len(final_signals)} signals with buffer (target: {max_trades} positions)"
                     )
                     
-                    # EXECUTE: Open positions
+                    # EXECUTE: Open positions with buffer logic
+                    # Continue trying signals until we open max_trades positions or run out of signals
                     executed_count = 0
                     failed_count = 0
                     
                     for idx, signal_result in enumerate(final_signals):
                         if not self.running:
+                            break
+                        
+                        # CRITICAL: Stop when we have enough successful positions
+                        if executed_count >= max_trades:
+                            logger.info(f"✅ Target reached: {executed_count}/{max_trades} positions opened, stopping execution")
                             break
                         
                         # Extract original signal
@@ -296,7 +306,7 @@ class WebSocketSignalProcessor:
                             continue
                         
                         symbol = signal.get('symbol', 'UNKNOWN')
-                        logger.info(f"📈 Executing signal {idx+1}/{len(final_signals)}: {symbol}")
+                        logger.info(f"📈 Executing signal {idx+1}/{len(final_signals)}: {symbol} (opened: {executed_count}/{max_trades})")
                         
                         # Open position
                         try:
@@ -325,6 +335,9 @@ class WebSocketSignalProcessor:
                         f"{len(result.get('failed', []))} validation errors, "
                         f"{len(result.get('skipped', []))} duplicates"
                     )
+                    
+                    # Note: pending_signals already cleared by pop() in _monitor_wave_appearance
+                    # New signals for this timestamp will be rejected by processed_waves check
                 else:
                     logger.info(f"⚠️ No wave detected for timestamp {expected_wave_timestamp}")
                 
@@ -344,6 +357,8 @@ class WebSocketSignalProcessor:
         now = datetime.now(timezone.utc)
         current_minute = now.minute
         
+        logger.info(f"[DEBUG] _wait_for_next_wave_check: now={now.strftime('%H:%M:%S')}, current_minute={current_minute}")
+        
         # Find the next check minute
         next_check_minute = None
         for check_minute in self.wave_check_minutes:
@@ -351,20 +366,28 @@ class WebSocketSignalProcessor:
                 next_check_minute = check_minute
                 break
         
+        logger.info(f"[DEBUG] next_check_minute after loop: {next_check_minute}")
+        
         # If no check minute found in current hour, use first one of next hour
         if next_check_minute is None:
             next_check_minute = self.wave_check_minutes[0]
             next_check_time = now.replace(minute=next_check_minute, second=0, microsecond=0)
             next_check_time += timedelta(hours=1)
+            logger.info(f"[DEBUG] Using next hour: {next_check_time.strftime('%H:%M:%S')}")
         else:
             next_check_time = now.replace(minute=next_check_minute, second=0, microsecond=0)
+            logger.info(f"[DEBUG] Using current hour: {next_check_time.strftime('%H:%M:%S')}")
         
         # Calculate wait time
         wait_seconds = (next_check_time - now).total_seconds()
         
+        logger.info(f"[DEBUG] wait_seconds={wait_seconds:.1f}")
+        
         if wait_seconds > 0:
             logger.info(f"⏰ Waiting {wait_seconds:.0f}s until next wave check at {next_check_time.strftime('%H:%M UTC')}")
             await asyncio.sleep(wait_seconds)
+        else:
+            logger.warning(f"⚠️ wait_seconds <= 0: {wait_seconds:.1f}, skipping wait")
     
     def _calculate_expected_wave_timestamp(self) -> str:
         """
