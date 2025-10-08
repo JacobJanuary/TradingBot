@@ -13,7 +13,7 @@ from core.position_manager import PositionManager
 from core.risk_manager import RiskManager
 from core.signal_processor import SignalProcessor
 from protection.stop_loss_manager import StopLossManager
-from database.models import Signal, Position, Order
+from database.models import Position, Order
 
 
 class TestTradingFlow:
@@ -71,18 +71,18 @@ class TestTradingFlow:
     async def test_signal_to_position_flow(self, trading_system, mock_repository):
         """Test complete flow from signal generation to position opening"""
         
-        # Create a trading signal
-        signal = Signal(
-            trading_pair_id=1,
-            pair_symbol='BTC/USDT',
-            exchange_id=1,
-            exchange_name='binance',
-            score_week=0.8,
-            score_month=0.75,
-            recommended_action='BUY',
-            patterns_details={},
-            combinations_details={}
-        )
+        # Create a trading signal (dict format)
+        signal = {
+            'trading_pair_id': 1,
+            'pair_symbol': 'BTC/USDT',
+            'exchange_id': 1,
+            'exchange_name': 'binance',
+            'score_week': 0.8,
+            'score_month': 0.75,
+            'recommended_action': 'BUY',
+            'patterns_details': {},
+            'combinations_details': {}
+        }
         
         # Mock repository responses
         mock_repository.get_active_positions.return_value = []
@@ -137,15 +137,15 @@ class TestTradingFlow:
         existing_positions = [Mock() for _ in range(5)]  # At max limit
         mock_repository.get_active_positions.return_value = existing_positions
         
-        signal = Signal(
-            trading_pair_id=1,
-            pair_symbol='BTC/USDT',
-            exchange_id=1,
-            exchange_name='binance',
-            score_week=0.8,
-            score_month=0.75,
-            recommended_action='BUY'
-        )
+        signal = {
+            'trading_pair_id': 1,
+            'pair_symbol': 'BTC/USDT',
+            'exchange_id': 1,
+            'exchange_name': 'binance',
+            'score_week': 0.8,
+            'score_month': 0.75,
+            'recommended_action': 'BUY'
+        }
         
         # Update signal processor to simulate risk check failure
         async def mock_process_signal_blocked(signal):
@@ -253,33 +253,33 @@ class TestTradingFlow:
         """Test processing multiple signals concurrently"""
         
         signals = [
-            Signal(
-                trading_pair_id=1,
-                pair_symbol='BTC/USDT',
-                exchange_id=1,
-                exchange_name='binance',
-                score_week=0.8,
-                score_month=0.75,
-                recommended_action='BUY'
-            ),
-            Signal(
-                trading_pair_id=2,
-                pair_symbol='ETH/USDT',
-                exchange_id=1,
-                exchange_name='binance',
-                score_week=0.7,
-                score_month=0.65,
-                recommended_action='BUY'
-            ),
-            Signal(
-                trading_pair_id=3,
-                pair_symbol='BNB/USDT',
-                exchange_id=1,
-                exchange_name='binance',
-                score_week=0.6,
-                score_month=0.55,
-                recommended_action='SELL'
-            )
+            {
+                'trading_pair_id': 1,
+                'pair_symbol': 'BTC/USDT',
+                'exchange_id': 1,
+                'exchange_name': 'binance',
+                'score_week': 0.8,
+                'score_month': 0.75,
+                'recommended_action': 'BUY'
+            },
+            {
+                'trading_pair_id': 2,
+                'pair_symbol': 'ETH/USDT',
+                'exchange_id': 1,
+                'exchange_name': 'binance',
+                'score_week': 0.7,
+                'score_month': 0.65,
+                'recommended_action': 'BUY'
+            },
+            {
+                'trading_pair_id': 3,
+                'pair_symbol': 'BNB/USDT',
+                'exchange_id': 1,
+                'exchange_name': 'binance',
+                'score_week': 0.6,
+                'score_month': 0.55,
+                'recommended_action': 'SELL'
+            }
         ]
         
         mock_repository.get_active_positions.return_value = []

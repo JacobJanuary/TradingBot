@@ -134,7 +134,15 @@ class ProcessLock:
 
         try:
             with open(self.lock_file, 'r') as f:
-                pid = int(f.read().strip())
+                pid_str = f.read().strip()
+            
+            # ✅ CRITICAL FIX: Handle empty or invalid PID
+            if not pid_str or not pid_str.isdigit():
+                logger.warning(f"⚠️ Lock file is empty or invalid, removing...")
+                os.remove(self.lock_file)
+                return True
+
+            pid = int(pid_str)
 
             # Check if process is still running
             try:
@@ -147,6 +155,13 @@ class ProcessLock:
                 return True
         except Exception as e:
             logger.error(f"Error checking stale lock: {e}")
+            # If we can't read the lock file, try to remove it
+            try:
+                os.remove(self.lock_file)
+                logger.warning(f"⚠️ Removed unreadable lock file")
+                return True
+            except:
+                pass
             return False
 
     def __enter__(self):

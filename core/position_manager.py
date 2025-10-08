@@ -187,7 +187,8 @@ class PositionManager:
 
         # Periodic sync task
         self.sync_task = None
-        self.sync_interval = 600  # 10 minutes (optimized to reduce API calls)
+        # ✅ PHASE 3: Reduced from 600 to 300 seconds (10min → 5min) for better backup monitoring
+        self.sync_interval = 300  # 5 minutes (backup protection check)
         
         # REFACTORING: Zombie cleanup extracted to service
         self.zombie_cleanup = ZombieCleanupService(
@@ -756,66 +757,84 @@ class PositionManager:
                     logger.error(f"Invalid order price for {symbol}: {order.price}")
                     return None
 
-                # 8. Create position state
+                # 9. Create position state (but DON'T save to DB yet!)
                 position = PositionState(
-                    id=None,  # Will be set after DB insert
-                    symbol=symbol,
-                    exchange=exchange_name,
-                    side=request.side.lower(),  # Use request.side directly (already 'long' or 'short')
-                    quantity=order.filled,
-                    entry_price=order.price,
-                    current_price=order.price,
-                    unrealized_pnl=0,
-                    unrealized_pnl_percent=0,
-                    opened_at=datetime.now(timezone.utc)
+                id=None,  # Will be set after DB insert
+                symbol=symbol,
+                exchange=exchange_name,
+                side=request.side.lower(),  # Use request.side directly (already 'long' or 'short')
+                quantity=order.filled,
+                entry_price=order.price,
+                current_price=order.price,
+                unrealized_pnl=0,
+                unrealized_pnl_percent=0,
+                opened_at=datetime.now(timezone.utc)
                 )
 
-                # 8. Save to database
-                trade_id = await self.repository.create_trade({
-                    'signal_id': request.signal_id,
-                    'symbol': symbol,
-                    'exchange': exchange_name,
-                    'side': order_side,
-                    'quantity': order.amount,
-                    'price': order.price,
-                    'executed_qty': order.filled,
-                    'average_price': order.price,
-                    'order_id': order.id,
-                    'status': 'FILLED'
-                })
-
-                position_id = await self.repository.create_position({
-                    'trade_id': trade_id,
-                    'symbol': symbol,
-                    'exchange': exchange_name,
-                    'side': position.side,
-                    'quantity': position.quantity,
-                    'entry_price': position.entry_price,
-                    'leverage': leverage  # CRITICAL: Save leverage to database
-                })
-
-                position.id = position_id
-
-                # 10. Set stop loss
+                # 10. Set stop loss BEFORE saving to database (Freqtrade-style)
+                # ✅ COMPENSATING TRANSACTIONS: If SL fails, we don't save position to DB
                 stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
                 stop_loss_price = calculate_stop_loss(
-                    to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
+                to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
                 )
                 
                 logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
 
                 sl_success, sl_order_id = await self._set_stop_loss(exchange, position, stop_loss_price)
                 
-                if sl_success:
-                    position.has_stop_loss = True
-                    position.stop_loss_price = stop_loss_price
-                    logger.info(f"✅ Stop loss confirmed for {symbol}, order_id={sl_order_id}")
+                if not sl_success:
+                    # ✅ COMPENSATING TRANSACTION: SL failed, close position on exchange
+                    logger.error(f"❌ Stop loss creation failed for {symbol}, executing compensating transaction...")
+                    await self._compensate_failed_sl(exchange, position, order)
+                    return None
+                
+                # SL created successfully
+                position.has_stop_loss = True
+                position.stop_loss_price = stop_loss_price
+                logger.info(f"✅ Stop loss confirmed for {symbol}, order_id={sl_order_id}")
 
+                # 11. NOW save to database (after SL is confirmed)
+                # ✅ FREQTRADE ORDER: create_order() → check_filled() → set_stop_loss() → save_to_db()
+                try:
+                    trade_id = await self.repository.create_trade({
+                        'signal_id': request.signal_id,
+                        'symbol': symbol,
+                        'exchange': exchange_name,
+                        'side': order_side,
+                        'quantity': order.amount,
+                        'price': order.price,
+                        'executed_qty': order.filled,
+                        'average_price': order.price,
+                        'order_id': order.id,
+                        'status': 'FILLED'
+                    })
+
+                    position_id = await self.repository.create_position({
+                        'trade_id': trade_id,
+                        'symbol': symbol,
+                        'exchange': exchange_name,
+                        'side': position.side,
+                        'quantity': position.quantity,
+                        'entry_price': position.entry_price,
+                        'leverage': leverage  # CRITICAL: Save leverage to database
+                    })
+
+                    position.id = position_id
+
+                    # Update SL in database
                     await self.repository.update_position_stop_loss(
                         position_id, stop_loss_price, ""
                     )
+                    
+                    logger.info(f"💾 Position saved to database with ID: {position.id}")
 
-                    # 11. Initialize trailing stop WITH stop_order_id
+                except Exception as db_error:
+                    # ✅ COMPENSATING TRANSACTION: DB save failed, close position and cancel SL
+                    logger.error(f"❌ Database save failed for {symbol}, executing compensating transaction...")
+                    await self._compensate_failed_db_save(exchange, position, order, sl_order_id)
+                    raise db_error
+
+                # 12. Initialize trailing stop WITH stop_order_id
                 trailing_manager = self.trailing_managers.get(exchange_name)
                 if trailing_manager:
                     await trailing_manager.create_trailing_stop(
@@ -823,25 +842,20 @@ class PositionManager:
                         side=position.side,
                         entry_price=position.entry_price,
                         quantity=position.quantity,
-                            initial_stop=stop_loss_price,
-                            stop_order_id=sl_order_id  # ✅ ПЕРЕДАЁМ ID ОРДЕРА!
+                        initial_stop=stop_loss_price,
+                        stop_order_id=sl_order_id  # ✅ ПЕРЕДАЁМ ID ОРДЕРА!
                     )
                     position.has_trailing_stop = True
-                else:
-                    logger.warning(f"⚠️ Failed to set stop loss for {symbol}")
 
-                # 12. Update internal tracking
+                # 13. Update internal tracking
                 self.positions[symbol] = position
                 self.position_count += 1
                 self.total_exposure += Decimal(str(position.quantity * position.entry_price))
                 self.stats['positions_opened'] += 1
 
-                # Position already saved to database in step 9 above
-                logger.info(f"💾 Position saved to database with ID: {position.id}")
-
                 logger.info(
-                    f"✅ Position opened: {symbol} {position.side} "
-                    f"{position.quantity:.6f} @ ${position.entry_price:.4f}"
+                f"✅ Position opened: {symbol} {position.side} "
+                f"{position.quantity:.6f} @ ${position.entry_price:.4f}"
                 )
                 
                 # CRITICAL: Invalidate balance cache so spent funds are reflected immediately
@@ -851,11 +865,11 @@ class PositionManager:
                 
                 # ✅ CRITICAL: Emit position_opened event for dynamic WebSocket subscription
                 await self.event_router.emit('position_opened', {
-                    'symbol': symbol,
-                    'exchange': exchange_name,
-                    'side': position.side,
-                    'quantity': position.quantity,
-                    'entry_price': position.entry_price
+                'symbol': symbol,
+                'exchange': exchange_name,
+                'side': position.side,
+                'quantity': position.quantity,
+                'entry_price': position.entry_price
                 })
 
                 return position
@@ -874,8 +888,8 @@ class PositionManager:
                         logger.error(f"Failed to release DB lock for {symbol}: {lock_error}")
                 
                 # Release in-memory lock
-                self.position_locks.discard(lock_key)
-                logger.debug(f"🔓 Released position opening lock for {symbol} (completed)")
+            self.position_locks.discard(lock_key)
+            logger.debug(f"🔓 Released position opening lock for {symbol} (completed)")
 
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
         """Check if position already exists"""
@@ -1142,6 +1156,99 @@ class PositionManager:
                 logger.debug(f"🔓 Released SL creation lock for {position.symbol} (exception)")
                 return False, None
 
+    async def _compensate_failed_sl(self, exchange: ExchangeManager, position: PositionState, order):
+        """
+        Compensating transaction: Close position on exchange if SL creation failed.
+        
+        This prevents unprotected positions from being left on the exchange.
+        Freqtrade-style approach: if we can't protect the position, we don't keep it.
+        
+        Args:
+            exchange: Exchange manager instance
+            position: Position state object
+            order: Original market order that opened the position
+        """
+        logger.warning(f"🔄 Executing compensating transaction for {position.symbol}: closing unprotected position")
+        
+        try:
+            # Close the position on exchange (market order in opposite direction)
+            close_side = 'sell' if position.side == 'long' else 'buy'
+            close_order = await exchange.create_market_order(
+                position.symbol,
+                close_side,
+                position.quantity
+            )
+            
+            if close_order and close_order.filled:
+                logger.info(
+                    f"✅ Compensating transaction completed: closed {position.symbol} "
+                    f"at ${close_order.price:.4f} (opened at ${position.entry_price:.4f})"
+                )
+            else:
+                logger.error(
+                    f"❌ Compensating transaction FAILED: could not close {position.symbol}. "
+                    f"MANUAL INTERVENTION REQUIRED!"
+                )
+        except Exception as e:
+            logger.error(
+                f"❌ CRITICAL: Compensating transaction failed for {position.symbol}: {e}. "
+                f"Position is UNPROTECTED on exchange! MANUAL INTERVENTION REQUIRED!",
+                exc_info=True
+            )
+
+    async def _compensate_failed_db_save(self, exchange: ExchangeManager, position: PositionState, 
+                                         order, sl_order_id: Optional[str]):
+        """
+        Compensating transaction: Close position and cancel SL if database save failed.
+        
+        This ensures consistency between exchange and database.
+        If we can't track the position in DB, we don't keep it on exchange.
+        
+        Args:
+            exchange: Exchange manager instance
+            position: Position state object
+            order: Original market order that opened the position
+            sl_order_id: Stop loss order ID (if created)
+        """
+        logger.warning(
+            f"🔄 Executing compensating transaction for {position.symbol}: "
+            f"closing position and canceling SL due to DB save failure"
+        )
+        
+        try:
+            # 1. Cancel stop loss order (if exists)
+            if sl_order_id:
+                try:
+                    await exchange.cancel_order(sl_order_id, position.symbol)
+                    logger.info(f"✅ Canceled SL order {sl_order_id} for {position.symbol}")
+                except Exception as cancel_error:
+                    logger.error(f"Failed to cancel SL order {sl_order_id}: {cancel_error}")
+            
+            # 2. Close the position on exchange
+            close_side = 'sell' if position.side == 'long' else 'buy'
+            close_order = await exchange.create_market_order(
+                position.symbol,
+                close_side,
+                position.quantity
+            )
+            
+            if close_order and close_order.filled:
+                logger.info(
+                    f"✅ Compensating transaction completed: closed {position.symbol} "
+                    f"at ${close_order.price:.4f} (opened at ${position.entry_price:.4f})"
+                )
+            else:
+                logger.error(
+                    f"❌ Compensating transaction FAILED: could not close {position.symbol}. "
+                    f"MANUAL INTERVENTION REQUIRED!"
+                )
+        except Exception as e:
+            logger.error(
+                f"❌ CRITICAL: Compensating transaction failed for {position.symbol}: {e}. "
+                f"Position exists on exchange but not in DB! MANUAL INTERVENTION REQUIRED!",
+                exc_info=True
+            )
+
     async def _on_price_update(self, data: Dict):
         """
         Handle price update from WebSocket for Trailing Stop monitoring
@@ -1289,7 +1396,7 @@ class PositionManager:
                 # Update trailing stop
                 trailing_manager = self.trailing_managers.get(position.exchange)
                 logger.info(f"[DEBUG] Trailing manager: {trailing_manager is not None}, has_TS: {position.has_trailing_stop}")  # DEBUG
-                        
+                
                 if trailing_manager and position.has_trailing_stop:
                     logger.info(f"[DEBUG] Calling update_price for {position_symbol}")  # DEBUG
                     logger.debug(f"[PositionManager] Calling trailing_manager.update_price for {position_symbol}")

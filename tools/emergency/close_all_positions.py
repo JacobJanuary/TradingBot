@@ -107,12 +107,17 @@ async def close_all_positions():
     return total_closed
 
 if __name__ == "__main__":
-    print("⚠️  WARNING: This will close ALL positions on both exchanges!")
-    confirm = input("Are you sure? Type 'YES' to continue: ")
+    # Auto-confirm for non-interactive execution
+    if len(sys.argv) > 1 and sys.argv[1] == '--force':
+        closed = asyncio.run(close_all_positions())
+        print(f"\n✅ Done. Closed {closed} positions total.")
+    else:
+        print("⚠️  WARNING: This will close ALL positions on both exchanges!")
+        confirm = input("Are you sure? Type 'YES' to continue: ")
 
-    if confirm != 'YES':
-        print("Cancelled")
-        sys.exit(0)
+        if confirm != 'YES':
+            print("Cancelled")
+            sys.exit(0)
 
-    closed = asyncio.run(close_all_positions())
-    print(f"\n✅ Done. Closed {closed} positions total.")
+        closed = asyncio.run(close_all_positions())
+        print(f"\n✅ Done. Closed {closed} positions total.")

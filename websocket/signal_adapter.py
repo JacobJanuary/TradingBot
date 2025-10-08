@@ -21,7 +21,8 @@ class SignalAdapter:
         "score_month": 68.2,
         "timestamp": "2025-10-06T14:20:00",
         "created_at": "2025-10-06T14:20:05",
-        "trading_pair_id": 1234
+        "trading_pair_id": 1234,
+        "exchange_id": 1  # 1=Binance, 2=Bybit
     }
     
     Формат бота:
@@ -32,27 +33,16 @@ class SignalAdapter:
         "score_week": float,
         "score_month": float,
         "created_at": datetime,
-        "exchange": str,
+        "exchange": str,  # 'binance' или 'bybit'
         "wave_timestamp": datetime
     }
     """
     
-    def __init__(self, trading_pair_mapping: Dict[int, str] = None):
+    def __init__(self):
         """
-        Args:
-            trading_pair_mapping: Маппинг trading_pair_id -> exchange_name
-                                 Если None, попробует определить из символа
+        Signal Adapter для преобразования WebSocket сигналов.
+        Биржа определяется напрямую из поля exchange_id в сигнале.
         """
-        self.trading_pair_mapping = trading_pair_mapping or {}
-        
-        # Fallback маппинг: если trading_pair_id неизвестен,
-        # используем простую эвристику по суффиксу символа
-        self.exchange_fallback = {
-            'USDT': 'binance',  # По умолчанию USDT пары - Binance
-            'BUSD': 'binance',
-            'USD': 'bybit',      # USD суффикс чаще на Bybit
-        }
-        
         logger.info("SignalAdapter initialized")
     
     def adapt_signal(self, ws_signal: Dict) -> Dict:
@@ -66,9 +56,9 @@ class SignalAdapter:
             Dict в формате бота
         """
         try:
-            # Определяем exchange
-            trading_pair_id = ws_signal.get('trading_pair_id')
-            exchange = self._determine_exchange(trading_pair_id, ws_signal.get('pair_symbol'))
+            # Определяем exchange напрямую из exchange_id
+            exchange_id = ws_signal.get('exchange_id')
+            exchange = self._determine_exchange(exchange_id)
             
             # Преобразуем timestamp из строки в datetime
             created_at_str = ws_signal.get('created_at')
@@ -125,31 +115,23 @@ class SignalAdapter:
         logger.debug(f"Adapted {len(adapted_signals)}/{len(ws_signals)} signals")
         return adapted_signals
     
-    def _determine_exchange(self, trading_pair_id: int, symbol: str) -> str:
+    def _determine_exchange(self, exchange_id: int) -> str:
         """
-        Определяет exchange по trading_pair_id или символу
+        Определяет exchange по exchange_id из WebSocket сигнала
         
         Args:
-            trading_pair_id: ID торговой пары
-            symbol: Символ (например, BTCUSDT)
+            exchange_id: ID биржи (1=Binance, 2=Bybit)
             
         Returns:
             Имя биржи ('binance' или 'bybit')
         """
-        # Проверяем маппинг
-        if trading_pair_id in self.trading_pair_mapping:
-            return self.trading_pair_mapping[trading_pair_id]
-        
-        # Fallback: определяем по суффиксу символа
-        if symbol:
-            for suffix, exchange in self.exchange_fallback.items():
-                if symbol.endswith(suffix):
-                    logger.debug(f"Exchange for {symbol} determined by suffix: {exchange}")
-                    return exchange
-        
-        # По умолчанию Binance (самая популярная биржа)
-        logger.warning(f"Could not determine exchange for trading_pair_id={trading_pair_id}, using binance")
-        return 'binance'
+        if exchange_id == 1:
+            return 'binance'
+        elif exchange_id == 2:
+            return 'bybit'
+        else:
+            logger.warning(f"Unknown exchange_id={exchange_id}, defaulting to binance")
+            return 'binance'
     
     def _calculate_wave_timestamp(self, created_at: datetime) -> datetime:
         """
@@ -178,40 +160,3 @@ class SignalAdapter:
         
         return wave_ts
     
-    def update_trading_pair_mapping(self, mapping: Dict[int, str]):
-        """
-        Обновляет маппинг trading_pair_id -> exchange
-        
-        Args:
-            mapping: Новый маппинг
-        """
-        self.trading_pair_mapping.update(mapping)
-        logger.info(f"Updated trading pair mapping: {len(self.trading_pair_mapping)} pairs")
-    
-    async def load_trading_pair_mapping_from_db(self, repository):
-        """
-        Загружает маппинг trading_pair_id -> exchange из БД
-        
-        Args:
-            repository: Database repository instance
-        """
-        try:
-            query = """
-                SELECT 
-                    tp.id as trading_pair_id,
-                    LOWER(ex.exchange_name) as exchange
-                FROM public.trading_pairs tp
-                JOIN public.exchanges ex ON ex.id = tp.exchange_id
-            """
-            
-            async with repository.pool.acquire() as conn:
-                rows = await conn.fetch(query)
-                
-                mapping = {row['trading_pair_id']: row['exchange'] for row in rows}
-                self.update_trading_pair_mapping(mapping)
-                
-                logger.info(f"Loaded {len(mapping)} trading pairs from database")
-                
-        except Exception as e:
-            logger.error(f"Failed to load trading pair mapping: {e}")
-            logger.warning("Will use fallback exchange determination")

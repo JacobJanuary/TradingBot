@@ -461,31 +461,6 @@ class AgedPositionManager:
             logger.error(f"Error fetching price for {symbol}: {e}")
             return None
 
-    async def _get_total_balance(self) -> float:
-        """
-        Get total account balance in USD
-        Note: Not used in new logic but kept for compatibility
-        """
-        try:
-            total_balance = 0.0
-
-            for exchange_name, exchange in self.exchanges.items():
-                try:
-                    balance = await exchange.fetch_balance()
-
-                    # Get USDT balance (main trading currency)
-                    usdt_balance = balance.get('USDT', {}).get('free', 0)
-                    total_balance += float(usdt_balance)
-
-                except Exception as e:
-                    logger.error(f"Error fetching balance from {exchange_name}: {e}")
-
-            return total_balance
-
-        except Exception as e:
-            logger.error(f"Error calculating total balance: {e}")
-            return 0.0
-
     def get_statistics(self) -> Dict:
         """
         Get manager statistics

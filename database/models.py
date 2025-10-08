@@ -33,49 +33,13 @@ class PositionStatus(enum.Enum):
     LIQUIDATED = "LIQUIDATED"
 
 
-class Signal(Base):
-    """Trading signals from fas.scoring_history"""
-    __tablename__ = 'signals'
-    __table_args__ = {'schema': 'fas'}
-
-    id = Column(Integer, primary_key=True)
-    trading_pair_id = Column(Integer, nullable=False, index=True)
-    pair_symbol = Column(String(50), nullable=False, index=True)
-    exchange_id = Column(Integer, nullable=False)
-    exchange_name = Column(String(50), nullable=False)
-
-    score_week = Column(Float, nullable=False)
-    score_month = Column(Float, nullable=False)
-    recommended_action = Column(SQLEnum(ActionType), nullable=False)
-
-    patterns_details = Column(JSON)
-    combinations_details = Column(JSON)
-
-    is_active = Column(Boolean, default=True, nullable=False)
-    is_processed = Column(Boolean, default=False, nullable=False)
-    processed_at = Column(DateTime)
-
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-
-    # Relationships
-    # trades = relationship("Trade", back_populates="signal")  # Commented for tests
-
-    # Indexes for performance
-    __table_args__ = (
-        Index('idx_signals_active_scores', 'is_active', 'score_week', 'score_month'),
-        Index('idx_signals_created', 'created_at'),
-        Index('idx_signals_symbol_exchange', 'pair_symbol', 'exchange_name'),
-    )
-
-
 class Trade(Base):
     """Executed trades"""
     __tablename__ = 'trades'
     __table_args__ = {'schema': 'monitoring'}
 
     id = Column(Integer, primary_key=True)
-    signal_id = Column(Integer, ForeignKey('fas.signals.id'), nullable=True)
+    signal_id = Column(Integer, nullable=True)
 
     symbol = Column(String(50), nullable=False, index=True)
     exchange = Column(String(50), nullable=False, index=True)

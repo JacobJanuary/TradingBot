@@ -15,7 +15,6 @@ from config.settings import config as settings
 from utils.process_lock import ProcessLock, ensure_single_instance, check_running_instances, kill_all_instances
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
-from core.signal_processor import SignalProcessor
 from core.signal_processor_websocket import WebSocketSignalProcessor
 from database.repository import Repository as TradingRepository
 from websocket.binance_stream import BinancePrivateStream
@@ -250,28 +249,15 @@ class TradingBot:
             )
             logger.info("✅ Aged position manager ready")
 
-            # Initialize signal processor
-            # Check if WebSocket mode is enabled
-            use_websocket = os.getenv('USE_WEBSOCKET_SIGNALS', 'false').lower() == 'true'
-            
-            if use_websocket:
-                logger.info("Initializing WebSocket signal processor...")
-                self.signal_processor = WebSocketSignalProcessor(
-                    settings.trading,
-                    self.position_manager,
-                    self.repository,
-                    self.event_router
-                )
-                logger.info("✅ WebSocket signal processor initialized")
-            else:
-                logger.info("Initializing database signal processor...")
-                self.signal_processor = SignalProcessor(
-                    settings.trading,
-                    self.repository,
-                    self.position_manager,
-                    self.event_router
-                )
-                logger.info("✅ Database signal processor initialized")
+            # Initialize WebSocket signal processor
+            logger.info("Initializing WebSocket signal processor...")
+            self.signal_processor = WebSocketSignalProcessor(
+                settings.trading,
+                self.position_manager,
+                self.repository,
+                self.event_router
+            )
+            logger.info("✅ WebSocket signal processor initialized")
 
             # Stop-list symbols are now loaded from configuration (.env file)
             # via SymbolFilter in signal_processor

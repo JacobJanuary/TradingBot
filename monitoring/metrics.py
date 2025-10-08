@@ -510,24 +510,15 @@ class MetricsCollector:
             return {}
     
     async def _calculate_drawdown(self, exchange: str) -> float:
-        """Calculate current drawdown from peak"""
-        
+        """
+        Calculate current drawdown from peak
+        Note: Balance history not available, returns 0 for now
+        TODO: Implement balance tracking if needed
+        """
         try:
-            # Get account balance history
-            history = await self.repository.get_balance_history(exchange, days=30)
-            
-            if not history:
-                return 0
-            
-            # Find peak balance
-            peak = max(h.balance for h in history)
-            current = history[-1].balance
-            
-            if peak > 0:
-                drawdown = ((peak - current) / peak) * 100
-                return max(0, drawdown)
-            
-            return 0
+            # Balance history not implemented yet
+            # Would need to track balance snapshots over time
+            return 0.0
             
         except Exception as e:
             logger.error(f"Error calculating drawdown: {e}")

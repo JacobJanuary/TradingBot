@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.models import Position, Order, Signal, Trade
+from database.models import Position, Order, Trade
 from core.exchange_manager import ExchangeManager
 from core.risk_manager import RiskManager
 
@@ -119,7 +119,6 @@ def mock_repository() -> AsyncMock:
     repo.create_position = AsyncMock(return_value=True)
     repo.update_position = AsyncMock(return_value=True)
     repo.create_order = AsyncMock(return_value=True)
-    repo.get_pending_signals = AsyncMock(return_value=[])
     
     return repo
 
@@ -153,22 +152,6 @@ def sample_order() -> Order:
         price=49999.0,
         size=0.1,
         status='open',
-        created_at=datetime.now(timezone.utc)
-    )
-
-
-@pytest.fixture
-def sample_signal() -> Signal:
-    """Sample signal for testing"""
-    return Signal(
-        id='sig_789',
-        source='strategy_1',
-        symbol='BTC/USDT',
-        action='open_long',
-        strength=Decimal('0.8'),
-        entry_price=Decimal('50000'),
-        stop_loss=Decimal('49000'),
-        take_profit=Decimal('51000'),
         created_at=datetime.now(timezone.utc)
     )
 
