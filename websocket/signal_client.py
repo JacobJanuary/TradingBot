@@ -336,6 +336,33 @@ class SignalWebSocketClient:
     def get_last_signals(self, limit: int = 10) -> List[dict]:
         """Получение последних сигналов из буфера"""
         return self.signal_buffer[-limit:]
+    
+    def get_signals_by_timestamp(self, timestamp: str) -> List[Dict]:
+        """
+        Получить сигналы с конкретным timestamp из буфера
+        
+        Args:
+            timestamp: ISO timestamp волны (например, '2025-10-08 15:30:00+00:00')
+        
+        Returns:
+            List of signals matching the timestamp
+        """
+        matching = []
+        
+        # Normalize timestamp for comparison (убираем миллисекунды и timezone offset если есть)
+        # Ищем совпадение по первым 19 символам (YYYY-MM-DD HH:MM:SS)
+        search_ts = timestamp[:19] if len(timestamp) >= 19 else timestamp
+        
+        for signal in self.signal_buffer:
+            # Check both 'timestamp' and 'created_at' fields
+            signal_ts = signal.get('timestamp') or signal.get('created_at')
+            if signal_ts:
+                signal_ts_str = str(signal_ts)[:19]
+                if signal_ts_str == search_ts:
+                    matching.append(signal)
+        
+        logger.debug(f"Found {len(matching)} signals for timestamp {timestamp} in buffer of {len(self.signal_buffer)}")
+        return matching
 
     async def stop(self):
         """Остановка клиента"""

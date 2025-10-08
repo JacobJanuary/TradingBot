@@ -86,8 +86,6 @@ class WebSocketSignalProcessor:
         
         # Wave tracking (как в старом SignalProcessor)
         self.processed_waves = {}  # {wave_timestamp: {'signal_ids': set(), 'count': int}}
-        self.pending_signals = {}  # {wave_timestamp: [signals]}
-        self._pending_lock = asyncio.Lock()
         
         # Statistics
         self.stats = {
@@ -150,44 +148,22 @@ class WebSocketSignalProcessor:
     async def _on_signals_received(self, ws_signals: List[Dict]):
         """
         Callback когда получены сигналы от WebSocket сервера
-        Сохраняет сигналы в pending_signals для обработки в wave monitoring loop
+        
+        НОВАЯ ЛОГИКА: Только логирование и статистика, НЕ накапливает
+        Сигналы уже в buffer клиента (RAW формат), будут адаптированы при извлечении
         
         Args:
             ws_signals: Raw сигналы от WebSocket (формат сервера)
         """
         try:
-            logger.info(f"📡 Received {len(ws_signals)} signals from WebSocket")
+            logger.info(f"📡 Received {len(ws_signals)} RAW signals from WebSocket (added to buffer)")
             
             # Update stats
             self.stats['signals_received'] += len(ws_signals)
             self.stats['last_signal_time'] = datetime.now(timezone.utc)
             
-            # Adapt signals to bot format
-            adapted_signals = self.signal_adapter.adapt_signals(ws_signals)
-            
-            if not adapted_signals:
-                logger.warning("No signals after adaptation")
-                return
-            
-            logger.info(f"✅ Adapted {len(adapted_signals)} signals to bot format")
-            
-            # Group signals by wave_timestamp and store in pending
-            # CRITICAL: Only add signals for waves that haven't been processed yet
-            async with self._pending_lock:
-                for signal in adapted_signals:
-                    wave_ts = signal.get('wave_timestamp')
-                    if wave_ts:
-                        wave_ts_str = str(wave_ts)
-                        
-                        # Skip if wave already processed
-                        if wave_ts_str in self.processed_waves:
-                            logger.debug(f"Skipping signal for already processed wave {wave_ts_str}")
-                            continue
-                        
-                        if wave_ts_str not in self.pending_signals:
-                            self.pending_signals[wave_ts_str] = []
-                        self.pending_signals[wave_ts_str].append(signal)
-                        logger.debug(f"Added signal to pending wave {wave_ts_str}")
+            # ВСЁ! Сигналы уже в buffer клиента (self.ws_client.signal_buffer)
+            # Они будут извлечены и адаптированы в _monitor_wave_appearance
             
         except Exception as e:
             logger.error(f"Error handling WebSocket signals: {e}", exc_info=True)
@@ -435,26 +411,42 @@ class WebSocketSignalProcessor:
         Мониторит появление волны с заданным timestamp
         Запрашивает сигналы каждую секунду до 120 секунд
         
+        НОВАЯ ЛОГИКА: 
+        1. Извлекает RAW сигналы из buffer WebSocket клиента
+        2. Адаптирует их в формат бота через SignalAdapter
+        3. Возвращает адаптированные сигналы для обработки
+        
         Args:
             expected_timestamp: ISO timestamp ожидаемой волны
             
         Returns:
-            List of signals if wave detected, None otherwise
+            List of ADAPTED signals if wave detected, None otherwise
         """
         detection_start = datetime.now(timezone.utc)
         
         logger.info(f"🔍 Monitoring wave appearance for {self.wave_check_duration}s...")
         
         while (datetime.now(timezone.utc) - detection_start).total_seconds() < self.wave_check_duration:
-            # Запрашиваем сигналы с сервера
+            # Запрашиваем свежие сигналы с сервера
             await self.ws_client.request_signals()
             
-            # Проверяем появились ли сигналы с нужным timestamp в pending
-            async with self._pending_lock:
-                if expected_timestamp in self.pending_signals:
-                    signals = self.pending_signals.pop(expected_timestamp)
-                    logger.info(f"✅ Found {len(signals)} signals for wave {expected_timestamp}")
-                    return signals
+            # Даём время на ответ от сервера
+            await asyncio.sleep(1)
+            
+            # Проверяем buffer клиента на наличие RAW сигналов с нужным timestamp
+            raw_signals = self.ws_client.get_signals_by_timestamp(expected_timestamp)
+            
+            if raw_signals:
+                logger.info(f"✅ Found {len(raw_signals)} RAW signals for wave {expected_timestamp}")
+                
+                # Адаптируем в формат бота
+                adapted_signals = self.signal_adapter.adapt_signals(raw_signals)
+                
+                if adapted_signals:
+                    logger.info(f"✅ Adapted {len(adapted_signals)} signals to bot format")
+                    return adapted_signals
+                else:
+                    logger.warning(f"No signals after adaptation for wave {expected_timestamp}")
             
             # Ждём перед следующей проверкой
             await asyncio.sleep(self.wave_check_interval)
