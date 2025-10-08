@@ -913,8 +913,19 @@ class ExchangeManager:
             logger.error(f"Failed to validate amount for {symbol}: {e}")
             return amount  # Return original if validation fails
 
-    def _parse_order(self, order: Dict) -> OrderResult:
+    def _parse_order(self, order: Dict) -> Optional[OrderResult]:
         """Parse CCXT order to standardized format"""
+        
+        # ✅ FIX: Handle None order (Bybit testnet issue)
+        # CCXT can return None if exchange doesn't support sync order creation
+        # or if order creation silently fails on testnet
+        if order is None:
+            logger.warning(
+                "⚠️ Exchange returned None order "
+                "(common on Bybit testnet, indicates order not created)"
+            )
+            return None
+        
         # Handle None timestamp (common for stop orders that haven't triggered yet)
         if order.get('timestamp'):
             timestamp = datetime.fromtimestamp(order['timestamp'] / 1000)

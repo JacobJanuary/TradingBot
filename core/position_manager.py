@@ -699,7 +699,23 @@ class PositionManager:
                 order = await exchange.create_market_order(symbol, order_side, quantity)
 
                 if not order:
-                    logger.error(f"Failed to create order for {symbol}")
+                    # ✅ FIX: Enhanced logging for diagnostics
+                    logger.error(
+                        f"❌ Failed to create order for {symbol}:\n"
+                        f"   Exchange: {exchange_name}\n"
+                        f"   Side: {order_side}\n"
+                        f"   Quantity: {quantity}\n"
+                        f"   Market active: {market_info.get('active')}\n"
+                        f"   Likely cause: Testnet instability or symbol unavailable"
+                    )
+                    return None
+                
+                # ✅ FIX: Additional safety check for order object validity
+                if not hasattr(order, 'filled'):
+                    logger.error(
+                        f"❌ Order object is invalid for {symbol}: "
+                        f"missing 'filled' attribute. Order type: {type(order)}"
+                    )
                     return None
 
                 # CRITICAL FIX: Different check for Bybit vs Binance
