@@ -350,8 +350,17 @@ class SignalWebSocketClient:
         matching = []
         
         # Normalize timestamp for comparison (убираем миллисекунды и timezone offset если есть)
-        # Ищем совпадение по первым 19 символам (YYYY-MM-DD HH:MM:SS)
+        # Ищем совпадение по первым 19 символам (YYYY-MM-DDTHH:MM:SS)
+        # timestamp может быть с 'T' или с пробелом, приводим к единому формату с 'T'
         search_ts = timestamp[:19] if len(timestamp) >= 19 else timestamp
+        # Если в search_ts пробел вместо 'T', заменяем
+        search_ts = search_ts.replace(' ', 'T')
+        
+        logger.info(f"[DEBUG] Searching for timestamp: '{search_ts}' in buffer of {len(self.signal_buffer)} signals")
+        
+        for idx, signal in enumerate(self.signal_buffer[:5]):  # Log first 5 for debugging
+            signal_ts = signal.get('timestamp') or signal.get('created_at')
+            logger.info(f"[DEBUG] Signal {idx}: timestamp='{signal_ts}', first_19='{str(signal_ts)[:19] if signal_ts else None}'")
         
         for signal in self.signal_buffer:
             # Check both 'timestamp' and 'created_at' fields
@@ -361,7 +370,7 @@ class SignalWebSocketClient:
                 if signal_ts_str == search_ts:
                     matching.append(signal)
         
-        logger.debug(f"Found {len(matching)} signals for timestamp {timestamp} in buffer of {len(self.signal_buffer)}")
+        logger.info(f"[DEBUG] Found {len(matching)} signals for timestamp {timestamp} in buffer of {len(self.signal_buffer)}")
         return matching
 
     async def stop(self):

@@ -367,44 +367,44 @@ class WebSocketSignalProcessor:
     
     def _calculate_expected_wave_timestamp(self) -> str:
         """
-        Вычислить timestamp ожидаемой волны на основе текущего времени
+        Вычислить timestamp ожидаемой волны
         
-        WAVE_CHECK_MINUTES=[6,20,35,50] проверяют ПРЕДЫДУЩУЮ закрытую 15-минутную свечу
+        Логика: Волна появляется на сервере через ~20 минут после своего timestamp.
+        Бот проверяет в минуты WAVE_CHECK_MINUTES (например, [6, 20, 35, 50]).
+        Нужно вернуть timestamp волны, которая должна появиться СЕЙЧАС.
         
-        Логика:
-        - Текущее время 00-15 минут → ищем свечу 45 (предыдущего часа)
-        - Текущее время 16-30 минут → ищем свечу 00
-        - Текущее время 31-45 минут → ищем свечу 15
-        - Текущее время 46-59 минут → ищем свечу 30
+        Для WAVE_CHECK_MINUTES=[6, 20, 35, 50]:
+        - Проверка в 06 минут → ищем волну timestamp 45 (предыдущего часа)
+        - Проверка в 20 минут → ищем волну timestamp 00
+        - Проверка в 35 минут → ищем волну timestamp 15
+        - Проверка в 50 минут → ищем волну timestamp 30
         
-        Например: 00:06 → предыдущая закрытая свеча 23:45-00:00 → timestamp 23:45
+        Общая формула: wave_timestamp = current_check_minute - 20 минут
         
         Returns:
-            Timestamp волны (15-минутная свеча) в формате строки
+            Timestamp волны в формате строки (с 'T' между датой и временем)
         """
         now = datetime.now(timezone.utc)
         current_minute = now.minute
         
-        # Находим ПРЕДЫДУЩУЮ закрытую 15-минутную свечу
-        if current_minute <= 15:
-            # 00:00-15:59 → предыдущая свеча 45 (предыдущего часа)
-            wave_minute = 45
-            wave_time = now.replace(minute=wave_minute, second=0, microsecond=0) - timedelta(hours=1)
-        elif current_minute <= 30:
-            # 16:00-30:59 → предыдущая свеча 00
-            wave_minute = 0
-            wave_time = now.replace(minute=wave_minute, second=0, microsecond=0)
-        elif current_minute <= 45:
-            # 31:00-45:59 → предыдущая свеча 15
-            wave_minute = 15
-            wave_time = now.replace(minute=wave_minute, second=0, microsecond=0)
-        else:
-            # 46:00-59:59 → предыдущая свеча 30
-            wave_minute = 30
-            wave_time = now.replace(minute=wave_minute, second=0, microsecond=0)
+        # Найти ближайшую предыдущую check_minute (на которой мы сейчас)
+        current_check_minute = None
+        for check_minute in sorted(self.wave_check_minutes, reverse=True):
+            if current_minute >= check_minute:
+                current_check_minute = check_minute
+                break
         
-        # ✅ FIX: Используем str() вместо .isoformat() для совместимости с форматом pending_signals
-        return str(wave_time)
+        # Если не нашли (current_minute < самой маленькой check_minute), значит мы в начале часа
+        # и проверяем волну из предыдущего часа
+        if current_check_minute is None:
+            current_check_minute = self.wave_check_minutes[-1]  # Последняя check_minute предыдущего часа
+            wave_time = now.replace(minute=current_check_minute, second=0, microsecond=0) - timedelta(hours=1, minutes=20)
+        else:
+            # Вычитаем 20 минут от текущей check_minute
+            wave_time = now.replace(minute=current_check_minute, second=0, microsecond=0) - timedelta(minutes=20)
+        
+        # ✅ Используем .isoformat() для формата с 'T' (как в сигналах от сервера)
+        return wave_time.isoformat()
     
     async def _monitor_wave_appearance(self, expected_timestamp: str) -> Optional[List[Dict]]:
         """
@@ -560,6 +560,6 @@ class WebSocketSignalProcessor:
         return {
             **self.stats,
             'websocket': self.ws_client.get_stats(),
-            'pending_waves': len(self.pending_signals),
+            'buffer_size': len(self.ws_client.signal_buffer),
             'processed_waves_count': len(self.processed_waves)
         }
