@@ -730,13 +730,17 @@ class PositionManager:
                         # Use fetchOpenOrder() or check position directly instead
                         try:
                             # Try to fetch as open order first
-                            order = await exchange.fetch_open_order(order.id, symbol)
-                            logger.info(f"Order refetched (open): filled={order.filled}, status={order.status}")
+                            refetched_order = await exchange.fetch_open_order(order.id, symbol)
+                            if refetched_order:
+                                order = refetched_order
+                                logger.info(f"Order refetched (open): filled={order.filled}, status={order.status}")
                         except Exception as e1:
                             # If not in open orders, try closed orders
                             try:
-                                order = await exchange.fetch_closed_order(order.id, symbol)
-                                logger.info(f"Order refetched (closed): filled={order.filled}, status={order.status}")
+                                refetched_order = await exchange.fetch_closed_order(order.id, symbol)
+                                if refetched_order:
+                                    order = refetched_order
+                                    logger.info(f"Order refetched (closed): filled={order.filled}, status={order.status}")
                             except Exception as e2:
                                 # If both fail, check position directly
                                 logger.warning(f"Could not refetch order via API, checking position directly...")
@@ -753,6 +757,11 @@ class PositionManager:
                                         logger.warning(f"Could not verify order via position check: {e1}, {e2}")
                                 except Exception as e3:
                                     logger.warning(f"All verification methods failed: {e3}")
+                    
+                    # ✅ FIX: Check if order is still valid (not None) before accessing attributes
+                    if not order:
+                        logger.error(f"Order object became None for {symbol} after refetch attempts")
+                        return None
                     
                     # Check if still not filled (None or 0)
                     if not order.filled or order.filled == 0:
