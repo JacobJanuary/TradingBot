@@ -207,8 +207,9 @@ class SignalWebSocketClient:
         self.stats['signals_received'] += count
         self.stats['last_signal_time'] = datetime.now()
 
-        # Добавляем в буфер
-        self.signal_buffer = (self.signal_buffer + signals)[-self.buffer_size:]
+        # ✅ FIX: Заменяем буфер новыми сигналами (сохраняем сортировку с сервера)
+        # Сервер отправляет уже отсортированные данные - не нарушаем их порядок
+        self.signal_buffer = signals[-self.buffer_size:]
 
         # Вызываем callback если установлен
         if self.on_signals_callback:

@@ -12,6 +12,7 @@ from decimal import Decimal
 from websocket.signal_client import SignalWebSocketClient
 from websocket.signal_adapter import SignalAdapter
 from core.wave_signal_processor import WaveSignalProcessor
+from core.symbol_filter import SymbolFilter
 from models.validation import validate_signal, OrderSide
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,9 @@ class WebSocketSignalProcessor:
         
         # Initialize wave processor (existing logic)
         self.wave_processor = WaveSignalProcessor(config, position_manager)
+        
+        # ✅ FIX: Initialize symbol filter для фильтрации стоп-листа
+        self.symbol_filter = SymbolFilter(config)
         
         # Set WebSocket callbacks
         self.ws_client.set_callbacks(
@@ -498,6 +502,14 @@ class WebSocketSignalProcessor:
             
             symbol = validated_signal.symbol
             exchange = validated_signal.exchange
+            
+            # ✅ FIX: Check symbol filter (stop-list) BEFORE proceeding
+            is_allowed, reason = self.symbol_filter.is_symbol_allowed(symbol)
+            if not is_allowed:
+                logger.info(
+                    f"⏸️ Signal #{signal_id} skipped: {symbol} is blocked ({reason})"
+                )
+                return False
             
             logger.info(
                 f"Executing signal #{signal_id}: {symbol} on {exchange} "
