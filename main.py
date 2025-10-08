@@ -12,7 +12,7 @@ from typing import Dict, Optional
 import argparse
 
 from config.settings import config as settings
-from utils.process_lock import ProcessLock, ensure_single_instance, check_running_instances, kill_all_instances
+from utils.process_lock import ProcessLock, check_running_instances, kill_all_instances
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
 from core.signal_processor_websocket import WebSocketSignalProcessor
@@ -693,92 +693,55 @@ def main():
             sys.exit(0)
 
     # CRITICAL: Check for running instances FIRST (before any lock operations)
-    # This prevents race conditions on macOS where flock may not work reliably
     import subprocess
     import time
     
     logger.info("🔍 Checking for running bot instances...")
     try:
-        result = subprocess.run(
-            ['pgrep', '-f', 'python.*main.py'],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
-            current_pid = str(os.getpid())
-            other_pids = [p for p in pids if p != current_pid]
+        other_instances = check_running_instances()
+        
+        if other_instances > 0:
+            logger.error(f"❌ Found {other_instances} other bot instance(s) running")
+            logger.error(f"   Or use --force flag to auto-kill")
             
-            if other_pids:
-                logger.error(f"❌ Found {len(other_pids)} other bot instance(s) running:")
-                for pid in other_pids:
-                    logger.error(f"   PID: {pid}")
-                logger.error(f"💡 To kill them: kill -9 {' '.join(other_pids)}")
-                logger.error(f"   Or use --force flag to auto-kill")
+            if not args.force:
+                logger.error("🛑 Exiting to prevent multiple instances")
+                sys.exit(1)
+            else:
+                logger.warning(f"⚠️  --force flag used, killing {other_instances} other instance(s)...")
+                killed = kill_all_instances()
+                logger.info(f"✅ Killed {killed} instance(s)")
                 
-                if not args.force:
-                    logger.error("🛑 Exiting to prevent multiple instances")
+                logger.info("⏳ Waiting 3 seconds for processes to die...")
+                time.sleep(3)
+                
+                # Verify they're actually dead
+                remaining = check_running_instances()
+                if remaining > 0:
+                    logger.error(f"❌ Failed to kill all instances: {remaining} still running")
                     sys.exit(1)
-                else:
-                    logger.warning(f"⚠️  --force flag used, killing {len(other_pids)} other instance(s)...")
-                    for pid in other_pids:
-                        try:
-                            os.kill(int(pid), signal.SIGKILL)
-                            logger.info(f"✅ Killed PID {pid}")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to kill PID {pid}: {e}")
-                    
-                    logger.info("⏳ Waiting 3 seconds for processes to die...")
-                    time.sleep(3)
-                    
-                    # Verify they're actually dead
-                    result2 = subprocess.run(
-                        ['pgrep', '-f', 'python.*main.py'],
-                        capture_output=True,
-                        text=True
-                    )
-                    if result2.returncode == 0:
-                        remaining = [p.strip() for p in result2.stdout.strip().split('\n') if p.strip() and p.strip() != str(os.getpid())]
-                        if remaining:
-                            logger.error(f"❌ Failed to kill all instances: {remaining}")
-                            sys.exit(1)
-                    
-                    logger.info("✅ All other instances killed")
+                
+                logger.info("✅ All other instances killed")
     except Exception as e:
         logger.warning(f"⚠️  Could not check for running instances: {e}")
     
-    # Now acquire process lock
-    lock_file = '/tmp/trading_bot.lock'
-    process_lock = ProcessLock(lock_file)
-    
-    # Check for stale lock first
-    if process_lock.check_stale_lock():
-        logger.info("🧹 Removed stale lock file")
+    # Acquire process lock (PID-file based, works reliably on macOS)
+    pid_file = '/tmp/trading_bot.pid'
+    process_lock = ProcessLock(pid_file)
     
     if not process_lock.acquire():
         logger.error("❌ Cannot start: another instance is already running")
-        logger.error(f"💡 To force start, run: rm {lock_file}")
+        logger.error(f"💡 To force start, run: rm {pid_file}")
         logger.error("   Or use --force to kill existing instances")
         sys.exit(1)
     
     # DOUBLE-CHECK: Verify no other instances started during lock acquisition
     try:
-        result = subprocess.run(
-            ['pgrep', '-f', 'python.*main.py'],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            pids = [p.strip() for p in result.stdout.strip().split('\n') if p.strip()]
-            current_pid = str(os.getpid())
-            other_pids = [p for p in pids if p != current_pid]
-            
-            if other_pids:
-                logger.error(f"❌ RACE CONDITION DETECTED: {len(other_pids)} instance(s) started during lock acquisition!")
-                for pid in other_pids:
-                    logger.error(f"   Rogue PID: {pid}")
-                process_lock.release()
-                sys.exit(1)
+        other_instances = check_running_instances()
+        if other_instances > 0:
+            logger.error(f"❌ RACE CONDITION DETECTED: {other_instances} instance(s) started during lock acquisition!")
+            process_lock.release()
+            sys.exit(1)
     except Exception as e:
         logger.warning(f"Could not perform double-check: {e}")
 

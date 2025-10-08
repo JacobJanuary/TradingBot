@@ -1,168 +1,123 @@
-"""Process lock mechanism to prevent multiple instances of the bot"""
+"""
+Simple and reliable PID-file based process lock
+Works on all Unix-like systems including macOS
+"""
 
 import os
 import sys
-import fcntl
 import signal
 import atexit
-from pathlib import Path
+import subprocess
 from typing import Optional
 from utils.logger import logger
 
-class ProcessLock:
-    """Prevents multiple instances of the trading bot from running"""
 
-    def __init__(self, lock_file: str = "/tmp/trading_bot.lock"):
-        self.lock_file = lock_file
-        self.lock_fd: Optional[int] = None
+class ProcessLock:
+    """
+    Single-instance lock using PID file.
+    
+    This is the simplest and most reliable approach:
+    1. Write PID to file on start
+    2. Check if PID is alive before starting
+    3. Remove file on exit
+    
+    Used by: nginx, postgresql, apache, redis, and countless other daemons
+    """
+
+    def __init__(self, pid_file: str = "/tmp/trading_bot.pid"):
+        self.pid_file = pid_file
         self.acquired = False
+
+    def _is_process_running(self, pid: int) -> bool:
+        """Check if a process with given PID is actually running"""
+        try:
+            # Send signal 0 to check if process exists (doesn't actually kill)
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def _read_pid_file(self) -> Optional[int]:
+        """Read PID from file, return None if file doesn't exist or invalid"""
+        try:
+            with open(self.pid_file, 'r') as f:
+                pid_str = f.read().strip()
+                if pid_str and pid_str.isdigit():
+                    return int(pid_str)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            logger.warning(f"Error reading PID file: {e}")
+        return None
+
+    def _write_pid_file(self):
+        """Write current PID to file"""
+        try:
+            with open(self.pid_file, 'w') as f:
+                f.write(str(os.getpid()))
+            logger.info(f"✅ PID file created: {self.pid_file} (PID: {os.getpid()})")
+        except Exception as e:
+            logger.error(f"Failed to write PID file: {e}")
+            raise
+
+    def _remove_pid_file(self):
+        """Remove PID file"""
+        try:
+            if os.path.exists(self.pid_file):
+                os.remove(self.pid_file)
+                logger.info(f"✅ PID file removed: {self.pid_file}")
+        except Exception as e:
+            logger.warning(f"Error removing PID file: {e}")
 
     def acquire(self) -> bool:
         """
         Acquire the process lock.
         Returns True if lock acquired, False if another instance is running.
-        
-        Uses fcntl.flock() which is:
-        - Process-safe (works across multiple processes)
-        - Automatically released on process death
-        - Works on Unix-like systems (Linux, macOS)
         """
+        # Check if PID file exists
+        old_pid = self._read_pid_file()
+        
+        if old_pid:
+            # Check if process is actually running
+            if self._is_process_running(old_pid):
+                logger.error(f"❌ Another instance is running (PID: {old_pid})")
+                logger.error(f"   PID file: {self.pid_file}")
+                logger.error(f"   To force kill: kill -9 {old_pid}")
+                return False
+            else:
+                # Stale PID file - remove it
+                logger.warning(f"⚠️  Stale PID file detected (PID: {old_pid} is dead)")
+                self._remove_pid_file()
+
+        # Write our PID
         try:
-            # Open or create lock file with O_RDWR for better compatibility
-            # O_TRUNC to clear old PID before writing new one
-            self.lock_fd = os.open(
-                self.lock_file, 
-                os.O_CREAT | os.O_RDWR | os.O_TRUNC,
-                0o644  # rw-r--r--
-            )
-
-            # Try to acquire exclusive lock (non-blocking)
-            # This is the CRITICAL part - flock is atomic and process-safe
-            try:
-                fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError) as lock_error:
-                # Lock is held by another process
-                if lock_error.errno in (11, 35):  # EAGAIN or EWOULDBLOCK
-                    try:
-                        # Try to read PID from lock file
-                        # Use os.read() instead of open() to avoid conflicts
-                        os.lseek(self.lock_fd, 0, os.SEEK_SET)
-                        pid_bytes = os.read(self.lock_fd, 100)
-                        pid = pid_bytes.decode().strip()
-                        
-                        # Verify the process is actually running
-                        try:
-                            os.kill(int(pid), 0)  # Signal 0 = check if alive
-                            logger.error(f"❌ Another instance is already running (PID: {pid})")
-                            logger.error(f"   Lock file: {self.lock_file}")
-                            logger.error(f"   To force kill: kill -9 {pid}")
-                        except (OSError, ValueError):
-                            # Process is dead but lock still held (shouldn't happen with flock)
-                            logger.error(f"⚠️ Stale lock detected for dead PID: {pid}")
-                            logger.error(f"   This shouldn't happen with flock - investigating...")
-                    except Exception as read_error:
-                        logger.error(f"❌ Another instance is already running (couldn't read PID: {read_error})")
-                    
-                    # Close FD and return failure
-                    os.close(self.lock_fd)
-                    self.lock_fd = None
-                    return False
-                else:
-                    raise  # Re-raise unexpected errors
-
-            # Lock acquired! Write our PID to the file
-            # Truncate first to ensure clean write
-            os.ftruncate(self.lock_fd, 0)
-            os.lseek(self.lock_fd, 0, os.SEEK_SET)
-            pid_str = f"{os.getpid()}\n"
-            os.write(self.lock_fd, pid_str.encode())
-            os.fsync(self.lock_fd)
-
-            # Register cleanup handlers
-            atexit.register(self.release)
-            signal.signal(signal.SIGTERM, self._signal_handler)
-            signal.signal(signal.SIGINT, self._signal_handler)
-
-            self.acquired = True
-            logger.info(f"✅ Process lock acquired (PID: {os.getpid()}, lock_file: {self.lock_file})")
-            logger.info(f"   flock is active - lock will auto-release if process dies")
-            return True
-
-        except Exception as e:
-            logger.error(f"❌ Unexpected error acquiring lock: {e}", exc_info=True)
-            if self.lock_fd is not None:
-                try:
-                    os.close(self.lock_fd)
-                except:
-                    pass
-                self.lock_fd = None
+            self._write_pid_file()
+        except Exception:
             return False
+
+        # Register cleanup handlers
+        atexit.register(self.release)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+        self.acquired = True
+        logger.info(f"✅ Process lock acquired (PID: {os.getpid()})")
+        return True
 
     def release(self):
         """Release the process lock"""
         if not self.acquired:
             return
 
-        try:
-            if self.lock_fd is not None:
-                # Release the lock
-                fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
-                os.close(self.lock_fd)
-
-                # Remove lock file
-                if os.path.exists(self.lock_file):
-                    os.remove(self.lock_file)
-
-                self.acquired = False
-                logger.info("✅ Process lock released")
-        except Exception as e:
-            logger.error(f"Error releasing lock: {e}")
+        self._remove_pid_file()
+        self.acquired = False
+        logger.info("✅ Process lock released")
 
     def _signal_handler(self, signum, frame):
         """Handle termination signals"""
         logger.info(f"Received signal {signum}, releasing lock and exiting...")
         self.release()
         sys.exit(0)
-
-    def check_stale_lock(self) -> bool:
-        """
-        Check if lock file exists but process is dead (stale lock).
-        Returns True if lock is stale and was removed.
-        """
-        if not os.path.exists(self.lock_file):
-            return False
-
-        try:
-            with open(self.lock_file, 'r') as f:
-                pid_str = f.read().strip()
-            
-            # ✅ CRITICAL FIX: Handle empty or invalid PID
-            if not pid_str or not pid_str.isdigit():
-                logger.warning(f"⚠️ Lock file is empty or invalid, removing...")
-                os.remove(self.lock_file)
-                return True
-
-            pid = int(pid_str)
-
-            # Check if process is still running
-            try:
-                os.kill(pid, 0)  # Signal 0 just checks if process exists
-                return False  # Process is still running
-            except OSError:
-                # Process is dead, remove stale lock
-                logger.warning(f"⚠️ Removing stale lock file (dead PID: {pid})")
-                os.remove(self.lock_file)
-                return True
-        except Exception as e:
-            logger.error(f"Error checking stale lock: {e}")
-            # If we can't read the lock file, try to remove it
-            try:
-                os.remove(self.lock_file)
-                logger.warning(f"⚠️ Removed unreadable lock file")
-                return True
-            except:
-                pass
-            return False
 
     def __enter__(self):
         """Context manager entry"""
@@ -175,40 +130,43 @@ class ProcessLock:
         self.release()
 
 
-def ensure_single_instance(lock_file: str = "/tmp/trading_bot.lock") -> ProcessLock:
-    """
-    Ensure only a single instance of the bot is running.
-    Exits the program if another instance is detected.
-    """
-    lock = ProcessLock(lock_file)
-
-    # Check for stale lock first
-    lock.check_stale_lock()
-
-    # Try to acquire lock
-    if not lock.acquire():
-        logger.error("🛑 Cannot start: Another instance of the trading bot is already running!")
-        logger.info("💡 To force start, run: rm /tmp/trading_bot.lock")
-        sys.exit(1)
-
-    return lock
-
-
 def check_running_instances() -> int:
-    """Check for running bot instances"""
-    import subprocess
+    """
+    Check for running bot instances using ps command.
+    More reliable than pgrep on macOS.
+    """
     try:
+        # Use ps to find all python processes running main.py
         result = subprocess.run(
-            ['pgrep', '-f', 'python.*main.py'],
+            ['ps', 'aux'],
             capture_output=True,
             text=True
         )
         if result.returncode == 0:
-            pids = result.stdout.strip().split('\n')
-            # Filter out empty strings and current process
-            current_pid = str(os.getpid())
-            pids = [p for p in pids if p and p != current_pid]
-            return len(pids)
+            lines = result.stdout.strip().split('\n')
+            current_pid = os.getpid()
+            count = 0
+            
+            for line in lines:
+                # Look for actual Python process running main.py
+                # Must contain "Python" (with capital P) and "main.py"
+                # Exclude shell commands (sh, bash, zsh)
+                if '/Python' in line and 'main.py' in line:
+                    # Also exclude if it's a shell command
+                    if '/bin/' in line and any(shell in line for shell in ['sh', 'bash', 'zsh']):
+                        continue
+                    
+                    # Extract PID (second column in ps aux output)
+                    parts = line.split()
+                    if len(parts) > 1:
+                        try:
+                            pid = int(parts[1])
+                            if pid != current_pid:
+                                count += 1
+                        except:
+                            pass
+            
+            return count
         return 0
     except Exception as e:
         logger.error(f"Error checking instances: {e}")
@@ -216,29 +174,35 @@ def check_running_instances() -> int:
 
 
 def kill_all_instances() -> int:
-    """Kill all running bot instances"""
-    import subprocess
+    """Kill all running bot instances except current one"""
     try:
-        # First get all PIDs
         result = subprocess.run(
-            ['pgrep', '-f', 'python.*main.py'],
+            ['ps', 'aux'],
             capture_output=True,
             text=True
         )
         if result.returncode == 0:
-            pids = result.stdout.strip().split('\n')
-            # Filter out current process
-            current_pid = str(os.getpid())
-            pids = [p for p in pids if p and p != current_pid]
-            
+            lines = result.stdout.strip().split('\n')
+            current_pid = os.getpid()
             killed = 0
-            for pid in pids:
-                try:
-                    os.kill(int(pid), signal.SIGTERM)
-                    killed += 1
-                    logger.info(f"Killed process {pid}")
-                except:
-                    pass
+            
+            for line in lines:
+                # Look for actual Python process running main.py
+                if '/Python' in line and 'main.py' in line:
+                    # Exclude shell commands
+                    if '/bin/' in line and any(shell in line for shell in ['sh', 'bash', 'zsh']):
+                        continue
+                    
+                    parts = line.split()
+                    if len(parts) > 1:
+                        try:
+                            pid = int(parts[1])
+                            if pid != current_pid:
+                                os.kill(pid, signal.SIGKILL)
+                                killed += 1
+                                logger.info(f"Killed process {pid}")
+                        except Exception as e:
+                            logger.warning(f"Failed to kill {pid}: {e}")
             
             return killed
         return 0

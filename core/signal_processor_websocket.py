@@ -7,10 +7,12 @@ import asyncio
 import os
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 
 from websocket.signal_client import SignalWebSocketClient
 from websocket.signal_adapter import SignalAdapter
 from core.wave_signal_processor import WaveSignalProcessor
+from models.validation import validate_signal, OrderSide
 
 logger = logging.getLogger(__name__)
 
@@ -230,17 +232,99 @@ class WebSocketSignalProcessor:
                     self.stats['waves_detected'] += 1
                     self.stats['current_wave'] = expected_wave_timestamp
                     
-                    # Process wave using WaveSignalProcessor
+                    # Calculate buffer size (signals already sorted by score_week)
+                    max_trades = self.wave_processor.max_trades_per_wave
+                    buffer_percent = self.wave_processor.buffer_percent
+                    buffer_size = int(max_trades * (1 + buffer_percent / 100))
+                    
+                    # Take only top signals with buffer
+                    signals_to_process = wave_signals[:buffer_size]
+                    
+                    logger.info(
+                        f"📊 Wave {expected_wave_timestamp}: {len(wave_signals)} total signals, "
+                        f"processing top {len(signals_to_process)} (max={max_trades} +{buffer_percent}% buffer)"
+                    )
+                    
+                    # Validate signals
                     result = await self.wave_processor.process_wave_signals(
-                        signals=wave_signals,
+                        signals=signals_to_process,
                         wave_timestamp=expected_wave_timestamp
                     )
                     
+                    # Get successful after validation
+                    final_signals = result.get('successful', [])
+                    
+                    # If not enough successful - try more from remaining
+                    if len(final_signals) < max_trades and len(wave_signals) > buffer_size:
+                        remaining_needed = max_trades - len(final_signals)
+                        extra_size = int(remaining_needed * 1.5)  # +50% для запаса
+                        
+                        logger.info(
+                            f"⚠️ Only {len(final_signals)}/{max_trades} successful, "
+                            f"processing {extra_size} more signals"
+                        )
+                        
+                        next_batch = wave_signals[buffer_size : buffer_size + extra_size]
+                        extra_result = await self.wave_processor.process_wave_signals(
+                            next_batch, 
+                            expected_wave_timestamp
+                        )
+                        extra_successful = extra_result.get('successful', [])
+                        final_signals.extend(extra_successful[:remaining_needed])
+                    
+                    # Final limit (just in case)
+                    final_signals = final_signals[:max_trades]
+                    
+                    logger.info(
+                        f"✅ Wave {expected_wave_timestamp} validated: "
+                        f"{len(final_signals)} signals ready for execution"
+                    )
+                    
+                    # EXECUTE: Open positions
+                    executed_count = 0
+                    failed_count = 0
+                    
+                    for idx, signal_result in enumerate(final_signals):
+                        if not self.running:
+                            break
+                        
+                        # Extract original signal
+                        signal = signal_result.get('signal_data')
+                        if not signal:
+                            logger.warning(f"Signal #{idx+1} has no signal_data, skipping")
+                            failed_count += 1
+                            continue
+                        
+                        symbol = signal.get('symbol', 'UNKNOWN')
+                        logger.info(f"📈 Executing signal {idx+1}/{len(final_signals)}: {symbol}")
+                        
+                        # Open position
+                        try:
+                            success = await self._execute_signal(signal)
+                            if success:
+                                executed_count += 1
+                                logger.info(f"✅ Signal {idx+1}/{len(final_signals)} ({symbol}) executed")
+                            else:
+                                failed_count += 1
+                                logger.warning(f"❌ Signal {idx+1}/{len(final_signals)} ({symbol}) failed")
+                        except Exception as e:
+                            failed_count += 1
+                            logger.error(f"❌ Error executing signal {symbol}: {e}", exc_info=True)
+                        
+                        # Delay between signals
+                        if idx < len(final_signals) - 1:
+                            await asyncio.sleep(1)
+                    
                     # Update stats
                     self.stats['waves_processed'] += 1
-                    self.stats['signals_processed'] += result.get('processed', 0)
+                    self.stats['signals_processed'] += executed_count
                     
-                    logger.info(f"✅ Wave {expected_wave_timestamp} processed successfully")
+                    logger.info(
+                        f"🎯 Wave {expected_wave_timestamp} complete: "
+                        f"{executed_count} positions opened, {failed_count} failed, "
+                        f"{len(result.get('failed', []))} validation errors, "
+                        f"{len(result.get('skipped', []))} duplicates"
+                    )
                 else:
                     logger.info(f"⚠️ No wave detected for timestamp {expected_wave_timestamp}")
                 
@@ -367,6 +451,94 @@ class WebSocketSignalProcessor:
     async def _on_ws_error(self, error):
         """Callback при ошибке WebSocket"""
         logger.error(f"❌ WebSocket error: {error}")
+    
+    async def _execute_signal(self, signal: Dict) -> bool:
+        """
+        Execute signal: validate and open position
+        Adapted from old signal_processor.py::_process_signal()
+        
+        Args:
+            signal: Signal dict with all necessary data
+            
+        Returns:
+            bool: True if position opened successfully, False otherwise
+        """
+        signal_id = signal.get('id', 'unknown')
+        
+        try:
+            # Check if action is present
+            if not signal.get('action'):
+                logger.warning(f"Signal #{signal_id} has no action field, skipping")
+                return False
+
+            # Validate signal data using pydantic
+            try:
+                validated_signal = validate_signal(signal)
+                if not validated_signal:
+                    logger.warning(f"Signal #{signal_id} failed validation")
+                    return False
+            except Exception as e:
+                logger.error(f"Error validating signal #{signal_id}: {e}")
+                return False
+            
+            symbol = validated_signal.symbol
+            exchange = validated_signal.exchange
+            
+            logger.info(
+                f"Executing signal #{signal_id}: {symbol} on {exchange} "
+                f"(week: {validated_signal.score_week}, month: {validated_signal.score_month})"
+            )
+
+            # Get exchange manager
+            exchange_manager = self.position_manager.exchanges.get(exchange)
+            if not exchange_manager:
+                logger.error(f"Exchange {exchange} not available")
+                return False
+
+            # Get current price
+            ticker = await exchange_manager.fetch_ticker(symbol)
+            if not ticker:
+                logger.error(f"Cannot get ticker for {symbol}")
+                return False
+
+            current_price = ticker.get('last', 0)
+            if current_price is None or current_price <= 0:
+                logger.error(f"Invalid price for {symbol}: {current_price}")
+                return False
+
+            # Determine side (PositionRequest expects 'BUY' or 'SELL')
+            if validated_signal.action in [OrderSide.BUY, OrderSide.LONG]:
+                side = 'BUY'
+            elif validated_signal.action in [OrderSide.SELL, OrderSide.SHORT]:
+                side = 'SELL'
+            else:
+                logger.error(f"Invalid signal action: {validated_signal.action}")
+                return False
+            
+            # Create position request (dataclass from position_manager)
+            from core.position_manager import PositionRequest
+            
+            request = PositionRequest(
+                signal_id=signal_id,
+                symbol=validated_signal.symbol,
+                exchange=validated_signal.exchange,
+                side=side,
+                entry_price=Decimal(str(current_price))
+            )
+
+            # Execute position opening
+            position = await self.position_manager.open_position(request)
+
+            if position:
+                logger.info(f"✅ Signal #{signal_id} ({symbol}) executed successfully")
+                return True
+            else:
+                logger.warning(f"❌ Signal #{signal_id} ({symbol}) - position_manager returned None")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Error executing signal #{signal_id}: {e}", exc_info=True)
+            return False
     
     def get_stats(self) -> Dict:
         """Get processor statistics"""
