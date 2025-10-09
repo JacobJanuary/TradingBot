@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import dataclass
 
+from utils.decimal_utils import safe_decimal
+
 logger = logging.getLogger(__name__)
 
 
@@ -172,8 +174,8 @@ class EnhancedZombieOrderManager:
         order_type = order.get('type', '').lower()
         order_status = order.get('status', '').lower()
         side = order.get('side', '')
-        amount = float(order.get('amount', 0))
-        price = float(order.get('price', 0))
+        amount = float(safe_decimal(order.get('amount', 0), field_name='order_amount'))
+        price = float(safe_decimal(order.get('price', 0), field_name='order_price'))
 
         # Skip already completed orders
         if order_status in ['closed', 'canceled', 'filled', 'rejected', 'expired']:
