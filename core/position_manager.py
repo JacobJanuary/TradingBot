@@ -117,6 +117,71 @@ class PositionState:
     pending_close_order: Optional[Dict] = None
 
 
+# ============================================================
+# REFACTORING DATACLASSES - Phase 3.2
+# ============================================================
+
+@dataclass
+class LockInfo:
+    """
+    Information about acquired locks for position opening.
+    Used by _validate_signal_and_locks() helper method.
+    """
+    can_proceed: bool
+    lock_key: str
+    position_lock: Optional[asyncio.Lock] = None
+    db_lock_acquired: bool = False
+    exchange: Optional[ExchangeManager] = None
+    reason: Optional[str] = None  # Why can't proceed
+
+    # References for cleanup (will be set by manager)
+    _repository: Optional['TradingRepository'] = None
+    _position_locks_set: Optional[set] = None
+    _symbol: Optional[str] = None
+    _exchange_name: Optional[str] = None
+
+    async def release(self):
+        """Release all acquired locks"""
+        if self.db_lock_acquired and self._repository and self._symbol and self._exchange_name:
+            try:
+                await self._repository.release_position_lock(self._symbol, self._exchange_name)
+                logger.debug(f"🔓 Released DB advisory lock for {self._symbol}")
+            except Exception as e:
+                logger.error(f"Failed to release DB lock for {self._symbol}: {e}")
+
+        if self._position_locks_set and self.lock_key:
+            self._position_locks_set.discard(self.lock_key)
+            logger.debug(f"🔓 Released position opening lock (completed)")
+
+
+@dataclass
+class ValidationResult:
+    """
+    Result of market and risk validation.
+    Used by _validate_market_and_risk() helper method.
+    """
+    passed: bool
+    market_info: Optional[Dict] = None
+    reason: Optional[str] = None
+
+
+@dataclass
+class OrderParams:
+    """
+    Parameters for order execution.
+    Used by _prepare_order_params() helper method.
+    """
+    quantity: Decimal
+    leverage: int
+    position_size_usd: Decimal
+    stop_loss_percent: Decimal
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if order parameters are valid"""
+        return self.quantity > 0
+
+
 class PositionManager:
     """
     Central position management system
@@ -505,394 +570,682 @@ class PositionManager:
     async def open_position(self, request: PositionRequest) -> Optional[PositionState]:
         """
         Open new position with complete workflow and race condition protection.
-        
-        STEPS:
-        1. Acquire asyncio Lock (prevents race conditions within same process)
-        2. Acquire PostgreSQL advisory lock (cross-process protection)
-        3. Get exchange instance
-        4. Check if position already exists (protected by locks)
-        5. Validate risk limits
-        6. Calculate position size
-        7. Validate spread
-        8. Execute market order
-        9. Create position state
-        10. Save to database (trade + position records)
-        11. Set stop loss
-        12. Initialize trailing stop
-        13. Update internal tracking
-        
+
+        REFACTORED (Phase 3.2): Now uses helper methods for better maintainability.
+
+        WORKFLOW (delegated to helpers):
+        1. _validate_signal_and_locks() - Lock acquisition + duplicate checks
+        2. _validate_market_and_risk() - Market + risk validation
+        3. _prepare_order_params() - Position sizing + balance + leverage
+        4. _execute_and_verify_order() - Order execution + verification
+        5. _create_position_with_sl() - Position state + stop loss
+        6. _save_position_to_db() - DB save + trailing stop + tracking
+
         RACE CONDITION PROTECTION (2 layers):
         - ✅ asyncio.Lock: Prevents multiple async tasks from opening same position
         - PostgreSQL advisory lock prevents duplicate positions across bot instances
         - In-memory lock protects against concurrent calls within same process
-        - All locks are released in finally block
-        
+        - All locks are released via LockInfo.release()
+
         Args:
             request: PositionRequest with symbol, exchange, side, etc.
-            
+
         Returns:
             PositionState if successful, None otherwise
         """
 
+        # PHASE 1: Validate signal and acquire all locks
+        lock_info = await self._validate_signal_and_locks(request)
+        if not lock_info.can_proceed:
+            logger.debug(f"Cannot proceed with {request.symbol}: {lock_info.reason}")
+            return None
+
+        try:
+            # PHASE 2: Validate market and risk
+            validation = await self._validate_market_and_risk(request, lock_info.exchange)
+            if not validation.passed:
+                await lock_info.release()
+                return None
+
+            # PHASE 3: Prepare order parameters
+            order_params = await self._prepare_order_params(
+                request, lock_info.exchange, validation.market_info
+            )
+            if not order_params:
+                await lock_info.release()
+                return None
+
+            # PHASE 4: Execute and verify order
+            order = await self._execute_and_verify_order(
+                lock_info.exchange, request, order_params
+            )
+            if not order:
+                await lock_info.release()
+                return None
+
+            # PHASE 5: Create position + set stop loss
+            position, sl_order_id = await self._create_position_with_sl(
+                request, order, order_params, lock_info.exchange
+            )
+            if not position:
+                # Compensating transaction: SL failed, close position on exchange
+                logger.error(f"❌ Stop loss creation failed for {request.symbol}, executing compensating transaction...")
+                await self._compensate_failed_sl(lock_info.exchange, position, order)
+                await lock_info.release()
+                return None
+
+            # PHASE 6: Save to DB + trailing stop + tracking
+            try:
+                await self._save_position_to_db(
+                    position, lock_info.exchange, order, sl_order_id, order_params, request
+                )
+            except Exception as db_error:
+                # Compensating transaction: DB save failed, close position and cancel SL
+                logger.error(f"❌ Database save failed for {request.symbol}, executing compensating transaction...")
+                await self._compensate_failed_db_save(lock_info.exchange, position, order, sl_order_id)
+                await lock_info.release()
+                raise db_error
+
+            # Success! Return position
+            await lock_info.release()
+            return position
+
+        except Exception as e:
+            logger.error(f"Error opening position for {request.symbol}: {e}", exc_info=True)
+            await lock_info.release()
+            return None
+
+    # ============================================================
+    # REFACTORING HELPER METHODS - Phase 3.2
+    # ============================================================
+
+    async def _validate_signal_and_locks(self, request: PositionRequest) -> LockInfo:
+        """
+        Phase 3.2 Helper: Acquire locks and check for duplicates.
+
+        Steps:
+        1. Acquire asyncio Lock (meta-lock → per-symbol lock)
+        2. Check in-memory cache
+        3. Check DB for existing position
+        4. Acquire PostgreSQL advisory lock
+        5. Get exchange instance
+        6. Final check: position doesn't exist
+
+        Returns:
+            LockInfo with can_proceed=True/False and all lock references
+        """
         symbol = request.symbol
         exchange_name = request.exchange.lower()
-        db_lock_acquired = False
-
-        # ✅ CRITICAL FIX: Acquire asyncio Lock to prevent race condition
-        # Use meta-lock to safely create per-symbol lock
         lock_key = f"{exchange_name}_{symbol}"
+        db_lock_acquired = False
+        position_lock = None
+
+        # Step 1: Acquire asyncio Lock
         async with self._position_opening_locks_lock:
             if lock_key not in self._position_opening_locks:
                 self._position_opening_locks[lock_key] = asyncio.Lock()
             position_lock = self._position_opening_locks[lock_key]
-        
-        # ✅ CRITICAL FIX: Hold lock for ENTIRE position creation process
-        async with position_lock:
-            logger.debug(f"🔒 Acquired position opening lock for {symbol}")
-            
-            # ✅ CRITICAL: Check in-memory cache FIRST to prevent race condition with DB lag
+
+        # Acquire the actual position lock
+        await position_lock.acquire()
+        logger.debug(f"🔒 Acquired position opening lock for {symbol}")
+
+        try:
+            # Step 2: Check in-memory cache
             if self._position_cache.get(lock_key, False):
                 logger.warning(f"📌 Position {symbol} already marked as opened (cache), skipping duplicate")
                 logger.debug(f"🔓 Released position opening lock for {symbol} (cache hit)")
-                return None
-            
-            # ✅ CRITICAL: Check if position already exists in DB (atomic check under lock)
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Already in cache"
+                )
+
+            # Step 3: Check DB for existing position
             existing_position = await self.repository.get_open_position(symbol, exchange_name)
             if existing_position:
                 logger.warning(f"Position for {symbol} already exists (ID: {existing_position.get('id')}), skipping duplicate")
-                self._position_cache[lock_key] = True  # Update cache
+                self._position_cache[lock_key] = True
                 logger.debug(f"🔓 Released position opening lock for {symbol} (already exists)")
-                return None
-            
-            # Check if already being processed (fast check with set)
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Already exists in DB"
+                )
+
+            # Check if already being processed
             if lock_key in self.position_locks:
                 logger.warning(f"Position already being processed for {symbol} (in-memory lock)")
                 logger.debug(f"🔓 Released position opening lock for {symbol} (already processing)")
-                return None
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Already being processed"
+                )
 
+            # Mark as being processed
             self.position_locks.add(lock_key)
-            
-            # ✅ CRITICAL: Mark in cache to prevent duplicate position from concurrent tasks
             self._position_cache[lock_key] = True
             logger.debug(f"✅ Position opening lock held - proceeding with creation (cache updated)")
 
-            try:
-                # 1. Acquire PostgreSQL advisory lock (protects across processes)
-                db_lock_acquired = await self.repository.acquire_position_lock(symbol, exchange_name)
-                if not db_lock_acquired:
-                    logger.warning(
-                        f"Could not acquire database lock for {symbol} on {exchange_name}. "
-                        f"Position may be in process by another bot instance."
-                    )
-                    return None
-                
-                logger.debug(f"✅ Acquired DB advisory lock for {symbol}")
-
-                # 2. Get exchange
-                exchange = self.exchanges.get(exchange_name)
-                if not exchange:
-                    logger.error(f"Exchange {exchange_name} not available")
-                    return None
-
-                # 3. Check if position already exists (now protected by DB lock)
-                if await self._position_exists(symbol, exchange_name):
-                    logger.warning(f"Position already exists for {symbol} on {exchange_name}")
-                    return None
-
-                # 4. Validate risk limits
-                if not await self._validate_risk_limits(request):
-                    logger.warning(f"Risk limits exceeded for {symbol}")
-                    return None
-
-                # 5. Validate symbol exists on exchange
-                # CRITICAL: Check if symbol is available for trading before attempting order
-                if not exchange.has_market(symbol):
-                    logger.error(
-                        f"❌ Symbol {symbol} not available on {exchange_name}. "
-                        f"Symbol may be delisted, not supported, or invalid."
-                    )
-                    return None
-                
-                # Additional check: verify market is active
-                market_info = exchange.get_market_info(symbol)
-                
-                # ✅ CRITICAL FIX: Handle missing market_info
-                if not market_info:
-                    logger.error(
-                        f"❌ Cannot open position for {symbol} on {exchange_name}: market_info unavailable. "
-                        f"Symbol may be delisted or markets not loaded. Skipping to avoid blind trading."
-                    )
-                    return None
-                
-                if market_info.get('active') is False:
-                    logger.error(
-                        f"❌ Symbol {symbol} is not active on {exchange_name}. "
-                        f"Market status: {market_info.get('info', {}).get('status', 'unknown')}"
-                    )
-                    return None
-
-                # 6. Calculate position size
-                position_size_usd = request.position_size_usd or self.config.position_size_usd
-                quantity = await self._calculate_position_size(
-                    exchange, symbol, request.entry_price, position_size_usd
+            # Step 4: Acquire PostgreSQL advisory lock
+            db_lock_acquired = await self.repository.acquire_position_lock(symbol, exchange_name)
+            if not db_lock_acquired:
+                logger.warning(
+                    f"Could not acquire database lock for {symbol} on {exchange_name}. "
+                    f"Position may be in process by another bot instance."
+                )
+                self.position_locks.discard(lock_key)
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Could not acquire DB lock"
                 )
 
-                if not quantity:
-                    logger.error(f"Failed to calculate position size for {symbol}")
-                    return None
+            logger.debug(f"✅ Acquired DB advisory lock for {symbol}")
 
-                # 6.1. Check available balance BEFORE attempting to open position
-                # CRITICAL: Prevents failed order attempts and allows continuing with other exchanges
-                has_balance = await self.balance_checker.has_sufficient_balance(
-                    exchange_name=exchange_name,
-                    required_usd=to_decimal(position_size_usd)
+            # Step 5: Get exchange
+            exchange = self.exchanges.get(exchange_name)
+            if not exchange:
+                logger.error(f"Exchange {exchange_name} not available")
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=position_lock,
+                    db_lock_acquired=db_lock_acquired,
+                    exchange=None,
+                    reason="Exchange not available",
+                    _repository=self.repository,
+                    _position_locks_set=self.position_locks,
+                    _symbol=symbol,
+                    _exchange_name=exchange_name
                 )
-                
-                if not has_balance:
-                    logger.warning(
-                        f"⏸️ Skipping {symbol} on {exchange_name}: insufficient funds. "
-                        f"Required: {position_size_usd} USDT. "
-                        f"Position will be attempted when funds become available."
-                    )
-                    return None
 
-                # 6.2. Validate spread (временно только логирование)
-                await self._validate_spread(exchange, symbol)
-                # Не блокируем открытие позиций из-за спреда
+            # Step 6: Final check - position doesn't exist
+            if await self._position_exists(symbol, exchange_name):
+                logger.warning(f"Position already exists for {symbol} on {exchange_name}")
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=position_lock,
+                    db_lock_acquired=db_lock_acquired,
+                    exchange=exchange,
+                    reason="Position already exists (final check)",
+                    _repository=self.repository,
+                    _position_locks_set=self.position_locks,
+                    _symbol=symbol,
+                    _exchange_name=exchange_name
+                )
 
-                # 6.3. Set leverage before opening position
-                # ✅ CRITICAL FIX: Calculate notional and use smart leverage selection
-                leverage = self.config.leverage
-                notional = float(quantity) * float(request.entry_price)
-                
-                # Smart leverage selection based on notional and brackets
-                await exchange.set_leverage(symbol, leverage, notional=notional)
+            # All checks passed!
+            return LockInfo(
+                can_proceed=True,
+                lock_key=lock_key,
+                position_lock=position_lock,
+                db_lock_acquired=db_lock_acquired,
+                exchange=exchange,
+                reason=None,
+                _repository=self.repository,
+                _position_locks_set=self.position_locks,
+                _symbol=symbol,
+                _exchange_name=exchange_name
+            )
 
-                # 7. FINAL CHECK: Verify position doesn't exist on exchange RIGHT BEFORE order creation
-                # This is the last line of defense against race conditions
-                logger.debug(f"🔍 Final check: verifying {symbol} doesn't exist on exchange...")
-                try:
-                    exchange_positions = await exchange.fetch_positions()
-                    normalized_symbol = symbol.replace('/', '').replace(':USDT', '')
-                    
-                    for pos in exchange_positions:
-                        pos_symbol = pos.get('symbol', '').replace('/', '').replace(':USDT', '')
-                        contracts = abs(float(pos.get('contracts', 0)))
-                        
-                        if pos_symbol == normalized_symbol and contracts > 0:
-                            logger.error(
-                                f"🚨 CRITICAL: Position {symbol} already exists on exchange with {contracts} contracts! "
-                                f"Aborting order creation to prevent duplicate."
-                            )
-                            return None
-                    
-                    logger.debug(f"✅ Final check passed: {symbol} not found on exchange")
-                except Exception as e:
-                    logger.warning(f"Could not perform final exchange check for {symbol}: {e}")
-                    # Continue anyway - other checks should catch duplicates
+        except Exception as e:
+            logger.error(f"Error in _validate_signal_and_locks: {e}")
+            # Release lock on error
+            if position_lock and position_lock.locked():
+                position_lock.release()
+            return LockInfo(
+                can_proceed=False,
+                lock_key=lock_key,
+                position_lock=None,
+                db_lock_acquired=db_lock_acquired,
+                exchange=None,
+                reason=f"Exception: {e}",
+                _repository=self.repository,
+                _position_locks_set=self.position_locks,
+                _symbol=symbol,
+                _exchange_name=exchange_name
+            )
 
-                # 8. Execute market order
-                logger.info(f"Opening position: {symbol} {request.side} {quantity}")
+    async def _validate_market_and_risk(
+        self,
+        request: PositionRequest,
+        exchange: ExchangeManager
+    ) -> ValidationResult:
+        """
+        Phase 3.2 Helper: Validate market availability and risk limits.
 
-                # Convert side: long -> buy, short -> sell for Binance
-                if request.side.lower() == 'long':
-                    order_side = 'buy'
-                elif request.side.lower() == 'short':
-                    order_side = 'sell'
-                else:
-                    order_side = request.side.lower()
+        Steps:
+        1. Validate risk limits
+        2. Validate symbol exists on exchange
+        3. Get and validate market_info
+        4. Check market is active
 
-                order = await exchange.create_market_order(symbol, order_side, quantity)
+        Returns:
+            ValidationResult with passed=True/False and market_info
+        """
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
 
-                if not order:
-                    # ✅ FIX: Enhanced logging for diagnostics
+        # Step 1: Validate risk limits
+        if not await self._validate_risk_limits(request):
+            logger.warning(f"Risk limits exceeded for {symbol}")
+            return ValidationResult(
+                passed=False,
+                market_info=None,
+                reason="Risk limits exceeded"
+            )
+
+        # Step 2: Validate symbol exists on exchange
+        if not exchange.has_market(symbol):
+            logger.error(
+                f"❌ Symbol {symbol} not available on {exchange_name}. "
+                f"Symbol may be delisted, not supported, or invalid."
+            )
+            return ValidationResult(
+                passed=False,
+                market_info=None,
+                reason="Symbol not available on exchange"
+            )
+
+        # Step 3: Get market_info
+        market_info = exchange.get_market_info(symbol)
+
+        if not market_info:
+            logger.error(
+                f"❌ Cannot open position for {symbol} on {exchange_name}: market_info unavailable. "
+                f"Symbol may be delisted or markets not loaded. Skipping to avoid blind trading."
+            )
+            return ValidationResult(
+                passed=False,
+                market_info=None,
+                reason="market_info unavailable"
+            )
+
+        # Step 4: Check market is active
+        if market_info.get('active') is False:
+            logger.error(
+                f"❌ Symbol {symbol} is not active on {exchange_name}. "
+                f"Market status: {market_info.get('info', {}).get('status', 'unknown')}"
+            )
+            return ValidationResult(
+                passed=False,
+                market_info=market_info,
+                reason="Market not active"
+            )
+
+        # All validations passed
+        return ValidationResult(
+            passed=True,
+            market_info=market_info,
+            reason=None
+        )
+
+    async def _prepare_order_params(
+        self,
+        request: PositionRequest,
+        exchange: ExchangeManager,
+        market_info: Dict
+    ) -> Optional[OrderParams]:
+        """
+        Phase 3.2 Helper: Calculate position size, validate balance, set leverage.
+
+        Steps:
+        1. Calculate position size
+        2. Check available balance
+        3. Validate spread (log only, don't block)
+        4. Set leverage
+
+        Returns:
+            OrderParams or None if validation fails
+        """
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
+
+        # Step 1: Calculate position size
+        position_size_usd = request.position_size_usd or self.config.position_size_usd
+        quantity = await self._calculate_position_size(
+            exchange, symbol, request.entry_price, position_size_usd
+        )
+
+        if not quantity:
+            logger.error(f"Failed to calculate position size for {symbol}")
+            return None
+
+        # Step 2: Check available balance
+        has_balance = await self.balance_checker.has_sufficient_balance(
+            exchange_name=exchange_name,
+            required_usd=to_decimal(position_size_usd)
+        )
+
+        if not has_balance:
+            logger.warning(
+                f"⏸️ Skipping {symbol} on {exchange_name}: insufficient funds. "
+                f"Required: {position_size_usd} USDT. "
+                f"Position will be attempted when funds become available."
+            )
+            return None
+
+        # Step 3: Validate spread (log only, don't block)
+        await self._validate_spread(exchange, symbol)
+
+        # Step 4: Set leverage
+        leverage = self.config.leverage
+        notional = float(quantity) * float(request.entry_price)
+
+        # Smart leverage selection based on notional and brackets
+        await exchange.set_leverage(symbol, leverage, notional=notional)
+
+        # Get stop loss percent
+        stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+
+        # Return order parameters
+        return OrderParams(
+            quantity=to_decimal(quantity),
+            leverage=leverage,
+            position_size_usd=to_decimal(position_size_usd),
+            stop_loss_percent=to_decimal(stop_loss_percent)
+        )
+
+    async def _execute_and_verify_order(
+        self,
+        exchange: ExchangeManager,
+        request: PositionRequest,
+        params: OrderParams
+    ):
+        """
+        Phase 3.2 Helper: Execute market order and verify fill.
+
+        Steps:
+        1. Final check: position doesn't exist on exchange
+        2. Execute market order
+        3. Validate order object
+        4. Verify order fill (with retry)
+        5. Final safety checks
+
+        Returns:
+            Order object or None
+        """
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
+        quantity = params.quantity
+
+        # Step 1: Final check - position doesn't exist on exchange
+        logger.debug(f"🔍 Final check: verifying {symbol} doesn't exist on exchange...")
+        try:
+            exchange_positions = await exchange.fetch_positions()
+            normalized_symbol = symbol.replace('/', '').replace(':USDT', '')
+
+            for pos in exchange_positions:
+                pos_symbol = pos.get('symbol', '').replace('/', '').replace(':USDT', '')
+                contracts = abs(float(pos.get('contracts', 0)))
+
+                if pos_symbol == normalized_symbol and contracts > 0:
                     logger.error(
-                        f"❌ Failed to create order for {symbol}:\n"
-                        f"   Exchange: {exchange_name}\n"
-                        f"   Side: {order_side}\n"
-                        f"   Quantity: {quantity}\n"
-                        f"   Market active: {market_info.get('active')}\n"
-                        f"   Likely cause: Testnet instability or symbol unavailable"
-                    )
-                    return None
-                
-                # ✅ FIX: Additional safety check for order object validity
-                if not hasattr(order, 'filled'):
-                    logger.error(
-                        f"❌ Order object is invalid for {symbol}: "
-                        f"missing 'filled' attribute. Order type: {type(order)}"
+                        f"🚨 CRITICAL: Position {symbol} already exists on exchange with {contracts} contracts! "
+                        f"Aborting order creation to prevent duplicate."
                     )
                     return None
 
-                # ✅ FREQTRADE-STYLE: Verify order fill with retry and fallbacks
-                # This replaces old Bybit/Binance specific logic with unified approach
-                if not order.filled or order.filled == 0:
-                    logger.info(f"Order created but fill status unknown, verifying with retry logic...")
-                    verified_order = await self._verify_order_filled(
-                        exchange, 
-                        order.id, 
-                        symbol, 
-                        exchange_name
-                    )
-                    
-                    if verified_order:
-                        order = verified_order
-                    else:
-                        # ✅ COMPENSATING: Order not filled after retries, don't proceed
-                        logger.error(
-                            f"❌ Order {order.id} not filled after verification retries. "
-                            f"Position will NOT be saved to database."
-                        )
-                        return None
-                
-                # Final safety checks for all exchanges
-                if not order.filled or order.filled <= 0:
-                    logger.error(f"Invalid order filled quantity for {symbol}: {order.filled}")
-                    return None
-                
-                if not order.price or order.price <= 0:
-                    logger.error(f"Invalid order price for {symbol}: {order.price}")
-                    return None
+            logger.debug(f"✅ Final check passed: {symbol} not found on exchange")
+        except Exception as e:
+            logger.warning(f"Could not perform final exchange check for {symbol}: {e}")
+            # Continue anyway - other checks should catch duplicates
 
-                # 9. Create position state (but DON'T save to DB yet!)
-                position = PositionState(
-                id=None,  # Will be set after DB insert
-                symbol=symbol,
-                exchange=exchange_name,
-                side=request.side.lower(),  # Use request.side directly (already 'long' or 'short')
-                quantity=order.filled,
-                entry_price=order.price,
-                current_price=order.price,
-                unrealized_pnl=0,
-                unrealized_pnl_percent=0,
-                opened_at=datetime.now(timezone.utc)
+        # Step 2: Execute market order
+        logger.info(f"Opening position: {symbol} {request.side} {quantity}")
+
+        # Convert side: long -> buy, short -> sell
+        if request.side.lower() == 'long':
+            order_side = 'buy'
+        elif request.side.lower() == 'short':
+            order_side = 'sell'
+        else:
+            order_side = request.side.lower()
+
+        order = await exchange.create_market_order(symbol, order_side, quantity)
+
+        if not order:
+            logger.error(
+                f"❌ Failed to create order for {symbol}:\n"
+                f"   Exchange: {exchange_name}\n"
+                f"   Side: {order_side}\n"
+                f"   Quantity: {quantity}\n"
+                f"   Likely cause: Testnet instability or symbol unavailable"
+            )
+            return None
+
+        # Step 3: Validate order object
+        if not hasattr(order, 'filled'):
+            logger.error(
+                f"❌ Order object is invalid for {symbol}: "
+                f"missing 'filled' attribute. Order type: {type(order)}"
+            )
+            return None
+
+        # Step 4: Verify order fill (with retry)
+        if not order.filled or order.filled == 0:
+            logger.info(f"Order created but fill status unknown, verifying with retry logic...")
+            verified_order = await self._verify_order_filled(
+                exchange,
+                order.id,
+                symbol,
+                exchange_name
+            )
+
+            if verified_order:
+                order = verified_order
+            else:
+                logger.error(
+                    f"❌ Order {order.id} not filled after verification retries. "
+                    f"Position will NOT be saved to database."
                 )
+                return None
 
-                # 10. Set stop loss BEFORE saving to database (Freqtrade-style)
-                # ✅ COMPENSATING TRANSACTIONS: If SL fails, we don't save position to DB
-                stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
-                stop_loss_price = calculate_stop_loss(
-                to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
-                )
-                
-                logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
+        # Step 5: Final safety checks
+        if not order.filled or order.filled <= 0:
+            logger.error(f"Invalid order filled quantity for {symbol}: {order.filled}")
+            return None
 
-                sl_success, sl_order_id = await self._set_stop_loss(exchange, position, stop_loss_price)
-                
-                if not sl_success:
-                    # ✅ COMPENSATING TRANSACTION: SL failed, close position on exchange
-                    logger.error(f"❌ Stop loss creation failed for {symbol}, executing compensating transaction...")
-                    await self._compensate_failed_sl(exchange, position, order)
-                    return None
-                
-                # SL created successfully
-                position.has_stop_loss = True
-                position.stop_loss_price = stop_loss_price
-                logger.info(f"✅ Stop loss confirmed for {symbol}, order_id={sl_order_id}")
+        if not order.price or order.price <= 0:
+            logger.error(f"Invalid order price for {symbol}: {order.price}")
+            return None
 
-                # 11. NOW save to database (after SL is confirmed)
-                # ✅ FREQTRADE ORDER: create_order() → check_filled() → set_stop_loss() → save_to_db()
-                try:
-                    trade_id = await self.repository.create_trade({
-                        'signal_id': request.signal_id,
-                        'symbol': symbol,
-                        'exchange': exchange_name,
-                        'side': order_side,
-                        'quantity': order.amount,
-                        'price': order.price,
-                        'executed_qty': order.filled,
-                        'average_price': order.price,
-                        'order_id': order.id,
-                        'status': 'FILLED'
-                    })
+        # Order successfully executed and verified
+        return order
 
-                    position_id = await self.repository.create_position({
-                        'trade_id': trade_id,
-                        'symbol': symbol,
-                        'exchange': exchange_name,
-                        'side': position.side,
-                        'quantity': position.quantity,
-                        'entry_price': position.entry_price,
-                        'leverage': leverage  # CRITICAL: Save leverage to database
-                    })
+    async def _create_position_with_sl(
+        self,
+        request: PositionRequest,
+        order,
+        params: OrderParams,
+        exchange: ExchangeManager
+    ) -> Tuple[Optional[PositionState], Optional[str]]:
+        """
+        Phase 3.2 Helper: Create position state and set stop loss.
 
-                    position.id = position_id
-                    logger.info(f"💾 Position saved to database with ID: {position.id}")
+        Steps:
+        1. Create PositionState object
+        2. Calculate stop loss price
+        3. Set stop loss on exchange
+        4. Update position with SL info
 
-                    # Update SL in database
-                    await self.repository.update_position_stop_loss(
-                        position_id, stop_loss_price, ""
-                    )
-                    logger.info(f"✅ Stop Loss status updated in DB for {symbol}: has_stop_loss=TRUE")
+        Returns:
+            Tuple[Optional[PositionState], Optional[str]]: (position, sl_order_id)
+            Returns (None, None) if SL creation fails
+        """
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
 
-                except Exception as db_error:
-                    # ✅ COMPENSATING TRANSACTION: DB save failed, close position and cancel SL
-                    logger.error(f"❌ Database save failed for {symbol}, executing compensating transaction...")
-                    await self._compensate_failed_db_save(exchange, position, order, sl_order_id)
-                    raise db_error
+        # Step 1: Create position state
+        position = PositionState(
+            id=None,  # Will be set after DB insert
+            symbol=symbol,
+            exchange=exchange_name,
+            side=request.side.lower(),
+            quantity=order.filled,
+            entry_price=order.price,
+            current_price=order.price,
+            unrealized_pnl=0,
+            unrealized_pnl_percent=0,
+            opened_at=datetime.now(timezone.utc)
+        )
 
-                # 12. Initialize trailing stop WITH stop_order_id
-                trailing_manager = self.trailing_managers.get(exchange_name)
-                if trailing_manager:
-                    await trailing_manager.create_trailing_stop(
-                        symbol=symbol,
-                        side=position.side,
-                        entry_price=position.entry_price,
-                        quantity=position.quantity,
-                        initial_stop=stop_loss_price,
-                        stop_order_id=sl_order_id  # ✅ ПЕРЕДАЁМ ID ОРДЕРА!
-                    )
-                    position.has_trailing_stop = True
-                    
-                    # ✅ FIX: Update trailing stop status in DB
-                    await self.repository.update_position_trailing_stop(
-                        position_id=position.id,
-                        has_trailing_stop=True
-                    )
+        # Step 2: Calculate stop loss price
+        stop_loss_price = calculate_stop_loss(
+            to_decimal(position.entry_price),
+            position.side,
+            params.stop_loss_percent
+        )
 
-                # 13. Update internal tracking
-                self.positions[symbol] = position
-                self.position_count += 1
-                self.total_exposure += Decimal(str(position.quantity * position.entry_price))
-                self.stats['positions_opened'] += 1
+        logger.info(f"Setting stop loss for {symbol}: {params.stop_loss_percent}% at ${stop_loss_price:.4f}")
 
-                logger.info(
-                f"✅ Position opened: {symbol} {position.side} "
-                f"{position.quantity:.6f} @ ${position.entry_price:.4f}"
-                )
-                
-                # CRITICAL: Invalidate balance cache so spent funds are reflected immediately
-                # This prevents opening too many positions in quick succession
-                self.balance_checker.invalidate_cache(exchange_name)
-                logger.debug(f"✅ Invalidated balance cache for {exchange_name} (funds spent)")
-                
-                # ✅ CRITICAL: Emit position_opened event for dynamic WebSocket subscription
-                await self.event_router.emit('position_opened', {
+        # Step 3: Set stop loss on exchange
+        sl_success, sl_order_id = await self._set_stop_loss(exchange, position, stop_loss_price)
+
+        if not sl_success:
+            logger.error(f"❌ Stop loss creation failed for {symbol}")
+            return None, None
+
+        # Step 4: Update position with SL info
+        position.has_stop_loss = True
+        position.stop_loss_price = stop_loss_price
+        logger.info(f"✅ Stop loss confirmed for {symbol}, order_id={sl_order_id}")
+
+        return position, sl_order_id
+
+    async def _save_position_to_db(
+        self,
+        position: PositionState,
+        exchange: ExchangeManager,
+        order,
+        sl_order_id: str,
+        params: OrderParams,
+        request: PositionRequest
+    ) -> None:
+        """
+        Phase 3.2 Helper: Save to DB, initialize trailing stop, update tracking.
+
+        Steps:
+        1. Create trade record
+        2. Create position record
+        3. Update SL status in DB
+        4. Initialize trailing stop
+        5. Update internal tracking
+        6. Invalidate balance cache
+        7. Emit position_opened event
+
+        Raises:
+            Exception on DB save failure (caller must handle compensating transaction)
+        """
+        symbol = position.symbol
+        exchange_name = position.exchange
+
+        # Convert side for order
+        order_side = 'buy' if position.side == 'long' else 'sell'
+
+        # Step 1 & 2: Save to database
+        try:
+            trade_id = await self.repository.create_trade({
+                'signal_id': request.signal_id,
+                'symbol': symbol,
+                'exchange': exchange_name,
+                'side': order_side,
+                'quantity': order.amount,
+                'price': order.price,
+                'executed_qty': order.filled,
+                'average_price': order.price,
+                'order_id': order.id,
+                'status': 'FILLED'
+            })
+
+            position_id = await self.repository.create_position({
+                'trade_id': trade_id,
                 'symbol': symbol,
                 'exchange': exchange_name,
                 'side': position.side,
                 'quantity': position.quantity,
-                'entry_price': position.entry_price
-                })
+                'entry_price': position.entry_price,
+                'leverage': params.leverage
+            })
 
-                return position
+            position.id = position_id
+            logger.info(f"💾 Position saved to database with ID: {position.id}")
 
-            except Exception as e:
-                logger.error(f"Error opening position for {symbol}: {e}", exc_info=True)
-                return None
+            # Step 3: Update SL in database
+            await self.repository.update_position_stop_loss(
+                position_id, position.stop_loss_price, ""
+            )
+            logger.info(f"✅ Stop Loss status updated in DB for {symbol}: has_stop_loss=TRUE")
 
-            finally:
-                # Release PostgreSQL advisory lock
-                if db_lock_acquired:
-                    try:
-                        await self.repository.release_position_lock(symbol, exchange_name)
-                        logger.debug(f"🔓 Released DB advisory lock for {symbol}")
-                    except Exception as lock_error:
-                        logger.error(f"Failed to release DB lock for {symbol}: {lock_error}")
-                
-                # Release in-memory lock
-            self.position_locks.discard(lock_key)
-            logger.debug(f"🔓 Released position opening lock for {symbol} (completed)")
+        except Exception as db_error:
+            # CRITICAL: Let caller handle compensating transaction
+            logger.error(f"❌ Database save failed for {symbol}")
+            raise db_error
+
+        # Step 4: Initialize trailing stop
+        trailing_manager = self.trailing_managers.get(exchange_name)
+        if trailing_manager:
+            await trailing_manager.create_trailing_stop(
+                symbol=symbol,
+                side=position.side,
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                initial_stop=position.stop_loss_price,
+                stop_order_id=sl_order_id
+            )
+            position.has_trailing_stop = True
+
+            await self.repository.update_position_trailing_stop(
+                position_id=position.id,
+                has_trailing_stop=True
+            )
+
+        # Step 5: Update internal tracking
+        self.positions[symbol] = position
+        self.position_count += 1
+        self.total_exposure += Decimal(str(position.quantity * position.entry_price))
+        self.stats['positions_opened'] += 1
+
+        logger.info(
+            f"✅ Position opened: {symbol} {position.side} "
+            f"{position.quantity:.6f} @ ${position.entry_price:.4f}"
+        )
+
+        # Step 6: Invalidate balance cache
+        self.balance_checker.invalidate_cache(exchange_name)
+        logger.debug(f"✅ Invalidated balance cache for {exchange_name} (funds spent)")
+
+        # Step 7: Emit position_opened event
+        await self.event_router.emit('position_opened', {
+            'symbol': symbol,
+            'exchange': exchange_name,
+            'side': position.side,
+            'quantity': position.quantity,
+            'entry_price': position.entry_price
+        })
+
+    # ============================================================
+    # END REFACTORING HELPER METHODS
+    # ============================================================
 
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
         """Check if position already exists"""
