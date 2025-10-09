@@ -117,6 +117,71 @@ class PositionState:
     pending_close_order: Optional[Dict] = None
 
 
+# ============================================================
+# REFACTORING DATACLASSES - Phase 3.2
+# ============================================================
+
+@dataclass
+class LockInfo:
+    """
+    Information about acquired locks for position opening.
+    Used by _validate_signal_and_locks() helper method.
+    """
+    can_proceed: bool
+    lock_key: str
+    position_lock: Optional[asyncio.Lock] = None
+    db_lock_acquired: bool = False
+    exchange: Optional[ExchangeManager] = None
+    reason: Optional[str] = None  # Why can't proceed
+
+    # References for cleanup (will be set by manager)
+    _repository: Optional['TradingRepository'] = None
+    _position_locks_set: Optional[set] = None
+    _symbol: Optional[str] = None
+    _exchange_name: Optional[str] = None
+
+    async def release(self):
+        """Release all acquired locks"""
+        if self.db_lock_acquired and self._repository and self._symbol and self._exchange_name:
+            try:
+                await self._repository.release_position_lock(self._symbol, self._exchange_name)
+                logger.debug(f"🔓 Released DB advisory lock for {self._symbol}")
+            except Exception as e:
+                logger.error(f"Failed to release DB lock for {self._symbol}: {e}")
+
+        if self._position_locks_set and self.lock_key:
+            self._position_locks_set.discard(self.lock_key)
+            logger.debug(f"🔓 Released position opening lock (completed)")
+
+
+@dataclass
+class ValidationResult:
+    """
+    Result of market and risk validation.
+    Used by _validate_market_and_risk() helper method.
+    """
+    passed: bool
+    market_info: Optional[Dict] = None
+    reason: Optional[str] = None
+
+
+@dataclass
+class OrderParams:
+    """
+    Parameters for order execution.
+    Used by _prepare_order_params() helper method.
+    """
+    quantity: Decimal
+    leverage: int
+    position_size_usd: Decimal
+    stop_loss_percent: Decimal
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if order parameters are valid"""
+        return self.quantity > 0
+
+
 class PositionManager:
     """
     Central position management system
@@ -893,6 +958,130 @@ class PositionManager:
                 # Release in-memory lock
             self.position_locks.discard(lock_key)
             logger.debug(f"🔓 Released position opening lock for {symbol} (completed)")
+
+    # ============================================================
+    # REFACTORING HELPER METHODS - Phase 3.2
+    # ============================================================
+
+    async def _validate_signal_and_locks(self, request: PositionRequest) -> LockInfo:
+        """
+        Phase 3.2 Helper: Acquire locks and check for duplicates.
+
+        STUB: Returns mock LockInfo that allows proceeding.
+        TODO: Migrate logic from open_position lines 536-600
+        """
+        # STUB implementation
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
+        lock_key = f"{exchange_name}_{symbol}"
+
+        # Mock: pretend we can proceed
+        return LockInfo(
+            can_proceed=True,
+            lock_key=lock_key,
+            position_lock=None,
+            db_lock_acquired=False,
+            exchange=None,
+            reason=None
+        )
+
+    async def _validate_market_and_risk(
+        self,
+        request: PositionRequest,
+        exchange: ExchangeManager
+    ) -> ValidationResult:
+        """
+        Phase 3.2 Helper: Validate market availability and risk limits.
+
+        STUB: Returns mock ValidationResult that passes.
+        TODO: Migrate logic from open_position lines 602-633
+        """
+        # STUB implementation
+        return ValidationResult(
+            passed=True,
+            market_info={'active': True},  # Mock market info
+            reason=None
+        )
+
+    async def _prepare_order_params(
+        self,
+        request: PositionRequest,
+        exchange: ExchangeManager,
+        market_info: Dict
+    ) -> Optional[OrderParams]:
+        """
+        Phase 3.2 Helper: Calculate position size, validate balance, set leverage.
+
+        STUB: Returns mock OrderParams.
+        TODO: Migrate logic from open_position lines 634-670
+        """
+        # STUB implementation
+        return OrderParams(
+            quantity=Decimal('0.01'),  # Mock quantity
+            leverage=10,
+            position_size_usd=Decimal('100'),
+            stop_loss_percent=Decimal('2.0')
+        )
+
+    async def _execute_and_verify_order(
+        self,
+        exchange: ExchangeManager,
+        request: PositionRequest,
+        params: OrderParams
+    ):
+        """
+        Phase 3.2 Helper: Execute market order and verify fill.
+
+        STUB: Returns None (no order executed).
+        TODO: Migrate logic from open_position lines 671-756
+
+        Returns:
+            Order object or None
+        """
+        # STUB implementation
+        return None
+
+    async def _create_position_with_sl(
+        self,
+        request: PositionRequest,
+        order,
+        params: OrderParams
+    ) -> Tuple[Optional[PositionState], Optional[str]]:
+        """
+        Phase 3.2 Helper: Create position state and set stop loss.
+
+        STUB: Returns None (no position created).
+        TODO: Migrate logic from open_position lines 757-791
+
+        Returns:
+            Tuple[Optional[PositionState], Optional[str]]: (position, sl_order_id)
+        """
+        # STUB implementation
+        return None, None
+
+    async def _save_position_to_db(
+        self,
+        position: PositionState,
+        exchange: ExchangeManager,
+        order,
+        sl_order_id: str,
+        params: OrderParams
+    ) -> None:
+        """
+        Phase 3.2 Helper: Save to DB, initialize trailing stop, update tracking.
+
+        STUB: Does nothing.
+        TODO: Migrate logic from open_position lines 793-876
+
+        Raises:
+            Exception on DB save failure
+        """
+        # STUB implementation
+        pass
+
+    # ============================================================
+    # END REFACTORING HELPER METHODS
+    # ============================================================
 
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
         """Check if position already exists"""
