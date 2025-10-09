@@ -762,6 +762,30 @@ class ExchangeManager:
             logger.error(f"Failed to fetch open order {order_id}: {e}")
             return None
 
+    async def fetch_closed_orders(self, symbol: str, limit: int = 10) -> List[Dict]:
+        """
+        Fetch multiple closed orders for a symbol.
+        
+        Used for order verification in Freqtrade-style retry logic.
+        
+        Args:
+            symbol: Symbol to fetch orders for
+            limit: Maximum number of orders to fetch
+            
+        Returns:
+            List of order dicts (CCXT format, not OrderResult)
+        """
+        try:
+            if self.exchange.has.get('fetchClosedOrders'):
+                closed_orders = await self.exchange.fetch_closed_orders(symbol, limit=limit)
+                return closed_orders
+            else:
+                logger.warning(f"Exchange {self.exchange_name} doesn't support fetchClosedOrders")
+                return []
+        except ccxt.BaseError as e:
+            logger.error(f"Failed to fetch closed orders for {symbol}: {e}")
+            return []
+
     async def fetch_closed_order(self, order_id: str, symbol: str) -> Optional[OrderResult]:
         """
         Fetch a single closed order by ID

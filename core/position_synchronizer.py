@@ -388,6 +388,13 @@ async def synchronize_positions_on_startup(position_manager) -> Dict:
     position_manager.total_exposure = Decimal('0')
 
     await position_manager.load_positions_from_db()
+    
+    # ✅ CRITICAL FIX: Protect newly synchronized positions immediately
+    # position_synchronizer adds positions from exchange without SL
+    # check_positions_protection will find them in DB and set SL
+    logger.info("🛡️ Applying protection to synchronized positions...")
+    await position_manager.check_positions_protection()
+    logger.info("✅ Protection applied to all synchronized positions")
 
     logger.info("✅ Position synchronization complete")
 

@@ -724,62 +724,28 @@ class PositionManager:
                     )
                     return None
 
-                # CRITICAL FIX: Different check for Bybit vs Binance
-                if exchange_name == 'bybit':
-                    # Bybit testnet: market orders may have status='new' or 'active' initially
-                    # Check filled amount instead of status
-                    if not order.filled or order.filled == 0:
-                        logger.info(f"Bybit order created but not filled yet, waiting 3 seconds...")
-                        await asyncio.sleep(3)  # Give testnet time to fill
-                        
-                        # ✅ CRITICAL FIX: Bybit API limitation - fetchOrder() only works for last 500 orders
-                        # Use fetchOpenOrder() or check position directly instead
-                        try:
-                            # Try to fetch as open order first
-                            refetched_order = await exchange.fetch_open_order(order.id, symbol)
-                            if refetched_order:
-                                order = refetched_order
-                                logger.info(f"Order refetched (open): filled={order.filled}, status={order.status}")
-                        except Exception as e1:
-                            # If not in open orders, try closed orders
-                            try:
-                                refetched_order = await exchange.fetch_closed_order(order.id, symbol)
-                                if refetched_order:
-                                    order = refetched_order
-                                    logger.info(f"Order refetched (closed): filled={order.filled}, status={order.status}")
-                            except Exception as e2:
-                                # If both fail, check position directly
-                                logger.warning(f"Could not refetch order via API, checking position directly...")
-                                try:
-                                    positions = await exchange.fetch_positions([symbol])
-                                    for pos in positions:
-                                        if pos.get('symbol') == symbol and abs(float(pos.get('contracts', 0))) > 0:
-                                            logger.info(f"✅ Position found on exchange: {pos.get('contracts')} contracts")
-                                            # Create a fake order object with filled data
-                                            order.filled = abs(float(pos.get('contracts', 0)))
-                                            order.status = 'closed'
-                                            break
-                                    else:
-                                        logger.warning(f"Could not verify order via position check: {e1}, {e2}")
-                                except Exception as e3:
-                                    logger.warning(f"All verification methods failed: {e3}")
+                # ✅ FREQTRADE-STYLE: Verify order fill with retry and fallbacks
+                # This replaces old Bybit/Binance specific logic with unified approach
+                if not order.filled or order.filled == 0:
+                    logger.info(f"Order created but fill status unknown, verifying with retry logic...")
+                    verified_order = await self._verify_order_filled(
+                        exchange, 
+                        order.id, 
+                        symbol, 
+                        exchange_name
+                    )
                     
-                    # ✅ FIX: Check if order is still valid (not None) before accessing attributes
-                    if not order:
-                        logger.error(f"Order object became None for {symbol} after refetch attempts")
-                        return None
-                    
-                    # Check if still not filled (None or 0)
-                    if not order.filled or order.filled == 0:
-                        logger.error(f"Bybit order not filled for {symbol} (filled={order.filled})")
-                        return None
-                else:
-                    # Binance: status check is reliable
-                    if order.status != 'closed':
-                        logger.error(f"Binance order not filled for {symbol} (status: {order.status})")
+                    if verified_order:
+                        order = verified_order
+                    else:
+                        # ✅ COMPENSATING: Order not filled after retries, don't proceed
+                        logger.error(
+                            f"❌ Order {order.id} not filled after verification retries. "
+                            f"Position will NOT be saved to database."
+                        )
                         return None
                 
-                # Additional safety check for all exchanges
+                # Final safety checks for all exchanges
                 if not order.filled or order.filled <= 0:
                     logger.error(f"Invalid order filled quantity for {symbol}: {order.filled}")
                     return None
@@ -1106,6 +1072,78 @@ class PositionManager:
             return False
 
         return True
+
+    async def _verify_order_filled(self, 
+                                     exchange: ExchangeManager, 
+                                     order_id: str, 
+                                     symbol: str,
+                                     exchange_name: str) -> Optional[Dict]:
+        """
+        Verify order fill status with retry and multiple fallback methods.
+        
+        Implements Freqtrade-style verification using:
+        1. fetch_order() - universal method (works for Binance)
+        2. fetch_closed_orders() - for market orders (works for Bybit)
+        3. Exponential backoff retry logic
+        
+        This solves the race condition where market orders are filled instantly
+        but API replication has a 3-10 second delay.
+        
+        Args:
+            exchange: Exchange manager instance
+            order_id: Order ID to verify
+            symbol: Symbol (e.g., 'BTCUSDT')
+            exchange_name: Exchange name ('binance' or 'bybit')
+            
+        Returns:
+            Order dict with filled status, or None if not found after retries
+        """
+        max_retries = 3
+        retry_delays = [1.0, 2.0, 3.0]  # Exponential backoff
+        
+        logger.info(f"🔍 Verifying order fill: {order_id} for {symbol} on {exchange_name}")
+        
+        for attempt in range(max_retries):
+            # METHOD 1: fetch_order() - универсальный метод
+            try:
+                order = await exchange.fetch_order(order_id, symbol)
+                if order and order.get('filled', 0) > 0:
+                    logger.info(
+                        f"✅ Order {order_id} verified via fetch_order: "
+                        f"filled={order['filled']}, status={order.get('status')}"
+                    )
+                    return order
+            except Exception as e:
+                logger.debug(f"fetch_order attempt {attempt+1} failed: {e}")
+            
+            # METHOD 2: fetch_closed_orders() - для market ордеров
+            try:
+                closed_orders = await exchange.fetch_closed_orders(symbol, limit=10)
+                for o in closed_orders:
+                    if o.get('id') == order_id and o.get('filled', 0) > 0:
+                        logger.info(
+                            f"✅ Order {order_id} found in closed_orders: "
+                            f"filled={o['filled']}, status={o.get('status')}"
+                        )
+                        return o
+            except Exception as e:
+                logger.debug(f"fetch_closed_orders attempt {attempt+1} failed: {e}")
+            
+            # Wait before next retry (exponential backoff)
+            if attempt < max_retries - 1:
+                delay = retry_delays[attempt]
+                logger.warning(
+                    f"⏳ Order {order_id} not found (attempt {attempt+1}/{max_retries}), "
+                    f"waiting {delay}s for API replication..."
+                )
+                await asyncio.sleep(delay)
+        
+        # All retries exhausted
+        logger.error(
+            f"❌ Order {order_id} not found after {max_retries} attempts. "
+            f"This indicates API replication lag or order was not created."
+        )
+        return None
 
     async def _set_stop_loss(self,
                              exchange: ExchangeManager,
@@ -1744,22 +1782,22 @@ class PositionManager:
         Periodically check and fix positions without stop loss.
 
         Now using unified StopLossManager for ALL SL checks.
+        
+        ✅ ENHANCED: Also checks positions from DB that are not in memory
         """
         try:
             from core.stop_loss_manager import StopLossManager
 
             unprotected_positions = []
 
-            # Check all positions for stop loss - verify on exchange using unified manager
-            # ✅ FIX: Create snapshot to avoid "dictionary changed size during iteration"
+            # ✅ STEP 1: Check all positions IN MEMORY
+            # ============================================================
             for symbol, position in list(self.positions.items()):
                 exchange = self.exchanges.get(position.exchange)
                 if not exchange:
                     continue
 
-                # ============================================================
                 # UNIFIED APPROACH: Use StopLossManager for SL check
-                # ============================================================
                 try:
                     sl_manager = StopLossManager(exchange.exchange, position.exchange)
                     has_sl_on_exchange, sl_price = await sl_manager.has_stop_loss(symbol)
@@ -1777,6 +1815,56 @@ class PositionManager:
                 if not has_sl_on_exchange:
                     unprotected_positions.append(position)
                     logger.warning(f"⚠️ Position {symbol} has no stop loss on exchange!")
+
+            # ✅ STEP 2: Check positions from DB that are NOT in memory
+            # ============================================================
+            logger.info("🔍 Checking database for untracked positions without SL...")
+            db_positions = await self.repository.get_open_positions()
+            
+            for db_pos in db_positions:
+                symbol = db_pos['symbol']
+                
+                # Skip if already in memory (already checked above)
+                if symbol in self.positions:
+                    continue
+                
+                # Found position in DB but not in memory - check if it needs protection
+                if not db_pos.get('has_stop_loss', False):
+                    logger.warning(f"⚠️ Found untracked position without SL: {symbol} on {db_pos['exchange']}")
+                    
+                    # Verify position exists on exchange
+                    if await self.verify_position_exists(symbol, db_pos['exchange']):
+                        # Create PositionState object for this untracked position
+                        untracked_pos = PositionState(
+                            id=db_pos['id'],
+                            symbol=symbol,
+                            exchange=db_pos['exchange'],
+                            side=db_pos['side'],
+                            quantity=float(db_pos['quantity']),
+                            entry_price=float(db_pos['entry_price']),
+                            current_price=float(db_pos['entry_price']),  # Will be updated
+                            unrealized_pnl=0.0,
+                            unrealized_pnl_percent=0.0,
+                            has_stop_loss=False,
+                            stop_loss_price=None,
+                            has_trailing_stop=False,
+                            trailing_activated=False,
+                            opened_at=db_pos['created_at']
+                        )
+                        
+                        unprotected_positions.append(untracked_pos)
+                        
+                        # Add to memory for tracking
+                        self.positions[symbol] = untracked_pos
+                        logger.info(f"✅ Added untracked position {symbol} to memory for protection")
+                    else:
+                        logger.warning(f"🗑️ Position {symbol} not found on exchange, marking as closed in DB")
+                        await self.repository.close_position(
+                            db_pos['id'],
+                            close_price=float(db_pos['entry_price']),
+                            pnl=0.0,
+                            exit_reason='phantom_position'
+                        )
 
             # If found unprotected positions, set stop losses
             if unprotected_positions:
