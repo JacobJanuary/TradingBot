@@ -13,6 +13,17 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# CONSTANTS - Phase 4.2: Magic Numbers Extraction
+# ============================================================
+
+# Error Handling
+CONNECTION_MONITOR_ERROR_DELAY_SEC = 5  # Delay after connection monitor error (seconds)
+CONNECTION_MONITOR_LOOP_DELAY_SEC = 1   # Delay between connection health checks (seconds)
+
+# ============================================================
+
+
 class ConnectionState(Enum):
     """Connection states"""
     DISCONNECTED = "disconnected"
@@ -198,11 +209,11 @@ class ImprovedStream(ABC):
                         await self._reconnect()
                 
                 # Small delay to prevent busy loop
-                await asyncio.sleep(1)
-                
+                await asyncio.sleep(CONNECTION_MONITOR_LOOP_DELAY_SEC)
+
             except Exception as e:
                 logger.error(f"Connection monitor error: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(CONNECTION_MONITOR_ERROR_DELAY_SEC)
     
     async def _connect(self):
         """Establish WebSocket connection"""

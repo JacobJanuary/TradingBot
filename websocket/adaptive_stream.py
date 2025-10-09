@@ -20,6 +20,19 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================
+# CONSTANTS - Phase 4.2: Magic Numbers Extraction
+# ============================================================
+
+# Reconnection & Error Handling
+STREAM_RECONNECT_DELAY_SEC = 5      # Delay before reconnecting after error (seconds)
+STREAM_POLLING_INTERVAL_SEC = 5     # Interval for polling positions/orders (seconds)
+STREAM_RESTART_DELAY_SEC = 10       # Delay before full restart after critical error (seconds)
+
+# ============================================================
+
+
 class StreamMode(Enum):
     """WebSocket stream modes"""
     TESTNET = "testnet"  # Public streams only
@@ -188,11 +201,11 @@ class AdaptiveBinanceStream:
                 break
             except ConnectionClosedError as e:
                 logger.error(f"Public WebSocket closed with error: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(STREAM_RECONNECT_DELAY_SEC)
 
             except Exception as e:
                 logger.error(f"Public stream error: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(STREAM_RECONNECT_DELAY_SEC)
     
     async def _run_private_stream(self):
         """Run private user data stream (mainnet only)"""
@@ -229,11 +242,11 @@ class AdaptiveBinanceStream:
                 break
             except ConnectionClosedError as e:
                 logger.error(f"Private WebSocket closed with error: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(STREAM_RECONNECT_DELAY_SEC)
 
             except Exception as e:
                 logger.error(f"Private stream error: {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(STREAM_RECONNECT_DELAY_SEC)
     
     async def _poll_private_data(self):
         """Poll REST API for private data (testnet fallback)"""
@@ -330,11 +343,11 @@ class AdaptiveBinanceStream:
                         logger.debug(f"Order fetch error (non-critical): {e}")
                 
                 # Wait before next poll (adjust based on needs)
-                await asyncio.sleep(5)  # Poll every 5 seconds
-                
+                await asyncio.sleep(STREAM_POLLING_INTERVAL_SEC)
+
             except Exception as e:
                 logger.error(f"REST polling error: {e}")
-                await asyncio.sleep(10)
+                await asyncio.sleep(STREAM_RESTART_DELAY_SEC)
     
     async def _process_public_message(self, data: Dict):
         """Process public stream message"""
