@@ -76,6 +76,14 @@ class BinancePrivateStream(ImprovedStream):
         try:
             # Get account info
             account = await self.client.futures_account()
+
+            # Validate critical fields
+            required_fields = ['totalWalletBalance', 'totalUnrealizedProfit', 'totalMarginBalance', 'availableBalance']
+            for field in required_fields:
+                if field not in account:
+                    logger.error(f"Missing critical field '{field}' in account info")
+                    return
+
             self.account_info = {
                 'totalWalletBalance': float(account['totalWalletBalance']),
                 'totalUnrealizedProfit': float(account['totalUnrealizedProfit']),
@@ -86,16 +94,24 @@ class BinancePrivateStream(ImprovedStream):
             # Get positions
             positions = await self.client.futures_position_information()
             for pos in positions:
+                if 'positionAmt' not in pos or 'symbol' not in pos:
+                    logger.warning(f"Position missing critical fields, skipping: {pos}")
+                    continue
                 if float(pos['positionAmt']) != 0:
                     self.positions[pos['symbol']] = self._parse_position(pos)
 
             # Get open orders
             orders = await self.client.futures_get_open_orders()
             for order in orders:
+                if 'orderId' not in order:
+                    logger.warning(f"Order missing orderId, skipping: {order}")
+                    continue
                 self.open_orders[order['orderId']] = self._parse_order(order)
 
             logger.info(f"Initial state: {len(self.positions)} positions, {len(self.open_orders)} orders")
 
+        except (KeyError, ValueError, TypeError) as e:
+            logger.error(f"Failed to parse initial state: {e}")
         except Exception as e:
             logger.error(f"Failed to fetch initial state: {e}")
 
