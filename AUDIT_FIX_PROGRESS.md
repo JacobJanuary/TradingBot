@@ -20,7 +20,7 @@
 ### 0.1 Анализ зависимостей
 - [x] Скрипт analyze_dependencies.py создан
 - [x] DEPENDENCY_GRAPH.txt создан
-- [ ] Результаты проанализированы
+- [x] Результаты проанализированы
 
 ### 0.2 Backup
 - [ ] monitoring schema backup создан
