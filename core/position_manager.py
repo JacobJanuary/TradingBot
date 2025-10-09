@@ -51,6 +51,20 @@ def normalize_symbol(symbol: str) -> str:
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# CONSTANTS - Phase 4.2: Magic Numbers Extraction
+# ============================================================
+
+# Retry Configuration
+MAX_ORDER_VERIFICATION_RETRIES = 3  # Maximum attempts to verify order fill
+ORDER_VERIFICATION_DELAYS = [1.0, 2.0, 3.0]  # Exponential backoff delays (seconds)
+
+# Time Intervals
+POSITION_CLOSE_RETRY_DELAY_SEC = 60  # Wait time before retrying position close (seconds)
+
+# ============================================================
+
+
 def safe_get_attr(obj, *attrs, default=None):
     """
     Safely get attribute from dict or object
@@ -544,7 +558,7 @@ class PositionManager:
                 break
             except Exception as e:
                 logger.error(f"Error in periodic sync: {e}")
-                await asyncio.sleep(60)  # Wait before retry
+                await asyncio.sleep(POSITION_CLOSE_RETRY_DELAY_SEC)  # Wait before retry
 
     def _register_event_handlers(self):
         """Register handlers for WebSocket events"""
@@ -1455,8 +1469,8 @@ class PositionManager:
         Returns:
             Order dict with filled status, or None if not found after retries
         """
-        max_retries = 3
-        retry_delays = [1.0, 2.0, 3.0]  # Exponential backoff
+        max_retries = MAX_ORDER_VERIFICATION_RETRIES
+        retry_delays = ORDER_VERIFICATION_DELAYS
         
         logger.info(f"🔍 Verifying order fill: {order_id} for {symbol} on {exchange_name}")
         
