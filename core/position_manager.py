@@ -967,23 +967,167 @@ class PositionManager:
         """
         Phase 3.2 Helper: Acquire locks and check for duplicates.
 
-        STUB: Returns mock LockInfo that allows proceeding.
-        TODO: Migrate logic from open_position lines 536-600
+        Steps:
+        1. Acquire asyncio Lock (meta-lock → per-symbol lock)
+        2. Check in-memory cache
+        3. Check DB for existing position
+        4. Acquire PostgreSQL advisory lock
+        5. Get exchange instance
+        6. Final check: position doesn't exist
+
+        Returns:
+            LockInfo with can_proceed=True/False and all lock references
         """
-        # STUB implementation
         symbol = request.symbol
         exchange_name = request.exchange.lower()
         lock_key = f"{exchange_name}_{symbol}"
+        db_lock_acquired = False
+        position_lock = None
 
-        # Mock: pretend we can proceed
-        return LockInfo(
-            can_proceed=True,
-            lock_key=lock_key,
-            position_lock=None,
-            db_lock_acquired=False,
-            exchange=None,
-            reason=None
-        )
+        # Step 1: Acquire asyncio Lock
+        async with self._position_opening_locks_lock:
+            if lock_key not in self._position_opening_locks:
+                self._position_opening_locks[lock_key] = asyncio.Lock()
+            position_lock = self._position_opening_locks[lock_key]
+
+        # Acquire the actual position lock
+        await position_lock.acquire()
+        logger.debug(f"🔒 Acquired position opening lock for {symbol}")
+
+        try:
+            # Step 2: Check in-memory cache
+            if self._position_cache.get(lock_key, False):
+                logger.warning(f"📌 Position {symbol} already marked as opened (cache), skipping duplicate")
+                logger.debug(f"🔓 Released position opening lock for {symbol} (cache hit)")
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Already in cache"
+                )
+
+            # Step 3: Check DB for existing position
+            existing_position = await self.repository.get_open_position(symbol, exchange_name)
+            if existing_position:
+                logger.warning(f"Position for {symbol} already exists (ID: {existing_position.get('id')}), skipping duplicate")
+                self._position_cache[lock_key] = True
+                logger.debug(f"🔓 Released position opening lock for {symbol} (already exists)")
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Already exists in DB"
+                )
+
+            # Check if already being processed
+            if lock_key in self.position_locks:
+                logger.warning(f"Position already being processed for {symbol} (in-memory lock)")
+                logger.debug(f"🔓 Released position opening lock for {symbol} (already processing)")
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Already being processed"
+                )
+
+            # Mark as being processed
+            self.position_locks.add(lock_key)
+            self._position_cache[lock_key] = True
+            logger.debug(f"✅ Position opening lock held - proceeding with creation (cache updated)")
+
+            # Step 4: Acquire PostgreSQL advisory lock
+            db_lock_acquired = await self.repository.acquire_position_lock(symbol, exchange_name)
+            if not db_lock_acquired:
+                logger.warning(
+                    f"Could not acquire database lock for {symbol} on {exchange_name}. "
+                    f"Position may be in process by another bot instance."
+                )
+                self.position_locks.discard(lock_key)
+                position_lock.release()
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=None,
+                    db_lock_acquired=False,
+                    exchange=None,
+                    reason="Could not acquire DB lock"
+                )
+
+            logger.debug(f"✅ Acquired DB advisory lock for {symbol}")
+
+            # Step 5: Get exchange
+            exchange = self.exchanges.get(exchange_name)
+            if not exchange:
+                logger.error(f"Exchange {exchange_name} not available")
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=position_lock,
+                    db_lock_acquired=db_lock_acquired,
+                    exchange=None,
+                    reason="Exchange not available",
+                    _repository=self.repository,
+                    _position_locks_set=self.position_locks,
+                    _symbol=symbol,
+                    _exchange_name=exchange_name
+                )
+
+            # Step 6: Final check - position doesn't exist
+            if await self._position_exists(symbol, exchange_name):
+                logger.warning(f"Position already exists for {symbol} on {exchange_name}")
+                return LockInfo(
+                    can_proceed=False,
+                    lock_key=lock_key,
+                    position_lock=position_lock,
+                    db_lock_acquired=db_lock_acquired,
+                    exchange=exchange,
+                    reason="Position already exists (final check)",
+                    _repository=self.repository,
+                    _position_locks_set=self.position_locks,
+                    _symbol=symbol,
+                    _exchange_name=exchange_name
+                )
+
+            # All checks passed!
+            return LockInfo(
+                can_proceed=True,
+                lock_key=lock_key,
+                position_lock=position_lock,
+                db_lock_acquired=db_lock_acquired,
+                exchange=exchange,
+                reason=None,
+                _repository=self.repository,
+                _position_locks_set=self.position_locks,
+                _symbol=symbol,
+                _exchange_name=exchange_name
+            )
+
+        except Exception as e:
+            logger.error(f"Error in _validate_signal_and_locks: {e}")
+            # Release lock on error
+            if position_lock and position_lock.locked():
+                position_lock.release()
+            return LockInfo(
+                can_proceed=False,
+                lock_key=lock_key,
+                position_lock=None,
+                db_lock_acquired=db_lock_acquired,
+                exchange=None,
+                reason=f"Exception: {e}",
+                _repository=self.repository,
+                _position_locks_set=self.position_locks,
+                _symbol=symbol,
+                _exchange_name=exchange_name
+            )
 
     async def _validate_market_and_risk(
         self,
