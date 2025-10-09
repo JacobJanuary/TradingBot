@@ -6,6 +6,9 @@ Key function: Correctly distinguish Stop Loss from Limit Exit orders
 
 import logging
 from typing import Dict, Optional
+from decimal import Decimal
+
+from utils.decimal_utils import safe_decimal
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +84,10 @@ def is_stop_loss_order(order: Dict) -> bool:
     )
 
     if trigger_price:
-        try:
-            if float(trigger_price) > 0:
-                logger.debug(f"Identified as Stop Loss by trigger price: {trigger_price}")
-                return True
-        except (ValueError, TypeError):
-            pass
+        trigger_price_decimal = safe_decimal(trigger_price, field_name='trigger_price')
+        if trigger_price_decimal > 0:
+            logger.debug(f"Identified as Stop Loss by trigger price: {trigger_price}")
+            return True
 
     # ====== PRIORITY 5: Conditional order flags ======
     # Check if it's marked as conditional/stop
