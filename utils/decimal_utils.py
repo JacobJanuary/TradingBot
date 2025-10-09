@@ -2,12 +2,84 @@
 Decimal utilities for safe financial calculations
 Ensures precision in monetary operations
 """
-from decimal import Decimal, ROUND_DOWN, ROUND_UP, getcontext
-from typing import Union, Optional
+from decimal import Decimal, ROUND_DOWN, ROUND_UP, getcontext, InvalidOperation
+from typing import Union, Optional, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Set precision for financial calculations
 getcontext().prec = 18
 getcontext().rounding = ROUND_DOWN
+
+
+def safe_decimal(
+    value: Any,
+    default: Decimal = Decimal('0'),
+    field_name: str = "value",
+    precision: int = 8
+) -> Decimal:
+    """
+    Safely convert any value to Decimal with error handling
+
+    Handles all edge cases: None, invalid strings, NaN, Infinity, etc.
+
+    Args:
+        value: Value to convert (any type)
+        default: Default value if conversion fails (default: Decimal('0'))
+        field_name: Field name for logging (helps debug)
+        precision: Number of decimal places to round to
+
+    Returns:
+        Decimal value or default if conversion fails
+
+    Example:
+        >>> safe_decimal("123.45")
+        Decimal('123.45')
+        >>> safe_decimal("invalid", default=Decimal('0'))
+        Decimal('0')
+        >>> safe_decimal(None)
+        Decimal('0')
+    """
+    # Handle None
+    if value is None:
+        return default
+
+    # Already Decimal
+    if isinstance(value, Decimal):
+        try:
+            return round_decimal(value, precision)
+        except (InvalidOperation, ValueError) as e:
+            logger.warning(f"Invalid Decimal value for {field_name}: {value} - {e}")
+            return default
+
+    # Try conversion
+    try:
+        # Convert to string first to avoid float precision issues
+        str_value = str(value).strip()
+
+        # Handle empty string
+        if not str_value or str_value.lower() in ('', 'none', 'null', 'nan'):
+            return default
+
+        # Convert to Decimal
+        decimal_value = Decimal(str_value)
+
+        # Check for infinity
+        if decimal_value.is_infinite():
+            logger.warning(f"Infinite value for {field_name}: {value}")
+            return default
+
+        # Check for NaN
+        if decimal_value.is_nan():
+            logger.warning(f"NaN value for {field_name}: {value}")
+            return default
+
+        return round_decimal(decimal_value, precision)
+
+    except (InvalidOperation, ValueError, TypeError, ArithmeticError) as e:
+        logger.warning(f"Failed to convert {field_name}='{value}' to Decimal: {e}")
+        return default
 
 
 def to_decimal(value: Union[str, int, float, Decimal], precision: int = 8) -> Decimal:
