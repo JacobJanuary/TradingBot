@@ -1379,6 +1379,10 @@ class PositionManager:
             size_usd = max_position_usd
 
         # Simple calculation: size_usd / price
+        # Safety check: prevent division by zero
+        if price == 0:
+            logger.error(f"Cannot calculate position size: price is zero for {symbol}")
+            return None
         quantity = size_usd / Decimal(str(price))
 
         logger.debug(f"Position sizing for {symbol}:")
