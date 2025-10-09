@@ -1422,34 +1422,26 @@ class PositionManager:
         logger.debug(f"[PositionManager] Tracked positions: {list(self.positions.keys())}")
         
         for symbol, pos_data in positions_to_process:
-            logger.info(f"[DEBUG] Processing symbol: {symbol}")  # DEBUG
-            
             if not symbol:
-                logger.info(f"[DEBUG] Symbol is None, skipping")  # DEBUG
                 continue
             
             # Normalize symbol format (SHELL/USDT:USDT → SHELLUSDT)
             normalized_symbol = symbol.replace('/', '').replace(':USDT', '')
-            logger.info(f"[DEBUG] Normalized: {symbol} → {normalized_symbol}")  # DEBUG
             
             # Try both formats
             position_symbol = normalized_symbol if normalized_symbol in self.positions else symbol
-            logger.info(f"[DEBUG] Position symbol: {position_symbol}, exists: {position_symbol in self.positions}")  # DEBUG
             
             if position_symbol not in self.positions:
                 logger.debug(f"[PositionManager] Skipping {symbol} (normalized: {normalized_symbol}) - not tracked")
                 continue
 
             position = self.positions[position_symbol]
-            logger.info(f"[DEBUG] Found position {position_symbol}, has_TS: {position.has_trailing_stop}")  # DEBUG
 
             # Update position state
             try:
-                old_price = position.current_price
                 # CRITICAL: Convert to float to avoid Decimal/float TypeError
                 position.current_price = float(pos_data.get('mark_price', pos_data.get('markPrice', position.current_price)))
                 position.unrealized_pnl = float(pos_data.get('unrealized_pnl', pos_data.get('unrealizedPnl', 0)))
-                logger.info(f"[DEBUG] Price updated: {old_price} → {position.current_price}")  # DEBUG
 
                 # Calculate PnL percent
                 # CRITICAL: Convert entry_price to float for calculation
@@ -1463,29 +1455,23 @@ class PositionManager:
                         position.unrealized_pnl_percent = (
                             (entry_price_float - position.current_price) / entry_price_float * 100
                         )
-                    logger.info(f"[DEBUG] PnL calculated: {position.unrealized_pnl_percent:.2f}%")  # DEBUG
 
                 logger.debug(f"[PositionManager] {position_symbol}: price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}%")
 
                 # Update trailing stop
                 trailing_manager = self.trailing_managers.get(position.exchange)
-                logger.info(f"[DEBUG] Trailing manager: {trailing_manager is not None}, has_TS: {position.has_trailing_stop}")  # DEBUG
                 
                 if trailing_manager and position.has_trailing_stop:
-                    logger.info(f"[DEBUG] Calling update_price for {position_symbol}")  # DEBUG
                     logger.debug(f"[PositionManager] Calling trailing_manager.update_price for {position_symbol}")
                     try:
                         update_result = await trailing_manager.update_price(position_symbol, float(position.current_price))
-                        logger.info(f"[DEBUG] update_price completed, result: {update_result}")  # DEBUG
                         logger.debug(f"[PositionManager] update_price result: {update_result}")
 
                         if update_result and update_result.get('action') == 'activated':
                             position.trailing_activated = True
                             logger.info(f"🚀 Trailing stop activated for {position_symbol}")
                     except Exception as e:
-                        logger.error(f"[DEBUG] Exception in trailing stop update: {e}", exc_info=True)  # DEBUG
-                else:
-                    logger.info(f"[DEBUG] Skipping update_price: TM={trailing_manager is not None}, has_TS={position.has_trailing_stop}")  # DEBUG
+                        logger.error(f"Exception in trailing stop update for {position_symbol}: {e}", exc_info=True)
 
                 # Update database
                 await self.repository.update_position_from_websocket({

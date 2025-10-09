@@ -24,15 +24,27 @@ from core.aged_position_manager import AgedPositionManager
 from monitoring.health_check import HealthChecker, HealthStatus
 from monitoring.performance import PerformanceTracker
 
-# Setup logging
+# Setup logging - WARNING by default to prevent queue overflow
+file_handler = logging.FileHandler('logs/trading_bot.log')
+file_handler.setLevel(logging.WARNING)  # Only WARNING+ to file
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.WARNING)  # Only WARNING+ to console
+
 logging.basicConfig(
-    level=logging.DEBUG,  # DEBUG for final troubleshooting
+    level=logging.DEBUG,  # Root level DEBUG (but handlers filter to WARNING+)
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/trading_bot.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
+
+# Enable INFO only for important modules
+core_logger = logging.getLogger('core')
+core_logger.setLevel(logging.INFO)
+
+# WARNING for everything else (including __main__, websocket.event_router)
+logging.getLogger('__main__').setLevel(logging.WARNING)
+logging.getLogger('websocket').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
