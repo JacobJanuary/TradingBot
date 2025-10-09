@@ -320,7 +320,8 @@ class SignalWebSocketClient:
                     'type': 'ping'
                 }))
                 return True
-            except:
+            except (ConnectionError, websockets.exceptions.WebSocketException, Exception) as e:
+                logger.warning(f"Ping failed: {e}")
                 self.state = ConnectionState.DISCONNECTED
                 return False
         return False
