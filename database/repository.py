@@ -13,6 +13,19 @@ class Repository:
     Uses asyncpg for PostgreSQL
     """
 
+    # SQL Injection Protection: Whitelist of allowed position fields
+    ALLOWED_POSITION_FIELDS = {
+        'symbol', 'exchange', 'side', 'quantity', 'entry_price',
+        'current_price', 'mark_price', 'unrealized_pnl', 'unrealized_pnl_percent',
+        'has_stop_loss', 'stop_loss_price', 'stop_loss_order_id',
+        'has_take_profit', 'take_profit_price', 'take_profit_order_id',
+        'has_trailing_stop', 'trailing_activated', 'trailing_activation_price',
+        'trailing_callback_rate', 'status', 'exit_price', 'exit_quantity',
+        'realized_pnl', 'realized_pnl_percent', 'fees', 'exit_reason',
+        'closed_at', 'ws_position_id', 'last_update', 'leverage',
+        'stop_loss', 'take_profit', 'pnl', 'pnl_percentage'
+    }
+
     def __init__(self, db_config: Dict):
         """Initialize repository with database configuration"""
         self.db_config = db_config
@@ -555,9 +568,18 @@ class Repository:
 
         Example:
             await repo.update_position(123, current_price=50.5, pnl=10.0)
+
+        Raises:
+            ValueError: If any field name is not in ALLOWED_POSITION_FIELDS
         """
         if not kwargs:
             return False
+
+        # SQL Injection Protection: Validate all field names
+        invalid_fields = set(kwargs.keys()) - self.ALLOWED_POSITION_FIELDS
+        if invalid_fields:
+            raise ValueError(f"Invalid field names: {', '.join(invalid_fields)}. "
+                           f"Allowed fields: {', '.join(sorted(self.ALLOWED_POSITION_FIELDS))}")
 
         # Build dynamic UPDATE query
         set_clauses = []
