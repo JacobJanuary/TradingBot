@@ -39,7 +39,7 @@
 ### 0.4 Health check
 - [x] health_check_after_fix.py создан
 - [x] Запущен первый раз
-- [ ] Базовые тесты PASS
+- [x] Базовые тесты PASS
 
 **Фаза 0 статус:** ⏳ NOT STARTED
 
