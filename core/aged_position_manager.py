@@ -16,6 +16,8 @@ from typing import Dict, List, Optional, Tuple
 import asyncio
 import os
 
+from utils.decimal_utils import safe_decimal
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,14 +38,36 @@ class AgedPositionManager:
         self.exchanges = exchanges  # Dict of exchange instances
 
         # Age parameters from environment/config
-        self.max_position_age_hours = float(os.getenv('MAX_POSITION_AGE_HOURS',
-                                                      getattr(config, 'max_position_age_hours', 3)))
-        self.grace_period_hours = float(os.getenv('AGED_GRACE_PERIOD_HOURS', 8))
-        self.loss_step_percent = float(os.getenv('AGED_LOSS_STEP_PERCENT', 0.5))
-        self.max_loss_percent = float(os.getenv('AGED_MAX_LOSS_PERCENT', 10.0))
-        self.acceleration_factor = float(os.getenv('AGED_ACCELERATION_FACTOR', 1.2))
-        self.commission_percent = float(os.getenv('COMMISSION_PERCENT',
-                                               getattr(config, 'commission_percent', 0.1))) / 100
+        self.max_position_age_hours = safe_decimal(
+            os.getenv('MAX_POSITION_AGE_HOURS', getattr(config, 'max_position_age_hours', 3)),
+            default=Decimal('3'),
+            field_name='MAX_POSITION_AGE_HOURS'
+        )
+        self.grace_period_hours = safe_decimal(
+            os.getenv('AGED_GRACE_PERIOD_HOURS', 8),
+            default=Decimal('8'),
+            field_name='AGED_GRACE_PERIOD_HOURS'
+        )
+        self.loss_step_percent = safe_decimal(
+            os.getenv('AGED_LOSS_STEP_PERCENT', 0.5),
+            default=Decimal('0.5'),
+            field_name='AGED_LOSS_STEP_PERCENT'
+        )
+        self.max_loss_percent = safe_decimal(
+            os.getenv('AGED_MAX_LOSS_PERCENT', 10.0),
+            default=Decimal('10.0'),
+            field_name='AGED_MAX_LOSS_PERCENT'
+        )
+        self.acceleration_factor = safe_decimal(
+            os.getenv('AGED_ACCELERATION_FACTOR', 1.2),
+            default=Decimal('1.2'),
+            field_name='AGED_ACCELERATION_FACTOR'
+        )
+        self.commission_percent = safe_decimal(
+            os.getenv('COMMISSION_PERCENT', getattr(config, 'commission_percent', 0.1)),
+            default=Decimal('0.1'),
+            field_name='COMMISSION_PERCENT'
+        ) / Decimal('100')
 
         # Track managed positions to avoid duplicate processing
         self.managed_positions = {}  # position_id: {'last_update': datetime, 'order_id': str}
@@ -211,7 +235,7 @@ class AgedPositionManager:
         Returns:
             Tuple of (phase_name, target_price, loss_percent)
         """
-        entry_price = float(position.entry_price)
+        entry_price = safe_decimal(position.entry_price, field_name='entry_price')
 
         if hours_over_limit <= self.grace_period_hours:
             # PHASE 1: GRACE PERIOD - Strict breakeven
@@ -310,8 +334,8 @@ class AgedPositionManager:
 
                     if existing:
                         # Check if price needs update
-                        existing_price = float(existing.get('price', 0))
-                        price_diff_pct = abs(target_price - existing_price) / existing_price * 100
+                        existing_price = safe_decimal(existing.get('price', 0), field_name='existing_price')
+                        price_diff_pct = abs(target_price - existing_price) / existing_price * Decimal('100')
 
                         if price_diff_pct > 0.5:  # Update if > 0.5% difference
                             logger.info(
@@ -337,7 +361,7 @@ class AgedPositionManager:
                             order = await enhanced_manager.create_limit_exit_order(
                                 symbol=position.symbol,
                                 side=order_side,
-                                amount=abs(float(position.quantity)),
+                                amount=abs(safe_decimal(position.quantity, field_name='position_quantity')),
                                 price=target_price,
                                 check_duplicates=True
                             )
@@ -365,7 +389,7 @@ class AgedPositionManager:
                         order = await enhanced_manager.create_limit_exit_order(
                             symbol=position.symbol,
                             side=order_side,
-                            amount=abs(float(position.quantity)),
+                            amount=abs(safe_decimal(position.quantity, field_name='position_quantity')),
                             price=target_price,
                             check_duplicates=True
                         )
@@ -399,8 +423,8 @@ class AgedPositionManager:
 
                     if existing_order:
                         # Check if price needs update
-                        existing_price = float(existing_order.get('price', 0))
-                        price_diff_pct = abs(target_price - existing_price) / existing_price * 100
+                        existing_price = safe_decimal(existing_order.get('price', 0), field_name='existing_order_price')
+                        price_diff_pct = abs(target_price - existing_price) / existing_price * Decimal('100')
 
                         if price_diff_pct > 0.5:
                             # Cancel old order
@@ -424,7 +448,7 @@ class AgedPositionManager:
                         symbol=position.symbol,
                         type='limit',
                         side=order_side,
-                        amount=abs(float(position.quantity)),
+                        amount=abs(safe_decimal(position.quantity, field_name='position_quantity')),
                         price=target_price,
                         params=params
                     )
@@ -455,7 +479,7 @@ class AgedPositionManager:
                 return None
 
             ticker = await exchange.fetch_ticker(symbol)
-            return float(ticker['last'])
+            return safe_decimal(ticker['last'], field_name='ticker_last_price')
 
         except Exception as e:
             logger.error(f"Error fetching price for {symbol}: {e}")
