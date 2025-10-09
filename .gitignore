@@ -77,6 +77,7 @@ docs/.doctrees/
 *.p12
 secrets/
 credentials/
+.crypto_salt
 
 # Backup files
 *.bak
