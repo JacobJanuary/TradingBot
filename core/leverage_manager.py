@@ -160,17 +160,17 @@ class LeverageManager:
     def _find_matching_bracket(self, notional: float, brackets: list) -> Optional[Dict]:
         """
         Find bracket that matches the notional value
-        
+
         Args:
             notional: Position notional value
             brackets: List of bracket dictionaries
-        
+
         Returns:
             Matching bracket or None
         """
         for bracket in brackets:
             floor = bracket.get('notionalFloor', 0)
-            cap = bracket.get('notionalCap', float('inf'))
+            cap = bracket.get('notionalCap', Decimal('Infinity'))
             
             if floor <= notional < cap:
                 return bracket
