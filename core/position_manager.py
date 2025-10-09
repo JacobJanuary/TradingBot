@@ -429,6 +429,12 @@ class PositionManager:
                             quantity=to_decimal(safe_get_attr(position, 'contracts', 'quantity', 'qty', 'size', default=0))
                         )
                         position.has_trailing_stop = True
+                        
+                        # ✅ FIX: Update trailing stop status in DB
+                        await self.repository.update_position_trailing_stop(
+                            position_id=position.id,
+                            has_trailing_stop=True
+                        )
                         logger.info(f"✅ Trailing stop initialized for {symbol}")
                     else:
                         logger.warning(f"⚠️ No trailing manager for exchange {position.exchange}")
@@ -871,6 +877,12 @@ class PositionManager:
                         stop_order_id=sl_order_id  # ✅ ПЕРЕДАЁМ ID ОРДЕРА!
                     )
                     position.has_trailing_stop = True
+                    
+                    # ✅ FIX: Update trailing stop status in DB
+                    await self.repository.update_position_trailing_stop(
+                        position_id=position.id,
+                        has_trailing_stop=True
+                    )
 
                 # 13. Update internal tracking
                 self.positions[symbol] = position

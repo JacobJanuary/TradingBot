@@ -365,18 +365,30 @@ class Repository:
             async with self.pool.acquire() as conn:
                 await conn.execute(query, stop_price, position_id)
 
-    async def update_position_trailing_stop(self, position_id: int,
-                                            activation_price: float,
-                                            callback_rate: float):
-        """Update position trailing stop"""
+    async def update_position_trailing_stop(self, position_id: int, has_trailing_stop: bool = True,
+                                           conn: Optional[asyncpg.Connection] = None):
+        """
+        Update position trailing stop status.
+        
+        Args:
+            position_id: Position ID
+            has_trailing_stop: Whether trailing stop is active
+            conn: Optional connection for transaction support
+        """
         query = """
             UPDATE monitoring.positions
-            SET updated_at = NOW()
-            WHERE id = $1
+            SET has_trailing_stop = $1,
+                updated_at = NOW()
+            WHERE id = $2
         """
 
-        async with self.pool.acquire() as conn:
-            await conn.execute(query, position_id)
+        if conn:
+            # Use provided connection (transaction mode)
+            await conn.execute(query, has_trailing_stop, position_id)
+        else:
+            # Acquire connection from pool (standalone mode)
+            async with self.pool.acquire() as conn:
+                await conn.execute(query, has_trailing_stop, position_id)
 
     async def close_position(self, position_id: int,
                             close_price: float = None,
