@@ -1137,13 +1137,69 @@ class PositionManager:
         """
         Phase 3.2 Helper: Validate market availability and risk limits.
 
-        STUB: Returns mock ValidationResult that passes.
-        TODO: Migrate logic from open_position lines 602-633
+        Steps:
+        1. Validate risk limits
+        2. Validate symbol exists on exchange
+        3. Get and validate market_info
+        4. Check market is active
+
+        Returns:
+            ValidationResult with passed=True/False and market_info
         """
-        # STUB implementation
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
+
+        # Step 1: Validate risk limits
+        if not await self._validate_risk_limits(request):
+            logger.warning(f"Risk limits exceeded for {symbol}")
+            return ValidationResult(
+                passed=False,
+                market_info=None,
+                reason="Risk limits exceeded"
+            )
+
+        # Step 2: Validate symbol exists on exchange
+        if not exchange.has_market(symbol):
+            logger.error(
+                f"❌ Symbol {symbol} not available on {exchange_name}. "
+                f"Symbol may be delisted, not supported, or invalid."
+            )
+            return ValidationResult(
+                passed=False,
+                market_info=None,
+                reason="Symbol not available on exchange"
+            )
+
+        # Step 3: Get market_info
+        market_info = exchange.get_market_info(symbol)
+
+        if not market_info:
+            logger.error(
+                f"❌ Cannot open position for {symbol} on {exchange_name}: market_info unavailable. "
+                f"Symbol may be delisted or markets not loaded. Skipping to avoid blind trading."
+            )
+            return ValidationResult(
+                passed=False,
+                market_info=None,
+                reason="market_info unavailable"
+            )
+
+        # Step 4: Check market is active
+        if market_info.get('active') is False:
+            logger.error(
+                f"❌ Symbol {symbol} is not active on {exchange_name}. "
+                f"Market status: {market_info.get('info', {}).get('status', 'unknown')}"
+            )
+            return ValidationResult(
+                passed=False,
+                market_info=market_info,
+                reason="Market not active"
+            )
+
+        # All validations passed
         return ValidationResult(
             passed=True,
-            market_info={'active': True},  # Mock market info
+            market_info=market_info,
             reason=None
         )
 
@@ -1156,15 +1212,61 @@ class PositionManager:
         """
         Phase 3.2 Helper: Calculate position size, validate balance, set leverage.
 
-        STUB: Returns mock OrderParams.
-        TODO: Migrate logic from open_position lines 634-670
+        Steps:
+        1. Calculate position size
+        2. Check available balance
+        3. Validate spread (log only, don't block)
+        4. Set leverage
+
+        Returns:
+            OrderParams or None if validation fails
         """
-        # STUB implementation
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
+
+        # Step 1: Calculate position size
+        position_size_usd = request.position_size_usd or self.config.position_size_usd
+        quantity = await self._calculate_position_size(
+            exchange, symbol, request.entry_price, position_size_usd
+        )
+
+        if not quantity:
+            logger.error(f"Failed to calculate position size for {symbol}")
+            return None
+
+        # Step 2: Check available balance
+        has_balance = await self.balance_checker.has_sufficient_balance(
+            exchange_name=exchange_name,
+            required_usd=to_decimal(position_size_usd)
+        )
+
+        if not has_balance:
+            logger.warning(
+                f"⏸️ Skipping {symbol} on {exchange_name}: insufficient funds. "
+                f"Required: {position_size_usd} USDT. "
+                f"Position will be attempted when funds become available."
+            )
+            return None
+
+        # Step 3: Validate spread (log only, don't block)
+        await self._validate_spread(exchange, symbol)
+
+        # Step 4: Set leverage
+        leverage = self.config.leverage
+        notional = float(quantity) * float(request.entry_price)
+
+        # Smart leverage selection based on notional and brackets
+        await exchange.set_leverage(symbol, leverage, notional=notional)
+
+        # Get stop loss percent
+        stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+
+        # Return order parameters
         return OrderParams(
-            quantity=Decimal('0.01'),  # Mock quantity
-            leverage=10,
-            position_size_usd=Decimal('100'),
-            stop_loss_percent=Decimal('2.0')
+            quantity=to_decimal(quantity),
+            leverage=leverage,
+            position_size_usd=to_decimal(position_size_usd),
+            stop_loss_percent=to_decimal(stop_loss_percent)
         )
 
     async def _execute_and_verify_order(
@@ -1176,32 +1278,163 @@ class PositionManager:
         """
         Phase 3.2 Helper: Execute market order and verify fill.
 
-        STUB: Returns None (no order executed).
-        TODO: Migrate logic from open_position lines 671-756
+        Steps:
+        1. Final check: position doesn't exist on exchange
+        2. Execute market order
+        3. Validate order object
+        4. Verify order fill (with retry)
+        5. Final safety checks
 
         Returns:
             Order object or None
         """
-        # STUB implementation
-        return None
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
+        quantity = params.quantity
+
+        # Step 1: Final check - position doesn't exist on exchange
+        logger.debug(f"🔍 Final check: verifying {symbol} doesn't exist on exchange...")
+        try:
+            exchange_positions = await exchange.fetch_positions()
+            normalized_symbol = symbol.replace('/', '').replace(':USDT', '')
+
+            for pos in exchange_positions:
+                pos_symbol = pos.get('symbol', '').replace('/', '').replace(':USDT', '')
+                contracts = abs(float(pos.get('contracts', 0)))
+
+                if pos_symbol == normalized_symbol and contracts > 0:
+                    logger.error(
+                        f"🚨 CRITICAL: Position {symbol} already exists on exchange with {contracts} contracts! "
+                        f"Aborting order creation to prevent duplicate."
+                    )
+                    return None
+
+            logger.debug(f"✅ Final check passed: {symbol} not found on exchange")
+        except Exception as e:
+            logger.warning(f"Could not perform final exchange check for {symbol}: {e}")
+            # Continue anyway - other checks should catch duplicates
+
+        # Step 2: Execute market order
+        logger.info(f"Opening position: {symbol} {request.side} {quantity}")
+
+        # Convert side: long -> buy, short -> sell
+        if request.side.lower() == 'long':
+            order_side = 'buy'
+        elif request.side.lower() == 'short':
+            order_side = 'sell'
+        else:
+            order_side = request.side.lower()
+
+        order = await exchange.create_market_order(symbol, order_side, quantity)
+
+        if not order:
+            logger.error(
+                f"❌ Failed to create order for {symbol}:\n"
+                f"   Exchange: {exchange_name}\n"
+                f"   Side: {order_side}\n"
+                f"   Quantity: {quantity}\n"
+                f"   Likely cause: Testnet instability or symbol unavailable"
+            )
+            return None
+
+        # Step 3: Validate order object
+        if not hasattr(order, 'filled'):
+            logger.error(
+                f"❌ Order object is invalid for {symbol}: "
+                f"missing 'filled' attribute. Order type: {type(order)}"
+            )
+            return None
+
+        # Step 4: Verify order fill (with retry)
+        if not order.filled or order.filled == 0:
+            logger.info(f"Order created but fill status unknown, verifying with retry logic...")
+            verified_order = await self._verify_order_filled(
+                exchange,
+                order.id,
+                symbol,
+                exchange_name
+            )
+
+            if verified_order:
+                order = verified_order
+            else:
+                logger.error(
+                    f"❌ Order {order.id} not filled after verification retries. "
+                    f"Position will NOT be saved to database."
+                )
+                return None
+
+        # Step 5: Final safety checks
+        if not order.filled or order.filled <= 0:
+            logger.error(f"Invalid order filled quantity for {symbol}: {order.filled}")
+            return None
+
+        if not order.price or order.price <= 0:
+            logger.error(f"Invalid order price for {symbol}: {order.price}")
+            return None
+
+        # Order successfully executed and verified
+        return order
 
     async def _create_position_with_sl(
         self,
         request: PositionRequest,
         order,
-        params: OrderParams
+        params: OrderParams,
+        exchange: ExchangeManager
     ) -> Tuple[Optional[PositionState], Optional[str]]:
         """
         Phase 3.2 Helper: Create position state and set stop loss.
 
-        STUB: Returns None (no position created).
-        TODO: Migrate logic from open_position lines 757-791
+        Steps:
+        1. Create PositionState object
+        2. Calculate stop loss price
+        3. Set stop loss on exchange
+        4. Update position with SL info
 
         Returns:
             Tuple[Optional[PositionState], Optional[str]]: (position, sl_order_id)
+            Returns (None, None) if SL creation fails
         """
-        # STUB implementation
-        return None, None
+        symbol = request.symbol
+        exchange_name = request.exchange.lower()
+
+        # Step 1: Create position state
+        position = PositionState(
+            id=None,  # Will be set after DB insert
+            symbol=symbol,
+            exchange=exchange_name,
+            side=request.side.lower(),
+            quantity=order.filled,
+            entry_price=order.price,
+            current_price=order.price,
+            unrealized_pnl=0,
+            unrealized_pnl_percent=0,
+            opened_at=datetime.now(timezone.utc)
+        )
+
+        # Step 2: Calculate stop loss price
+        stop_loss_price = calculate_stop_loss(
+            to_decimal(position.entry_price),
+            position.side,
+            params.stop_loss_percent
+        )
+
+        logger.info(f"Setting stop loss for {symbol}: {params.stop_loss_percent}% at ${stop_loss_price:.4f}")
+
+        # Step 3: Set stop loss on exchange
+        sl_success, sl_order_id = await self._set_stop_loss(exchange, position, stop_loss_price)
+
+        if not sl_success:
+            logger.error(f"❌ Stop loss creation failed for {symbol}")
+            return None, None
+
+        # Step 4: Update position with SL info
+        position.has_stop_loss = True
+        position.stop_loss_price = stop_loss_price
+        logger.info(f"✅ Stop loss confirmed for {symbol}, order_id={sl_order_id}")
+
+        return position, sl_order_id
 
     async def _save_position_to_db(
         self,
@@ -1209,19 +1442,110 @@ class PositionManager:
         exchange: ExchangeManager,
         order,
         sl_order_id: str,
-        params: OrderParams
+        params: OrderParams,
+        request: PositionRequest
     ) -> None:
         """
         Phase 3.2 Helper: Save to DB, initialize trailing stop, update tracking.
 
-        STUB: Does nothing.
-        TODO: Migrate logic from open_position lines 793-876
+        Steps:
+        1. Create trade record
+        2. Create position record
+        3. Update SL status in DB
+        4. Initialize trailing stop
+        5. Update internal tracking
+        6. Invalidate balance cache
+        7. Emit position_opened event
 
         Raises:
-            Exception on DB save failure
+            Exception on DB save failure (caller must handle compensating transaction)
         """
-        # STUB implementation
-        pass
+        symbol = position.symbol
+        exchange_name = position.exchange
+
+        # Convert side for order
+        order_side = 'buy' if position.side == 'long' else 'sell'
+
+        # Step 1 & 2: Save to database
+        try:
+            trade_id = await self.repository.create_trade({
+                'signal_id': request.signal_id,
+                'symbol': symbol,
+                'exchange': exchange_name,
+                'side': order_side,
+                'quantity': order.amount,
+                'price': order.price,
+                'executed_qty': order.filled,
+                'average_price': order.price,
+                'order_id': order.id,
+                'status': 'FILLED'
+            })
+
+            position_id = await self.repository.create_position({
+                'trade_id': trade_id,
+                'symbol': symbol,
+                'exchange': exchange_name,
+                'side': position.side,
+                'quantity': position.quantity,
+                'entry_price': position.entry_price,
+                'leverage': params.leverage
+            })
+
+            position.id = position_id
+            logger.info(f"💾 Position saved to database with ID: {position.id}")
+
+            # Step 3: Update SL in database
+            await self.repository.update_position_stop_loss(
+                position_id, position.stop_loss_price, ""
+            )
+            logger.info(f"✅ Stop Loss status updated in DB for {symbol}: has_stop_loss=TRUE")
+
+        except Exception as db_error:
+            # CRITICAL: Let caller handle compensating transaction
+            logger.error(f"❌ Database save failed for {symbol}")
+            raise db_error
+
+        # Step 4: Initialize trailing stop
+        trailing_manager = self.trailing_managers.get(exchange_name)
+        if trailing_manager:
+            await trailing_manager.create_trailing_stop(
+                symbol=symbol,
+                side=position.side,
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                initial_stop=position.stop_loss_price,
+                stop_order_id=sl_order_id
+            )
+            position.has_trailing_stop = True
+
+            await self.repository.update_position_trailing_stop(
+                position_id=position.id,
+                has_trailing_stop=True
+            )
+
+        # Step 5: Update internal tracking
+        self.positions[symbol] = position
+        self.position_count += 1
+        self.total_exposure += Decimal(str(position.quantity * position.entry_price))
+        self.stats['positions_opened'] += 1
+
+        logger.info(
+            f"✅ Position opened: {symbol} {position.side} "
+            f"{position.quantity:.6f} @ ${position.entry_price:.4f}"
+        )
+
+        # Step 6: Invalidate balance cache
+        self.balance_checker.invalidate_cache(exchange_name)
+        logger.debug(f"✅ Invalidated balance cache for {exchange_name} (funds spent)")
+
+        # Step 7: Emit position_opened event
+        await self.event_router.emit('position_opened', {
+            'symbol': symbol,
+            'exchange': exchange_name,
+            'side': position.side,
+            'quantity': position.quantity,
+            'entry_price': position.entry_price
+        })
 
     # ============================================================
     # END REFACTORING HELPER METHODS
