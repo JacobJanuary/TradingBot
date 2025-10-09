@@ -158,7 +158,7 @@ class Position(Base):
         Index('uq_one_position_per_symbol', 'symbol', 'exchange',
               unique=True,
               postgresql_where=Column('status') == 'OPEN'),
-        {'schema': 'trading'}
+        {'schema': 'monitoring'}
     )
 
 
