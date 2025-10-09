@@ -549,8 +549,8 @@ class EnhancedZombieOrderManager:
                     params={'orderFilter': 'StopOrder'}
                 )
                 logger.info(f"✅ Cancelled all stop orders for {symbol}")
-            except:
-                pass  # Not all exchanges support this
+            except Exception as e:
+                logger.debug(f"Exchange doesn't support stop order filter: {e}")
 
             return True
 
