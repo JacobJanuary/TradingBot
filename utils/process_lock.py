@@ -163,8 +163,8 @@ def check_running_instances() -> int:
                             pid = int(parts[1])
                             if pid != current_pid:
                                 count += 1
-                        except:
-                            pass
+                        except (ValueError, IndexError) as e:
+                            logger.debug(f"Malformed ps aux line: {line.strip()}: {e}")
             
             return count
         return 0
