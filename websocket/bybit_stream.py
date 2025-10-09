@@ -114,72 +114,103 @@ class BybitPrivateStream(ImprovedStream):
     async def _process_position_update(self, data: list):
         """Process position updates"""
         for position in data:
-            position_data = {
-                'symbol': position['symbol'],
-                'side': position['side'],
-                'size': float(position['size']),
-                'position_value': float(position['positionValue']),
-                'entry_price': float(position.get('avgPrice', 0)),
-                'mark_price': float(position.get('markPrice', 0)),
-                'unrealized_pnl': float(position.get('unrealisedPnl', 0)),
-                'realized_pnl': float(position.get('realisedPnl', 0)),
-                'leverage': float(position.get('leverage', 1)),
-                'position_status': position.get('positionStatus', 'Normal'),
-                'stop_loss': float(position.get('stopLoss', 0)),
-                'take_profit': float(position.get('takeProfit', 0))
-            }
-            
-            if self.event_handler:
-                await self.event_handler('position_update', {
-                    'exchange': 'bybit',
-                    'data': position_data
-                })
-            
-            # Log important events
-            if position_data['size'] == 0:
-                logger.info(f"Position closed: {position_data['symbol']}")
-            elif position_data['unrealized_pnl'] < -100:
-                logger.warning(f"Large loss on {position_data['symbol']}: ${position_data['unrealized_pnl']:.2f}")
+            try:
+                # CRITICAL fields - must be present, fail if missing
+                if 'symbol' not in position:
+                    logger.error(f"Position update missing 'symbol' field: {position}")
+                    continue
+                if 'side' not in position:
+                    logger.error(f"Position update missing 'side' field for {position.get('symbol')}: {position}")
+                    continue
+                if 'size' not in position:
+                    logger.error(f"Position update missing 'size' field for {position.get('symbol')}: {position}")
+                    continue
+
+                position_data = {
+                    'symbol': position['symbol'],
+                    'side': position['side'],
+                    'size': float(position['size']),
+                    'position_value': float(position.get('positionValue', 0)),
+                    'entry_price': float(position.get('avgPrice', 0)),
+                    'mark_price': float(position.get('markPrice', 0)),
+                    'unrealized_pnl': float(position.get('unrealisedPnl', 0)),
+                    'realized_pnl': float(position.get('realisedPnl', 0)),
+                    'leverage': float(position.get('leverage', 1)),
+                    'position_status': position.get('positionStatus', 'Normal'),
+                    'stop_loss': float(position.get('stopLoss', 0)),
+                    'take_profit': float(position.get('takeProfit', 0))
+                }
+
+                if self.event_handler:
+                    await self.event_handler('position_update', {
+                        'exchange': 'bybit',
+                        'data': position_data
+                    })
+
+                # Log important events
+                if position_data['size'] == 0:
+                    logger.info(f"Position closed: {position_data['symbol']}")
+                elif position_data['unrealized_pnl'] < -100:
+                    logger.warning(f"Large loss on {position_data['symbol']}: ${position_data['unrealized_pnl']:.2f}")
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error parsing position update: {e}, data: {position}")
     
     async def _process_order_update(self, data: list):
         """Process order updates"""
         for order in data:
-            order_data = {
-                'symbol': order['symbol'],
-                'order_id': order['orderId'],
-                'client_order_id': order.get('orderLinkId'),
-                'side': order['side'],
-                'order_type': order['orderType'],
-                'price': float(order.get('price', 0)),
-                'quantity': float(order['qty']),
-                'executed_qty': float(order.get('cumExecQty', 0)),
-                'status': order['orderStatus'],
-                'time_in_force': order.get('timeInForce'),
-                'reduce_only': order.get('reduceOnly', False),
-                'stop_order_type': order.get('stopOrderType'),
-                'trigger_price': float(order.get('triggerPrice', 0)),
-                'created_time': order['createdTime']
-            }
-            
-            if self.event_handler:
-                await self.event_handler('order_update', {
-                    'exchange': 'bybit',
-                    'data': order_data
-                })
-            
-            # Log important events
-            if order_data['status'] == 'New':
-                logger.info(f"New order: {order_data['symbol']} {order_data['side']} {order_data['order_type']}")
-            elif order_data['status'] == 'Filled':
-                logger.info(f"Order filled: {order_data['symbol']} {order_data['side']}")
-                
-                if order_data['stop_order_type']:
-                    if 'StopLoss' in order_data['stop_order_type']:
-                        logger.warning(f"⚠️ STOP LOSS TRIGGERED for {order_data['symbol']}")
-                    elif 'TakeProfit' in order_data['stop_order_type']:
-                        logger.info(f"✅ TAKE PROFIT TRIGGERED for {order_data['symbol']}")
-            elif order_data['status'] == 'Cancelled':
-                logger.info(f"Order cancelled: {order_data['order_id']}")
+            try:
+                # CRITICAL fields - must be present, fail if missing
+                if 'symbol' not in order:
+                    logger.error(f"Order update missing 'symbol' field: {order}")
+                    continue
+                if 'orderId' not in order:
+                    logger.error(f"Order update missing 'orderId' field for {order.get('symbol')}: {order}")
+                    continue
+                if 'side' not in order:
+                    logger.error(f"Order update missing 'side' field for {order.get('symbol')}: {order}")
+                    continue
+                if 'orderStatus' not in order:
+                    logger.error(f"Order update missing 'orderStatus' field for {order.get('symbol')}: {order}")
+                    continue
+
+                order_data = {
+                    'symbol': order['symbol'],
+                    'order_id': order['orderId'],
+                    'client_order_id': order.get('orderLinkId'),
+                    'side': order['side'],
+                    'order_type': order.get('orderType', 'Unknown'),
+                    'price': float(order.get('price', 0)),
+                    'quantity': float(order.get('qty', 0)),
+                    'executed_qty': float(order.get('cumExecQty', 0)),
+                    'status': order['orderStatus'],
+                    'time_in_force': order.get('timeInForce'),
+                    'reduce_only': order.get('reduceOnly', False),
+                    'stop_order_type': order.get('stopOrderType'),
+                    'trigger_price': float(order.get('triggerPrice', 0)),
+                    'created_time': order.get('createdTime', '')
+                }
+
+                if self.event_handler:
+                    await self.event_handler('order_update', {
+                        'exchange': 'bybit',
+                        'data': order_data
+                    })
+
+                # Log important events
+                if order_data['status'] == 'New':
+                    logger.info(f"New order: {order_data['symbol']} {order_data['side']} {order_data['order_type']}")
+                elif order_data['status'] == 'Filled':
+                    logger.info(f"Order filled: {order_data['symbol']} {order_data['side']}")
+
+                    if order_data['stop_order_type']:
+                        if 'StopLoss' in order_data['stop_order_type']:
+                            logger.warning(f"⚠️ STOP LOSS TRIGGERED for {order_data['symbol']}")
+                        elif 'TakeProfit' in order_data['stop_order_type']:
+                            logger.info(f"✅ TAKE PROFIT TRIGGERED for {order_data['symbol']}")
+                elif order_data['status'] == 'Cancelled':
+                    logger.info(f"Order cancelled: {order_data['order_id']}")
+            except (ValueError, TypeError) as e:
+                logger.error(f"Error parsing order update: {e}, data: {order}")
     
     async def _process_execution_update(self, data: list):
         """Process trade execution updates"""
