@@ -53,7 +53,8 @@ class ZombieCleanupService:
                  repository,
                  exchanges: Dict,
                  sync_interval: int = 600,
-                 aggressive_cleanup_threshold: int = 10):
+                 aggressive_cleanup_threshold: int = 10,
+                 moderate_zombie_threshold: int = 5):
         """
         Initialize ZombieCleanupService
         
@@ -61,12 +62,14 @@ class ZombieCleanupService:
             repository: Database repository
             exchanges: Dict of exchange managers
             sync_interval: Sync interval in seconds
-            aggressive_cleanup_threshold: Threshold for aggressive cleanup
+            aggressive_cleanup_threshold: Threshold for aggressive cleanup (critical level)
+            moderate_zombie_threshold: Threshold for moderate zombie warning
         """
         self.repository = repository
         self.exchanges = exchanges
         self.sync_interval = sync_interval
         self.aggressive_cleanup_threshold = aggressive_cleanup_threshold
+        self.moderate_zombie_threshold = moderate_zombie_threshold
         
         # Tracking
         self.zombie_check_counter = 0
@@ -304,7 +307,7 @@ class ZombieCleanupService:
                     logger.critical(f"🔄 Temporarily reducing sync interval from {self.sync_interval}s to 300s")
                     self.sync_interval = min(300, self.sync_interval)
                     logger.critical("📢 Manual intervention may be required - check exchange UI")
-                elif total_zombies_found > 5:
+                elif total_zombies_found > self.moderate_zombie_threshold:
                     logger.warning(f"⚠️ Moderate zombie count: {total_zombies_found}")
                     if self.sync_interval > 300:
                         self.sync_interval = 450  # 7.5 minutes

@@ -69,6 +69,14 @@ class AgedPositionManager:
             field_name='COMMISSION_PERCENT'
         ) / Decimal('100')
 
+        # Exit order price difference threshold (%)
+        # Update exit order if price changed more than this threshold
+        self.exit_order_price_diff_threshold = safe_decimal(
+            os.getenv('AGED_EXIT_ORDER_PRICE_DIFF_THRESHOLD', 0.5),
+            default=Decimal('0.5'),
+            field_name='AGED_EXIT_ORDER_PRICE_DIFF_THRESHOLD'
+        )
+
         # Track managed positions to avoid duplicate processing
         self.managed_positions = {}  # position_id: {'last_update': datetime, 'order_id': str}
 
@@ -375,7 +383,7 @@ class AgedPositionManager:
                                 self.stats['orders_updated'] += 1
                         else:
                             logger.debug(
-                                f"Exit order price acceptable (diff {price_diff_pct:.1f}% < 0.5%), "
+                                f"Exit order price acceptable (diff {price_diff_pct:.1f}% < {self.exit_order_price_diff_threshold}%), "
                                 f"keeping existing order at ${existing_price:.4f}"
                             )
                     else:
@@ -426,7 +434,7 @@ class AgedPositionManager:
                         existing_price = safe_decimal(existing_order.get('price', 0), field_name='existing_order_price')
                         price_diff_pct = abs(target_price - existing_price) / existing_price * Decimal('100')
 
-                        if price_diff_pct > 0.5:
+                        if price_diff_pct > self.exit_order_price_diff_threshold:
                             # Cancel old order
                             try:
                                 await exchange.cancel_order(existing_order['id'], position.symbol)
