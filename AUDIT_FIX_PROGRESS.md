@@ -1,18 +1,18 @@
 # ПРОГРЕСС ПРИМЕНЕНИЯ ПРАВОК
 
 **Дата начала:** 2025-10-09
-**Последнее обновление:** 2025-10-09 23:15:00
-**Версия плана:** 2.2
+**Последнее обновление:** 2025-10-09 23:50:00
+**Версия плана:** 2.3
 
 ---
 
 ## ОБЩАЯ СТАТИСТИКА
 
 - **Всего шагов:** ~40
-- **Выполнено:** 20
+- **Выполнено:** 21
 - **В процессе:** 1 (Phase 2.1 emergency_liquidation - in design)
-- **Осталось:** 19
-- **Прогресс:** ~50%
+- **Осталось:** 18
+- **Прогресс:** ~52%
 
 ---
 
@@ -214,13 +214,31 @@
 ### 4.4 Documentation
 - [x] Phase 3.2 helper methods already have docstrings (completed in Phase 3.2)
 
+### 4.2 Magic Numbers Extraction
+- [x] Analysis: Found magic numbers in position_manager, WebSocket files
+- [x] Branch: refactor/magic-numbers-extraction
+- [x] core/position_manager.py:
+  - [x] MAX_ORDER_VERIFICATION_RETRIES = 3
+  - [x] ORDER_VERIFICATION_DELAYS = [1.0, 2.0, 3.0]
+  - [x] POSITION_CLOSE_RETRY_DELAY_SEC = 60
+- [x] websocket/improved_stream.py:
+  - [x] CONNECTION_MONITOR_ERROR_DELAY_SEC = 5
+  - [x] CONNECTION_MONITOR_LOOP_DELAY_SEC = 1
+- [x] websocket/adaptive_stream.py:
+  - [x] STREAM_RECONNECT_DELAY_SEC = 5
+  - [x] STREAM_POLLING_INTERVAL_SEC = 5
+  - [x] STREAM_RESTART_DELAY_SEC = 10
+- [x] Total: 11 magic numbers → 8 named constants
+- [x] Syntax check PASS
+- [x] Git commit: dfe4e34
+- [x] Merged
+
 ### Deferred (Low Priority)
-- [ ] 4.2 Magic numbers extraction (low value, deferred)
 - [ ] Additional type hints (25 issues - not critical)
 - [ ] Long methods beyond open_position() (15 issues - not critical)
 
-**Фаза 4 статус:** ✅ ЗАВЕРШЕНА (2025-10-09 23:15)
-**Merged to:** fix/critical-position-sync-bug (commit f4280ca)
+**Фаза 4 статус:** ✅ ПОЛНОСТЬЮ ЗАВЕРШЕНА (2025-10-09 23:45)
+**Merged to:** fix/critical-position-sync-bug (commits f4280ca, latest merge)
 
 ---
 
@@ -265,9 +283,9 @@
 - ✅ Phase 3: HIGH ПРИОРИТЕТ (2/2 задачи)
   - ✅ Phase 3.1 Bare except statements (4 production files)
   - ✅ Phase 3.2 open_position() refactoring (393 → 62 lines)
-- ✅ Phase 4: MEDIUM ПРИОРИТЕТ (3/4 sub-phases)
+- ✅ Phase 4: MEDIUM ПРИОРИТЕТ (4/4 sub-phases - ПОЛНОСТЬЮ)
   - ✅ Phase 4.1 Dict access safety (WebSocket parsers)
-  - ⏭️ Phase 4.2 Magic numbers (deferred - low value)
+  - ✅ Phase 4.2 Magic numbers extraction (11 → 8 constants)
   - ✅ Phase 4.3 Division by zero safety
   - ✅ Phase 4.4 Docstrings (already complete from Phase 3.2)
 
