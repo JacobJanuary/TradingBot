@@ -18,6 +18,8 @@ from decimal import Decimal
 import ccxt
 import asyncio
 
+from utils.decimal_utils import safe_decimal
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +77,7 @@ class StopLossManager:
                     )
 
                     for pos in positions:
-                        if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                        if pos['symbol'] == symbol and safe_decimal(pos.get('contracts', 0), field_name='pos_contracts') > 0:
                             # КРИТИЧНО: Проверяем position.info.stopLoss
                             # Источник: core/position_manager.py:1324
                             stop_loss = pos.get('info', {}).get('stopLoss', '0')
@@ -226,7 +228,7 @@ class StopLossManager:
             position_found = False
 
             for pos in positions:
-                if pos['symbol'] == ccxt_symbol and float(pos.get('contracts', 0)) > 0:
+                if pos['symbol'] == ccxt_symbol and safe_decimal(pos.get('contracts', 0), field_name='pos_contracts') > 0:
                     position_idx = int(pos.get('info', {}).get('positionIdx', 0))
                     position_found = True
                     break
@@ -267,7 +269,7 @@ class StopLossManager:
                 self.logger.info(f"✅ Stop Loss set successfully at {sl_price_formatted}")
                 return {
                     'status': 'created',
-                    'stopPrice': float(sl_price_formatted),
+                    'stopPrice': safe_decimal(sl_price_formatted, field_name='sl_price'),
                     'info': result
                 }
             elif ret_code == 34040 and 'not modified' in ret_msg:
@@ -275,7 +277,7 @@ class StopLossManager:
                 self.logger.info(f"✅ Stop Loss already set at {stop_price} (not modified)")
                 return {
                     'status': 'already_exists',
-                    'stopPrice': float(sl_price_formatted),
+                    'stopPrice': safe_decimal(sl_price_formatted, field_name='sl_price'),
                     'info': result
                 }
             else:
@@ -380,7 +382,7 @@ class StopLossManager:
                     value = order.get(field)
 
                 if value and value not in ['0', '0.00', '', None]:
-                    return float(value)
+                    return safe_decimal(value, field_name='order_stop_price')
 
             return None
 
