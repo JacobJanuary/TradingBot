@@ -434,8 +434,9 @@ class EnhancedExchangeManager:
         try:
             market = self.exchange.market(symbol)
             return float(market.get('limits', {}).get('amount', {}).get('min', 0.001))
-        except:
+        except (KeyError, AttributeError, ValueError, Exception) as e:
             # Default minimums
+            logger.debug(f"Failed to get min amount for {symbol}: {e}. Using defaults")
             if 'BTC' in symbol:
                 return 0.001
             return 0.01
