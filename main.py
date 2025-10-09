@@ -24,9 +24,9 @@ from core.aged_position_manager import AgedPositionManager
 from monitoring.health_check import HealthChecker, HealthStatus
 from monitoring.performance import PerformanceTracker
 
-# Setup logging - WARNING by default to prevent queue overflow
+# Setup logging - INFO for diagnostics
 file_handler = logging.FileHandler('logs/trading_bot.log')
-file_handler.setLevel(logging.WARNING)  # Only WARNING+ to file
+file_handler.setLevel(logging.INFO)  # INFO+ to file for TS diagnostics
 
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.WARNING)  # Only WARNING+ to console
