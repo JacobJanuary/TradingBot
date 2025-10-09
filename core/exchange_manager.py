@@ -687,7 +687,9 @@ class ExchangeManager:
     async def cancel_order(self, order_id: str, symbol: str) -> bool:
         """Cancel order"""
         try:
-            result = await self.exchange.cancel_order(order_id, symbol)
+            result = await self.rate_limiter.execute_request(
+                self.exchange.cancel_order, order_id, symbol
+            )
             return result.get('status') == 'canceled'
         except ccxt.OrderNotFound:
             logger.warning(f"Order {order_id} not found")
@@ -700,11 +702,15 @@ class ExchangeManager:
         """Cancel all open orders"""
         try:
             if self.exchange.has['cancelAllOrders']:
-                result = await self.exchange.cancel_all_orders(symbol)
+                result = await self.rate_limiter.execute_request(
+                    self.exchange.cancel_all_orders, symbol
+                )
                 return len(result)
             else:
                 # Fallback: fetch and cancel individually
-                orders = await self.exchange.fetch_open_orders(symbol)
+                orders = await self.rate_limiter.execute_request(
+                    self.exchange.fetch_open_orders, symbol
+                )
                 count = 0
                 for order in orders:
                     if await self.cancel_order(order['id'], order['symbol']):
@@ -717,7 +723,9 @@ class ExchangeManager:
     async def fetch_order(self, order_id: str, symbol: str) -> Optional[OrderResult]:
         """Fetch order details"""
         try:
-            order = await self.exchange.fetch_order(order_id, symbol)
+            order = await self.rate_limiter.execute_request(
+                self.exchange.fetch_order, order_id, symbol
+            )
             return self._parse_order(order)
         except ccxt.OrderNotFound:
             return None
@@ -735,9 +743,13 @@ class ExchangeManager:
         """
         # CRITICAL FIX: Support params for Bybit category='linear' and orderFilter
         if params:
-            orders = await self.exchange.fetch_open_orders(symbol, params)
+            orders = await self.rate_limiter.execute_request(
+                self.exchange.fetch_open_orders, symbol, params
+            )
         else:
-            orders = await self.exchange.fetch_open_orders(symbol)
+            orders = await self.rate_limiter.execute_request(
+                self.exchange.fetch_open_orders, symbol
+            )
         return [self._parse_order(order) for order in orders]
 
     async def fetch_open_order(self, order_id: str, symbol: str) -> Optional[OrderResult]:
@@ -765,19 +777,21 @@ class ExchangeManager:
     async def fetch_closed_orders(self, symbol: str, limit: int = 10) -> List[Dict]:
         """
         Fetch multiple closed orders for a symbol.
-        
+
         Used for order verification in Freqtrade-style retry logic.
-        
+
         Args:
             symbol: Symbol to fetch orders for
             limit: Maximum number of orders to fetch
-            
+
         Returns:
             List of order dicts (CCXT format, not OrderResult)
         """
         try:
             if self.exchange.has.get('fetchClosedOrders'):
-                closed_orders = await self.exchange.fetch_closed_orders(symbol, limit=limit)
+                closed_orders = await self.rate_limiter.execute_request(
+                    self.exchange.fetch_closed_orders, symbol, limit=limit
+                )
                 return closed_orders
             else:
                 logger.warning(f"Exchange {self.exchange_name} doesn't support fetchClosedOrders")
@@ -789,30 +803,34 @@ class ExchangeManager:
     async def fetch_closed_order(self, order_id: str, symbol: str) -> Optional[OrderResult]:
         """
         Fetch a single closed order by ID
-        
+
         Args:
             order_id: Order ID to fetch
             symbol: Symbol of the order
-            
+
         Returns:
             OrderResult if found, None otherwise
         """
         try:
             # Try to fetch from closed orders (if exchange supports it)
             if self.exchange.has.get('fetchClosedOrders'):
-                closed_orders = await self.exchange.fetch_closed_orders(symbol, limit=100)
+                closed_orders = await self.rate_limiter.execute_request(
+                    self.exchange.fetch_closed_orders, symbol, limit=100
+                )
                 for order in closed_orders:
                     if order['id'] == order_id:
                         return self._parse_order(order)
-            
+
             # Fallback: try fetch_order (works for recent orders)
             try:
-                order = await self.exchange.fetch_order(order_id, symbol)
+                order = await self.rate_limiter.execute_request(
+                    self.exchange.fetch_order, order_id, symbol
+                )
                 if order and order.get('status') in ['closed', 'filled', 'canceled']:
                     return self._parse_order(order)
             except ccxt.OrderNotFound:
                 pass
-            
+
             return None
         except ccxt.BaseError as e:
             logger.error(f"Failed to fetch closed order {order_id}: {e}")
