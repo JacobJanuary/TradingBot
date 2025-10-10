@@ -149,6 +149,10 @@ class PositionManager:
         # Position locks
         self.position_locks: set = set()
 
+        # ✅ FIX #2: Locks for atomic position existence checks
+        # Prevents race condition when multiple tasks check same symbol simultaneously
+        self.check_locks: Dict[str, asyncio.Lock] = {}
+
         # Risk management
         self.total_exposure = Decimal('0')
         self.position_count = 0
@@ -731,30 +735,44 @@ class PositionManager:
             self.position_locks.discard(lock_key)
 
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
-        """Check if position already exists"""
-        # Check local tracking
-        if symbol in self.positions:
-            return True
+        """
+        Check if position already exists (thread-safe)
 
-        # Check database
-        db_position = await self.repository.get_open_position(symbol, exchange)
-        if db_position:
-            return True
+        ✅ FIX #2: Uses asyncio.Lock to prevent race condition where multiple
+        parallel tasks check the same symbol simultaneously and all get "no position"
+        """
+        # Create unique lock key for this symbol+exchange combination
+        lock_key = f"{exchange}_{symbol}"
 
-        # Check exchange
-        exchange_obj = self.exchanges.get(exchange)
-        if exchange_obj:
-            # CRITICAL FIX: Same issue as verify_position_exists - use fetch_positions() without [symbol]
-            positions = await exchange_obj.fetch_positions()
-            # Find position using normalize_symbol comparison
-            normalized_symbol = normalize_symbol(symbol)
-            for pos in positions:
-                if normalize_symbol(pos.get('symbol')) == normalized_symbol:
-                    contracts = float(pos.get('contracts') or 0)
-                    if abs(contracts) > 0:
-                        return True
+        # Get or create lock for this symbol
+        if lock_key not in self.check_locks:
+            self.check_locks[lock_key] = asyncio.Lock()
 
-        return False
+        # Atomic check - only ONE task can check at a time for this symbol
+        async with self.check_locks[lock_key]:
+            # Check local tracking
+            if symbol in self.positions:
+                return True
+
+            # Check database
+            db_position = await self.repository.get_open_position(symbol, exchange)
+            if db_position:
+                return True
+
+            # Check exchange
+            exchange_obj = self.exchanges.get(exchange)
+            if exchange_obj:
+                # CRITICAL FIX: Same issue as verify_position_exists - use fetch_positions() without [symbol]
+                positions = await exchange_obj.fetch_positions()
+                # Find position using normalize_symbol comparison
+                normalized_symbol = normalize_symbol(symbol)
+                for pos in positions:
+                    if normalize_symbol(pos.get('symbol')) == normalized_symbol:
+                        contracts = float(pos.get('contracts') or 0)
+                        if abs(contracts) > 0:
+                            return True
+
+            return False
 
     async def has_open_position(self, symbol: str, exchange: str = None) -> bool:
         """
