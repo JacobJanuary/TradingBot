@@ -53,10 +53,11 @@ class ExchangeManager:
         }
     }
 
-    def __init__(self, exchange_name: str, config: Dict):
+    def __init__(self, exchange_name: str, config: Dict, repository=None):
         """Initialize exchange with configuration"""
         self.name = exchange_name.lower()
         self.config = config
+        self.repository = repository  # Optional: for order caching (Phase 3)
 
         # Initialize CCXT exchange
         exchange_class = getattr(ccxt, self.name)
@@ -256,6 +257,11 @@ class ExchangeManager:
             )
 
             logger.info(f"✅ Created {type} order for {symbol}: {side} {amount} @ {price or 'market'}")
+
+            # Cache order locally (Phase 3: Bybit 500 order limit solution)
+            if self.repository:
+                await self.repository.cache_order(self.name, order)
+
             return order
 
         except ccxt.InsufficientFunds as e:
@@ -532,7 +538,8 @@ class ExchangeManager:
             result = await self.exchange.cancel_order(order_id, symbol)
             return result.get('status') == 'canceled'
         except ccxt.OrderNotFound:
-            logger.warning(f"Order {order_id} not found")
+            # Order not found is expected (already filled/cancelled/expired) - not an error
+            logger.info(f"Order {order_id} not found (likely filled/cancelled)")
             return False
         except ccxt.BaseError as e:
             logger.error(f"Failed to cancel order {order_id}: {e}")
@@ -557,13 +564,36 @@ class ExchangeManager:
             raise
 
     async def fetch_order(self, order_id: str, symbol: str) -> Optional[OrderResult]:
-        """Fetch order details"""
+        """
+        Fetch order details with cache fallback
+
+        For Bybit: Falls back to cache if 500 order limit error occurs
+        """
         try:
             order = await self.exchange.fetch_order(order_id, symbol)
             return self._parse_order(order)
         except ccxt.OrderNotFound:
             return None
         except ccxt.BaseError as e:
+            error_msg = str(e).lower()
+
+            # Check for Bybit 500 order limit error
+            if self.name == 'bybit' and '500' in error_msg and ('order' in error_msg or 'limit' in error_msg):
+                logger.warning(
+                    f"⚠️ Bybit 500 order limit reached for {order_id}, "
+                    f"trying cache fallback..."
+                )
+
+                # Try to get from cache
+                if self.repository:
+                    cached_order = await self.repository.get_cached_order(self.name, order_id)
+                    if cached_order:
+                        logger.info(f"✅ Retrieved order {order_id} from cache")
+                        return self._parse_order(cached_order)
+
+                logger.warning(f"Order {order_id} not found in cache either")
+                return None
+
             logger.error(f"Failed to fetch order {order_id}: {e}")
             raise
 
