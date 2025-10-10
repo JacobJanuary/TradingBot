@@ -216,26 +216,33 @@ class Repository:
                 AND status = 'active'
         """
 
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                query,
-                position_update['current_price'],
-                position_update.get('unrealized_pnl', 0),
-                position_update['symbol'],
-                position_update['exchange']
-            )
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    query,
+                    position_update['current_price'],
+                    position_update.get('unrealized_pnl', 0),
+                    position_update['symbol'],
+                    position_update['exchange']
+                )
+                # DEBUG: Log result
+                logger.debug(f"🔍 DB UPDATE: {position_update['symbol']} price={position_update['current_price']} result={result}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update position from websocket: {e}", exc_info=True)
 
     async def update_position_stop_loss(self, position_id: int, stop_price: float, order_id: str):
         """Update position stop loss"""
         query = """
             UPDATE monitoring.positions
             SET stop_loss_price = $1,
+                has_stop_loss = TRUE,
                 updated_at = NOW()
             WHERE id = $2
         """
 
         async with self.pool.acquire() as conn:
-            await conn.execute(query, stop_price, position_id)
+            result = await conn.execute(query, stop_price, position_id)
+            logger.info(f"🔍 DB: updated position {position_id} with SL price {stop_price}, has_stop_loss=TRUE, result={result}")
 
     async def update_position_trailing_stop(self, position_id: int,
                                             activation_price: float,
