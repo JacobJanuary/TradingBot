@@ -1,0 +1,35 @@
+METRICS SNAPSHOT BEFORE POSITION SYNCHRONIZER FIX
+=================================================
+Date: 2025-10-11
+Tag: before-sync-fix
+
+GIT STATE:
+----------
+Current commit: e54995f - Current state before Position Synchronizer fix
+Tag created: before-sync-fix
+Branch: main
+
+KNOWN ISSUES (from investigation):
+-----------------------------------
+- Total positions examined: 177 (2025-10-10)
+- Phantom positions (signal_id=NULL, exchange_order_id=NULL): 130 (73%)
+- Valid wave positions (signal_id NOT NULL): 49 (all ≤5 per wave) ✅
+- Root cause: Position Synchronizer creating phantom records from stale CCXT data
+
+DATABASE BACKUP STATUS:
+-----------------------
+⚠️  Database backup failed (connection issue)
+✅ Git tag "before-sync-fix" created for rollback
+✅ All investigation documents committed
+
+ROLLBACK CAPABILITY:
+--------------------
+Primary: git checkout before-sync-fix (instant rollback)
+Secondary: git reset --hard before-sync-fix
+Tertiary: Disable sync in config
+
+PLANNED FIX:
+------------
+Phase 1: Stricter filtering (_fetch_exchange_positions)
+Phase 2: Save exchange_order_id (_add_missing_position)
+Phase 3: Validation (reject no order_id / old positions)

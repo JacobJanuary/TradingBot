@@ -172,10 +172,11 @@ class PositionSynchronizer:
                 if symbol not in db_map:
                     logger.warning(f"  ➕ {symbol}: Missing from database")
 
-                    # Add to database
-                    await self._add_missing_position(exchange_name, exchange_pos)
-                    result['added_missing'].append(symbol)
-                    self.stats['added_missing'] += 1
+                    # Add to database (returns True if actually created)
+                    created = await self._add_missing_position(exchange_name, exchange_pos)
+                    if created:
+                        result['added_missing'].append(symbol)
+                        self.stats['added_missing'] += 1
 
         except Exception as e:
             logger.error(f"Error synchronizing {exchange_name}: {e}")
@@ -193,7 +194,7 @@ class PositionSynchronizer:
             exchange_name: Name of exchange ('bybit', 'binance', etc.)
 
         Returns:
-            List of active positions
+            List of active positions (validated and non-zero)
         """
         try:
             # CRITICAL FIX: For Bybit, must pass category='linear'
@@ -204,12 +205,50 @@ class PositionSynchronizer:
             else:
                 positions = await exchange.fetch_positions()
 
-            # Filter only active positions (non-zero contracts)
+            # ✅ PHASE 1: STRICTER FILTERING - Check raw exchange data
             active_positions = []
+            filtered_count = 0
+
             for pos in positions:
                 contracts = float(pos.get('contracts') or 0)
-                if abs(contracts) > 0:
-                    active_positions.append(pos)
+
+                # Basic check: non-zero contracts
+                if abs(contracts) <= 0:
+                    continue
+
+                # ✅ CRITICAL: Validate against raw exchange data
+                info = pos.get('info', {})
+
+                # Binance: Check positionAmt in raw response
+                if exchange_name == 'binance':
+                    position_amt = float(info.get('positionAmt', 0))
+                    if abs(position_amt) <= 0:
+                        filtered_count += 1
+                        logger.debug(
+                            f"    Filtered {pos.get('symbol')}: "
+                            f"contracts={contracts} but positionAmt={position_amt}"
+                        )
+                        continue
+
+                # Bybit: Check size in raw response
+                elif exchange_name == 'bybit':
+                    size = float(info.get('size', 0))
+                    if abs(size) <= 0:
+                        filtered_count += 1
+                        logger.debug(
+                            f"    Filtered {pos.get('symbol')}: "
+                            f"contracts={contracts} but size={size}"
+                        )
+                        continue
+
+                # ✅ Position passed all filters
+                active_positions.append(pos)
+
+            if filtered_count > 0:
+                logger.info(
+                    f"  🔍 Filtered {filtered_count} stale/cached positions "
+                    f"({len(active_positions)} real)"
+                )
 
             return active_positions
 
@@ -246,17 +285,43 @@ class PositionSynchronizer:
         except Exception as e:
             logger.error(f"Failed to close phantom position {db_position['symbol']}: {e}")
 
-    async def _add_missing_position(self, exchange_name: str, exchange_position: Dict):
+    async def _add_missing_position(self, exchange_name: str, exchange_position: Dict) -> bool:
         """
         Add a position that exists on exchange but missing from database
 
         Args:
             exchange_name: Name of exchange
             exchange_position: Position data from exchange
+
+        Returns:
+            True if position was created, False if rejected
         """
         try:
             symbol = exchange_position['symbol']
             contracts = float(exchange_position.get('contracts') or 0)
+            info = exchange_position.get('info', {})
+
+            # ✅ PHASE 2: Extract exchange_order_id from raw response
+            exchange_order_id = None
+
+            if exchange_name == 'binance':
+                # Binance uses 'positionId' in info
+                exchange_order_id = info.get('positionId') or info.get('orderId')
+            elif exchange_name == 'bybit':
+                # Bybit uses 'positionIdx' or other identifiers
+                exchange_order_id = (
+                    info.get('positionId') or
+                    info.get('orderId') or
+                    f"{symbol}_{info.get('positionIdx', 0)}"
+                )
+
+            # ✅ PHASE 3: VALIDATION - Reject if no exchange_order_id
+            if not exchange_order_id:
+                logger.warning(
+                    f"    ⚠️ REJECTED: {symbol} - No exchange_order_id found. "
+                    f"This may be stale CCXT data (info keys: {list(info.keys())})"
+                )
+                return False
 
             # Determine side
             side = exchange_position.get('side', '').lower()
@@ -265,7 +330,7 @@ class PositionSynchronizer:
 
             # Get prices
             entry_price = float(
-                exchange_position.get('info', {}).get('avgPrice') or
+                info.get('avgPrice') or
                 exchange_position.get('average') or
                 exchange_position.get('markPrice') or 0
             )
@@ -283,19 +348,23 @@ class PositionSynchronizer:
                 'current_price': current_price,
                 'strategy': 'MANUAL',  # Mark as manual since not opened by bot
                 'timeframe': 'UNKNOWN',
-                'signal_id': None
+                'signal_id': None,
+                'exchange_order_id': str(exchange_order_id)  # ✅ CRITICAL FIX
             }
 
             # Use open_position method
             position_id = await self.repository.open_position(position_data)
 
             logger.info(
-                f"    Added missing position: {symbol} "
-                f"({side} {abs(contracts)} @ ${entry_price:.4f})"
+                f"    ✅ Added missing position: {symbol} "
+                f"({side} {abs(contracts)} @ ${entry_price:.4f}, order_id={exchange_order_id})"
             )
+
+            return True
 
         except Exception as e:
             logger.error(f"Failed to add missing position {exchange_position.get('symbol')}: {e}")
+            return False
 
     async def _update_position_quantity(self, position_id: int, new_quantity: float, exchange_position: Dict):
         """
