@@ -422,7 +422,9 @@ class PositionManager:
             # Get positions from exchange
             positions = await exchange.fetch_positions()
             active_positions = [p for p in positions if safe_get_attr(p, 'quantity', 'qty', 'size', default=0) > 0]
-            active_symbols = {p.symbol for p in active_positions}
+            # CRITICAL FIX: Normalize symbols for correct comparison with DB symbols
+            # Exchange returns "A/USDT:USDT", DB stores "AUSDT"
+            active_symbols = {normalize_symbol(p.symbol) for p in active_positions}
 
             logger.info(f"Found {len(active_positions)} positions on {exchange_name}")
 
@@ -452,7 +454,9 @@ class PositionManager:
 
             # Update or add positions
             for pos in active_positions:
-                symbol = pos.symbol
+                # CRITICAL FIX: Normalize symbol from exchange format to DB format
+                # Exchange: "A/USDT:USDT" -> DB: "AUSDT"
+                symbol = normalize_symbol(pos.symbol)
 
                 # Check if position exists in our tracking
                 if symbol not in self.positions or self.positions[symbol].exchange != exchange_name:
