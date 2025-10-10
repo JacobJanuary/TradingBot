@@ -166,8 +166,8 @@ class Repository:
         query = """
             INSERT INTO monitoring.positions (
                 signal_id, symbol, exchange, side, quantity,
-                entry_price, status
-            ) VALUES ($1, $2, $3, $4, $5, $6, 'active')
+                entry_price, exchange_order_id, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
             RETURNING id
         """
 
@@ -179,7 +179,8 @@ class Repository:
                 position_data['exchange'],
                 position_data['side'],
                 position_data['quantity'],
-                position_data['entry_price']
+                position_data['entry_price'],
+                position_data.get('exchange_order_id')  # ✅ Save exchange_order_id
             )
 
             return position_id
