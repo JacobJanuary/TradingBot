@@ -1286,7 +1286,7 @@ class PositionManager:
                     unprotected_positions.append(position)
                     logger.warning(f"⚠️ Position {symbol} has no stop loss on exchange!")
 
-            # If found unprotected positions, set stop losses
+            # If found unprotected positions, set stop losses using enhanced SL manager
             if unprotected_positions:
                 logger.warning(f"🔴 Found {len(unprotected_positions)} positions without stop loss protection!")
 
@@ -1305,20 +1305,15 @@ class PositionManager:
                         else:
                             stop_loss_price = position.entry_price * (1 + stop_loss_percent / 100)
 
-                        # Get current price to validate stop loss
-                        ticker = await exchange.fetch_ticker(position.symbol)
-                        current_price = ticker.get('last', position.current_price)
+                        # Use enhanced SL manager with auto-validation and retry
+                        sl_manager = StopLossManager(exchange.exchange, position.exchange)
+                        success = await sl_manager.verify_and_fix_missing_sl(
+                            position=position,
+                            stop_price=stop_loss_price,
+                            max_retries=3
+                        )
 
-                        # Validate stop loss won't trigger immediately
-                        if position.side == 'short' and current_price >= stop_loss_price:
-                            logger.warning(f"⚠️ Adjusting stop loss for {position.symbol} to prevent immediate trigger")
-                            stop_loss_price = current_price * 1.005  # 0.5% above current
-                        elif position.side == 'long' and current_price <= stop_loss_price:
-                            logger.warning(f"⚠️ Adjusting stop loss for {position.symbol} to prevent immediate trigger")
-                            stop_loss_price = current_price * 0.995  # 0.5% below current
-
-                        # Set stop loss
-                        if await self._set_stop_loss(exchange, position, stop_loss_price):
+                        if success:
                             position.has_stop_loss = True
                             position.stop_loss_price = stop_loss_price
                             logger.info(f"✅ Stop loss set for {position.symbol} at {stop_loss_price:.8f}")
