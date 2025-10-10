@@ -36,9 +36,11 @@ class AgedPositionManager:
         self.exchanges = exchanges  # Dict of exchange instances
 
         # Age parameters from environment/config
-        self.max_position_age_hours = float(os.getenv('MAX_POSITION_AGE_HOURS',
-                                                      getattr(config, 'max_position_age_hours', 3)))
-        self.grace_period_hours = float(os.getenv('AGED_GRACE_PERIOD_HOURS', 8))
+        # Use int for age hours to be compatible with Decimal arithmetic
+        self.max_position_age_hours = int(os.getenv('MAX_POSITION_AGE_HOURS',
+                                                     getattr(config, 'max_position_age_hours', 3)))
+        self.grace_period_hours = int(os.getenv('AGED_GRACE_PERIOD_HOURS', 8))
+        # Keep percentages and factors as float for calculations
         self.loss_step_percent = float(os.getenv('AGED_LOSS_STEP_PERCENT', 0.5))
         self.max_loss_percent = float(os.getenv('AGED_MAX_LOSS_PERCENT', 10.0))
         self.acceleration_factor = float(os.getenv('AGED_ACCELERATION_FACTOR', 1.2))
@@ -102,7 +104,7 @@ class AgedPositionManager:
                         opened_at_utc = position.opened_at.replace(tzinfo=timezone.utc)
                         position_age = current_time - opened_at_utc
 
-                    age_hours = position_age.total_seconds() / 3600
+                    age_hours = Decimal(str(position_age.total_seconds() / 3600))
 
                     # Check if position is aged (beyond MAX_POSITION_AGE_HOURS)
                     if age_hours >= self.max_position_age_hours:
