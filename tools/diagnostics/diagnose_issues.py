@@ -112,7 +112,7 @@ class PositionDiagnostics:
                 # Get positions from database
                 db_positions = await conn.fetch("""
                     SELECT symbol, open_time, created_at, quantity, stop_loss
-                    FROM trading_bot.positions
+                    FROM monitoring.positions
                     WHERE exchange = $1 AND status = 'open'
                 """, exchange_name)
 
@@ -176,7 +176,7 @@ class PositionDiagnostics:
                     COALESCE(open_time, created_at) as position_time,
                     NOW() AT TIME ZONE 'UTC' as now_utc,
                     EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - COALESCE(open_time, created_at)))/3600 as age_hours
-                FROM trading_bot.positions
+                FROM monitoring.positions
                 WHERE status = 'open'
                     AND EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - COALESCE(open_time, created_at)))/3600 > $1
                 ORDER BY age_hours DESC
@@ -275,7 +275,7 @@ class PositionDiagnostics:
                 # Check database consistency
                 db_positions = await conn.fetch("""
                     SELECT symbol, stop_loss
-                    FROM trading_bot.positions
+                    FROM monitoring.positions
                     WHERE exchange = $1 AND status = 'open'
                 """, exchange_name)
 

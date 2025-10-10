@@ -40,12 +40,12 @@ class AgedPositionManager:
         self.max_position_age_hours = int(os.getenv('MAX_POSITION_AGE_HOURS',
                                                      getattr(config, 'max_position_age_hours', 3)))
         self.grace_period_hours = int(os.getenv('AGED_GRACE_PERIOD_HOURS', 8))
-        # Keep percentages and factors as float for calculations
-        self.loss_step_percent = float(os.getenv('AGED_LOSS_STEP_PERCENT', 0.5))
-        self.max_loss_percent = float(os.getenv('AGED_MAX_LOSS_PERCENT', 10.0))
-        self.acceleration_factor = float(os.getenv('AGED_ACCELERATION_FACTOR', 1.2))
-        self.commission_percent = float(os.getenv('COMMISSION_PERCENT',
-                                               getattr(config, 'commission_percent', 0.1))) / 100
+        # Use Decimal for all calculations to avoid float/Decimal type errors
+        self.loss_step_percent = Decimal(str(os.getenv('AGED_LOSS_STEP_PERCENT', 0.5)))
+        self.max_loss_percent = Decimal(str(os.getenv('AGED_MAX_LOSS_PERCENT', 10.0)))
+        self.acceleration_factor = Decimal(str(os.getenv('AGED_ACCELERATION_FACTOR', 1.2)))
+        self.commission_percent = Decimal(str(os.getenv('COMMISSION_PERCENT',
+                                               getattr(config, 'commission_percent', 0.1)))) / 100
 
         # Track managed positions to avoid duplicate processing
         self.managed_positions = {}  # position_id: {'last_update': datetime, 'order_id': str}
@@ -209,7 +209,9 @@ class AgedPositionManager:
         Returns:
             Tuple of (phase_name, target_price, loss_percent)
         """
-        entry_price = float(position.entry_price)
+        # Convert to Decimal for consistent arithmetic
+        entry_price = Decimal(str(position.entry_price))
+        current_price_decimal = Decimal(str(current_price))
 
         if hours_over_limit <= self.grace_period_hours:
             # PHASE 1: GRACE PERIOD - Strict breakeven
@@ -222,7 +224,7 @@ class AgedPositionManager:
                 target_price = entry_price * (1 - double_commission)
 
             phase = f"GRACE_PERIOD_BREAKEVEN ({hours_over_limit:.1f}/{self.grace_period_hours}h)"
-            loss_percent = 0.0
+            loss_percent = Decimal('0')
 
         elif hours_over_limit <= self.grace_period_hours + 20:
             # PHASE 2: PROGRESSIVE LIQUIDATION
@@ -250,14 +252,14 @@ class AgedPositionManager:
 
         else:
             # PHASE 3: EMERGENCY - Use current market price
-            target_price = current_price
+            target_price = current_price_decimal
             phase = "EMERGENCY_MARKET_CLOSE"
 
             # Calculate actual loss for logging
             if position.side in ['long', 'buy']:
-                loss_percent = ((entry_price - current_price) / entry_price) * 100
+                loss_percent = ((entry_price - current_price_decimal) / entry_price) * 100
             else:
-                loss_percent = ((current_price - entry_price) / entry_price) * 100
+                loss_percent = ((current_price_decimal - entry_price) / entry_price) * 100
 
         return phase, target_price, loss_percent
 
@@ -295,8 +297,8 @@ class AgedPositionManager:
                 )
 
                 if existing:
-                    # Check if price needs update
-                    existing_price = float(existing.get('price', 0))
+                    # Check if price needs update (convert to Decimal for consistency)
+                    existing_price = Decimal(str(existing.get('price', 0)))
                     price_diff_pct = abs(target_price - existing_price) / existing_price * 100
 
                     if price_diff_pct > 0.5:  # Update if > 0.5% difference

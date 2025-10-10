@@ -649,7 +649,7 @@ class PositionManager:
             })
 
             position_id = await self.repository.create_position({
-                'trade_id': trade_id,
+                'signal_id': request.signal_id,
                 'symbol': symbol,
                 'exchange': exchange_name,
                 'side': position.side,
@@ -977,6 +977,8 @@ class PositionManager:
             if update_result and update_result.get('action') == 'activated':
                 position.trailing_activated = True
                 logger.info(f"Trailing stop activated for {symbol}")
+                # Save trailing activation to database
+                await self.repository.update_position(position.id, trailing_activated=True)
 
         # Update database
         await self.repository.update_position_from_websocket({

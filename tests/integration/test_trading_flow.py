@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
 from core.risk_manager import RiskManager
-from core.signal_processor import SignalProcessor
+from core.signal_processor_websocket import WebSocketSignalProcessor
 from protection.stop_loss_manager import StopLossManager
 from database.models import Signal, Position, Order
 
