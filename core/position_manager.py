@@ -951,6 +951,19 @@ class PositionManager:
             )
 
             if result['status'] in ['created', 'already_exists']:
+                # CRITICAL FIX: Update both memory and database
+                position.has_stop_loss = True
+                position.stop_loss_price = result['stopPrice']
+
+                # Update database
+                logger.info(f"🔍 Updating DB: position_id={position.id}, has_stop_loss=True, stop_loss_price={result['stopPrice']}")
+                await self.repository.update_position(
+                    position.id,
+                    has_stop_loss=True,
+                    stop_loss_price=result['stopPrice']
+                )
+                logger.info(f"✅ DB updated for {position.symbol}")
+
                 logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}")
                 return True
             else:
@@ -1307,6 +1320,16 @@ class PositionManager:
 
                 # Update position state based on actual exchange status
                 position.has_stop_loss = has_sl_on_exchange
+
+                # CRITICAL: Sync DB with discovered state
+                if has_sl_on_exchange and sl_price:
+                    position.stop_loss_price = sl_price
+                    await self.repository.update_position(
+                        position.id,
+                        has_stop_loss=True,
+                        stop_loss_price=sl_price
+                    )
+                    logger.info(f"✅ Synced {symbol} SL state to DB: has_sl=True, price={sl_price}")
 
                 if not has_sl_on_exchange:
                     unprotected_positions.append(position)
