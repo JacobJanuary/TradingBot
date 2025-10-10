@@ -196,6 +196,8 @@ class AdaptiveBinanceStream:
                 
                 # Fetch positions using ccxt methods
                 positions_raw = await self.client.fetch_positions()
+                logger.info(f"📊 Fetched {len(positions_raw)} positions from exchange")
+
                 positions = []
                 self.active_symbols.clear()  # Reset active symbols
 
@@ -209,6 +211,8 @@ class AdaptiveBinanceStream:
                             'unrealizedProfit': pos['unrealizedPnl'] or 0,
                             'markPrice': pos['markPrice'] or 0
                         })
+
+                logger.info(f"📊 Processing {len(positions)} active positions (with contracts > 0)")
                 await self._process_positions_update(positions)
 
                 # Fetch open orders more efficiently
@@ -303,10 +307,13 @@ class AdaptiveBinanceStream:
                     'unrealized_pnl': float(pos['unrealizedProfit']),
                     'mark_price': float(pos['markPrice'])
                 }
-        
+
         # Trigger callback
+        logger.info(f"📊 Triggering position_update callback with {len(self.positions)} positions")
         if self.callbacks['position_update']:
             await self.callbacks['position_update'](self.positions)
+        else:
+            logger.warning("⚠️ position_update callback not set!")
     
     async def _process_orders_update(self, orders: list):
         """Process orders update from REST"""
