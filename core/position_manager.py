@@ -903,12 +903,14 @@ class PositionManager:
         return True
 
     async def _calculate_stop_loss(self, entry_price: float, side: str, percent: float) -> float:
-        """Calculate stop loss price"""
+        """Calculate stop loss price using Decimal-safe utility"""
 
-        if side == 'long':
-            return entry_price * (1 - percent / 100)
-        else:
-            return entry_price * (1 + percent / 100)
+        # Convert to Decimal for safe arithmetic (avoid float * Decimal errors)
+        return float(calculate_stop_loss(
+            entry_price=Decimal(str(entry_price)),
+            side=side,
+            stop_loss_percent=Decimal(str(percent))
+        ))
 
     async def _set_stop_loss(self,
                              exchange: ExchangeManager,
@@ -1360,13 +1362,14 @@ class PositionManager:
                             logger.error(f"Exchange {position.exchange} not available for {position.symbol}")
                             continue
 
-                        # Calculate stop loss price
+                        # Calculate stop loss price (Decimal-safe)
                         stop_loss_percent = self.config.stop_loss_percent
 
-                        if position.side == 'long':
-                            stop_loss_price = position.entry_price * (1 - stop_loss_percent / 100)
-                        else:
-                            stop_loss_price = position.entry_price * (1 + stop_loss_percent / 100)
+                        stop_loss_price = calculate_stop_loss(
+                            entry_price=position.entry_price,  # Already Decimal from DB
+                            side=position.side,
+                            stop_loss_percent=Decimal(str(stop_loss_percent))
+                        )
 
                         # Use enhanced SL manager with auto-validation and retry
                         sl_manager = StopLossManager(exchange.exchange, position.exchange)
