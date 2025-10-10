@@ -430,10 +430,17 @@ class PositionManager:
 
             logger.info(f"Found {len(active_positions)} positions on {exchange_name}")
 
+            # DEBUG: Log symbols comparison
+            logger.info(f"🔍 DEBUG active_symbols ({len(active_symbols)}): {sorted(active_symbols)}")
+            db_symbols = {s for s, p in self.positions.items() if p.exchange == exchange_name}
+            logger.info(f"🔍 DEBUG db_symbols for {exchange_name} ({len(db_symbols)}): {sorted(db_symbols)}")
+            logger.info(f"🔍 DEBUG self.positions total: {len(self.positions)}")
+
             # Find positions in DB but not on exchange (closed positions)
             db_positions_to_close = []
             for symbol, pos_state in list(self.positions.items()):
                 if pos_state.exchange == exchange_name and symbol not in active_symbols:
+                    logger.info(f"🔍 DEBUG: {symbol} NOT in active_symbols, will close")
                     db_positions_to_close.append(pos_state)
 
             # Close positions that no longer exist on exchange
@@ -1389,7 +1396,9 @@ class PositionManager:
                     }
 
                     # Create sets for comparison
-                    exchange_symbols = {p['symbol'] for p in active_exchange_positions}
+                    # CRITICAL FIX: Must normalize exchange symbols to match DB format
+                    # Exchange: "BNT/USDT:USDT" -> DB: "BNTUSDT"
+                    exchange_symbols = {normalize_symbol(p['symbol']) for p in active_exchange_positions}
                     local_symbols = set(local_positions.keys())
 
                     # 1. PHANTOM POSITIONS (in DB but not on exchange)
@@ -1423,7 +1432,9 @@ class PositionManager:
                     # 2. UNTRACKED POSITIONS (on exchange but not in DB)
                     untracked_positions = []
                     for ex_pos in active_exchange_positions:
-                        if ex_pos['symbol'] not in local_symbols:
+                        # CRITICAL FIX: Must normalize exchange symbol for comparison
+                        normalized_symbol = normalize_symbol(ex_pos['symbol'])
+                        if normalized_symbol not in local_symbols:
                             untracked_positions.append(ex_pos)
 
                     if untracked_positions:
