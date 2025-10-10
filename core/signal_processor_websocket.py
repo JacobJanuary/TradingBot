@@ -202,20 +202,31 @@ class WebSocketSignalProcessor:
                 if expected_wave_timestamp in self.processed_waves:
                     logger.info(f"Wave {expected_wave_timestamp} already processed, skipping")
                     continue
-                
-                # 3. Мониторим появление волны (до 120 секунд)
+
+                # ✅ АТОМАРНАЯ ЗАЩИТА: Помечаем волну как "в обработке" СРАЗУ
+                # Это предотвращает параллельную обработку той же волны
+                self.processed_waves[expected_wave_timestamp] = {
+                    'status': 'processing',
+                    'started_at': datetime.now(timezone.utc),
+                    'signal_ids': set(),
+                    'count': 0
+                }
+                logger.info(f"🔒 Wave {expected_wave_timestamp} marked as processing")
+
+                # 3. Мониторим появление волны (до WAVE_CHECK_DURATION_SECONDS)
                 wave_signals = await self._monitor_wave_appearance(expected_wave_timestamp)
-                
+
                 if wave_signals:
                     # 4. Обрабатываем волну
                     logger.info(f"🌊 Wave detected! Processing {len(wave_signals)} signals for {expected_wave_timestamp}")
-                    
-                    # Mark wave as processed
-                    self.processed_waves[expected_wave_timestamp] = {
+
+                    # Update wave metadata
+                    self.processed_waves[expected_wave_timestamp].update({
+                        'status': 'executing',
                         'signal_ids': set(s.get('id') for s in wave_signals),
                         'count': len(wave_signals),
                         'first_seen': datetime.now(timezone.utc)
-                    }
+                    })
                     self.stats['waves_detected'] += 1
                     self.stats['current_wave'] = expected_wave_timestamp
                     
@@ -315,11 +326,17 @@ class WebSocketSignalProcessor:
                         f"{len(result.get('failed', []))} validation errors, "
                         f"{len(result.get('skipped', []))} duplicates"
                     )
-                    
+
+                    # Mark wave as completed
+                    self.processed_waves[expected_wave_timestamp]['status'] = 'completed'
+                    self.processed_waves[expected_wave_timestamp]['completed_at'] = datetime.now(timezone.utc)
+
                     # Note: pending_signals already cleared by pop() in _monitor_wave_appearance
                     # New signals for this timestamp will be rejected by processed_waves check
                 else:
                     logger.info(f"⚠️ No wave detected for timestamp {expected_wave_timestamp}")
+                    # Mark as not found
+                    self.processed_waves[expected_wave_timestamp]['status'] = 'not_found'
                 
             except asyncio.CancelledError:
                 logger.info("Wave monitoring loop cancelled")
