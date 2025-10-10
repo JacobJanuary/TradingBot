@@ -15,7 +15,7 @@ from config.settings import config as settings
 from utils.process_lock import ProcessLock, ensure_single_instance, check_running_instances, kill_all_instances
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
-from core.signal_processor import SignalProcessor
+from core.signal_processor_websocket import WebSocketSignalProcessor
 from database.repository import Repository as TradingRepository
 from websocket.binance_stream import BinancePrivateStream
 from websocket.event_router import EventRouter
@@ -54,7 +54,7 @@ class TradingBot:
         self.event_router = EventRouter()
         self.position_manager: Optional[PositionManager] = None
         self.aged_position_manager: Optional[AgedPositionManager] = None
-        self.signal_processor: Optional[SignalProcessor] = None
+        self.signal_processor: Optional[WebSocketSignalProcessor] = None
 
         # Monitoring - will be initialized after repository is ready
         self.health_monitor = None
@@ -240,14 +240,15 @@ class TradingBot:
             )
             logger.info("✅ Aged position manager ready")
 
-            # Initialize signal processor
-            logger.info("Initializing signal processor...")
-            self.signal_processor = SignalProcessor(
-                settings.trading,
-                self.repository,
-                self.position_manager,
-                self.event_router
+            # Initialize WebSocket signal processor
+            logger.info("Initializing WebSocket signal processor...")
+            self.signal_processor = WebSocketSignalProcessor(
+                config=settings.trading,
+                position_manager=self.position_manager,
+                repository=self.repository,
+                event_router=self.event_router
             )
+            logger.info("✅ WebSocket signal processor initialized")
 
             # Stop-list symbols are now loaded from configuration (.env file)
             # via SymbolFilter in signal_processor
@@ -310,7 +311,7 @@ class TradingBot:
         """Log initial system state"""
         for name, exchange in self.exchanges.items():
             balance = await exchange.fetch_balance()
-            usdt_balance = balance.get('USDT', {}).get('free', 0)
+            usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
             logger.info(f"{name.capitalize()} balance: ${usdt_balance:.2f} USDT")
 
             positions = await exchange.fetch_positions()

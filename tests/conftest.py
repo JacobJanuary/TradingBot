@@ -119,8 +119,7 @@ def mock_repository() -> AsyncMock:
     repo.create_position = AsyncMock(return_value=True)
     repo.update_position = AsyncMock(return_value=True)
     repo.create_order = AsyncMock(return_value=True)
-    repo.get_pending_signals = AsyncMock(return_value=[])
-    
+
     return repo
 
 

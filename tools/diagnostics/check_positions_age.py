@@ -80,42 +80,21 @@ async def check_positions():
         print("DATABASE POSITIONS:")
         print("="*80)
 
-        # Check if position table exists
-        tables = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'fas'")
-        table_names = [t['tablename'] for t in tables]
-        print(f"\nTables in fas schema: {table_names}")
-
-        position_table = None
-        for table in table_names:
-            if 'position' in table.lower():
-                position_table = table
-                break
-
-        if not position_table:
-            print("❌ No position table found in fas schema!")
-            print("This explains why positions aren't being saved to database!")
-
-            # Check models for Position definition
-            print("\n🔍 Checking models for Position class definition...")
-            return
-
-        # Query positions from database
-        query = f"""
-        SELECT
-            symbol,
-            side,
-            quantity,
-            open_time,
-            NOW() AT TIME ZONE 'UTC' as now_utc,
-            EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - open_time))/3600 as age_hours,
-            status,
-            stop_loss
-        FROM fas.{position_table}
-        WHERE status = 'open'
-        ORDER BY open_time;
-        """
-
-        db_positions = await conn.fetch(query)
+        # Query positions from database (monitoring schema)
+        db_positions = await conn.fetch("""
+            SELECT
+                symbol,
+                side,
+                quantity,
+                open_time,
+                NOW() AT TIME ZONE 'UTC' as now_utc,
+                EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'UTC' - open_time))/3600 as age_hours,
+                status,
+                stop_loss
+            FROM monitoring.positions
+            WHERE status = 'open'
+            ORDER BY open_time
+        """)
 
         if not db_positions:
             print("\n⚠️ No open positions found in database!")
