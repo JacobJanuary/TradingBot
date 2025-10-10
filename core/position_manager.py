@@ -1179,7 +1179,7 @@ class PositionManager:
                 await self.repository.update_position(position.id, {
                     'pending_close_order_id': order['id'],
                     'pending_close_price': to_decimal(target_price),
-                    'close_reason': reason
+                    'exit_reason': reason
                 })
             else:
                 logger.error(f"Failed to place limit order for {symbol}")
@@ -1412,7 +1412,7 @@ class PositionManager:
                                 await self.repository.update_position_status(
                                     position.id,
                                     'closed',
-                                    close_reason='PHANTOM_CLEANUP'
+                                    notes='PHANTOM_CLEANUP'
                                 )
 
                                 logger.info(f"✅ Cleaned phantom position: {symbol}")
