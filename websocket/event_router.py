@@ -128,6 +128,10 @@ class EventRouter:
             if '*' in self._handlers:
                 handlers.extend(self._handlers['*'])
 
+            # Log event handling (only for position.update)
+            if event.name == 'position.update':
+                logger.info(f"📡 Event '{event.name}': {len(handlers)} handlers")
+
             # Execute handlers
             if handlers:
                 tasks = []

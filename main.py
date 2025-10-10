@@ -157,9 +157,14 @@ class TradingBot:
                                     'symbol': symbol,
                                     'price': price
                                 })
-                            
+
                             async def on_position_update(positions):
-                                await self._handle_stream_event('position_update', positions)
+                                # CRITICAL FIX: Event name must match subscription in position_manager (position.update)
+                                # positions is dict {symbol: position_data}, emit event for each position
+                                if positions:
+                                    logger.info(f"📊 REST polling: received {len(positions)} position updates with mark prices")
+                                for symbol, pos_data in positions.items():
+                                    await self._handle_stream_event('position.update', pos_data)
                             
                             stream.set_callback('price_update', on_price_update)
                             stream.set_callback('position_update', on_position_update)

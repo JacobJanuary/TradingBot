@@ -958,14 +958,21 @@ class PositionManager:
     async def _on_position_update(self, data: Dict):
         """Handle position update from WebSocket"""
 
-        symbol = data.get('symbol')
+        symbol_raw = data.get('symbol')
+        # CRITICAL FIX: Normalize symbol to match storage format (e.g., "BNT/USDT:USDT" → "BNTUSDT")
+        symbol = normalize_symbol(symbol_raw) if symbol_raw else None
+        logger.info(f"📊 Position update: {symbol_raw} → {symbol}, mark_price={data.get('mark_price')}")
+
         if not symbol or symbol not in self.positions:
+            logger.info(f"  → Skipped: {symbol} not in tracked positions ({list(self.positions.keys())[:5]}...)")
             return
 
         position = self.positions[symbol]
 
         # Update position state
+        old_price = position.current_price
         position.current_price = data.get('mark_price', position.current_price)
+        logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
         position.unrealized_pnl = data.get('unrealized_pnl', 0)
 
         # Calculate PnL percent
