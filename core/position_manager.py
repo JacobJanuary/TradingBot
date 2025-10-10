@@ -421,10 +421,12 @@ class PositionManager:
 
             # Get positions from exchange
             positions = await exchange.fetch_positions()
-            active_positions = [p for p in positions if safe_get_attr(p, 'quantity', 'qty', 'size', default=0) > 0]
+            # CRITICAL FIX: fetch_positions() returns 'contracts' key, not 'quantity'
+            active_positions = [p for p in positions if safe_get_attr(p, 'contracts', 'quantity', 'qty', 'size', default=0) > 0]
             # CRITICAL FIX: Normalize symbols for correct comparison with DB symbols
             # Exchange returns "A/USDT:USDT", DB stores "AUSDT"
-            active_symbols = {normalize_symbol(p.symbol) for p in active_positions}
+            # fetch_positions() returns dicts, not objects - use p['symbol']
+            active_symbols = {normalize_symbol(p['symbol']) for p in active_positions}
 
             logger.info(f"Found {len(active_positions)} positions on {exchange_name}")
 
@@ -456,7 +458,11 @@ class PositionManager:
             for pos in active_positions:
                 # CRITICAL FIX: Normalize symbol from exchange format to DB format
                 # Exchange: "A/USDT:USDT" -> DB: "AUSDT"
-                symbol = normalize_symbol(pos.symbol)
+                # fetch_positions() returns dicts with keys: 'symbol', 'side', 'contracts', 'entryPrice'
+                symbol = normalize_symbol(pos['symbol'])
+                side = pos['side']
+                quantity = pos['contracts']
+                entry_price = pos['entryPrice']
 
                 # Check if position exists in our tracking
                 if symbol not in self.positions or self.positions[symbol].exchange != exchange_name:
@@ -464,10 +470,10 @@ class PositionManager:
                     db_position = await self.repository.create_position({
                         'symbol': symbol,
                         'exchange': exchange_name,
-                        'side': pos.side,
-                        'quantity': pos.quantity,
-                        'entry_price': pos.entry_price,
-                        'current_price': pos.entry_price,
+                        'side': side,
+                        'quantity': quantity,
+                        'entry_price': entry_price,
+                        'current_price': entry_price,
                         'strategy': 'manual',
                         'status': 'open'
                     })
@@ -477,10 +483,10 @@ class PositionManager:
                         id=db_position['id'],
                         symbol=symbol,
                         exchange=exchange_name,
-                        side=pos.side,
-                        quantity=pos.quantity,
-                        entry_price=pos.entry_price,
-                        current_price=pos.entry_price,
+                        side=side,
+                        quantity=quantity,
+                        entry_price=entry_price,
+                        current_price=entry_price,
                         unrealized_pnl=0,
                         unrealized_pnl_percent=0,
                         has_stop_loss=False,
@@ -497,7 +503,7 @@ class PositionManager:
                     # Set stop loss for new position
                     stop_loss_percent = to_decimal(self.config.stop_loss_percent)
                     stop_loss_price = calculate_stop_loss(
-                        to_decimal(pos.entry_price), pos.side, stop_loss_percent
+                        to_decimal(entry_price), side, stop_loss_percent
                     )
 
                     if await self._set_stop_loss(exchange, position_state, stop_loss_price):
