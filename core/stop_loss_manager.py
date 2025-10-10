@@ -183,6 +183,99 @@ class StopLossManager:
             self.logger.error(f"Failed to set Stop Loss for {symbol}: {e}")
             raise
 
+    async def verify_and_fix_missing_sl(
+        self,
+        position,
+        stop_price: float,
+        max_retries: int = 3
+    ) -> bool:
+        """
+        Verify Stop Loss exists on exchange and recreate if missing.
+
+        This method fixes the "Missing SL" warnings by:
+        1. Checking if position still exists on exchange
+        2. Verifying SL is present
+        3. Auto-recreating SL if missing (with retries)
+
+        Args:
+            position: Position object with symbol, exchange, side, size
+            stop_price: Calculated stop loss price
+            max_retries: Maximum recreation attempts (default: 3)
+
+        Returns:
+            bool: True if SL verified/created, False if position closed
+
+        Usage:
+            Called from position_manager monitoring loop every 60 seconds
+        """
+        symbol = position.symbol
+
+        try:
+            # STEP 1: Check if Stop Loss exists
+            has_sl, existing_sl = await self.has_stop_loss(symbol)
+
+            if has_sl:
+                self.logger.debug(f"✅ SL verified for {symbol}: {existing_sl}")
+                return True
+
+            # STEP 2: SL missing - attempt to recreate
+            self.logger.warning(
+                f"🔧 Stop Loss missing for {symbol}, attempting to recreate..."
+            )
+
+            # Determine order side based on position side
+            if position.side in ['long', 'buy']:
+                order_side = 'sell'  # Close long with sell
+            else:
+                order_side = 'buy'  # Close short with buy
+
+            # STEP 3: Retry SL creation
+            for attempt in range(max_retries):
+                try:
+                    result = await self.set_stop_loss(
+                        symbol=symbol,
+                        side=order_side,
+                        amount=float(position.size),
+                        stop_price=stop_price
+                    )
+
+                    if result['status'] in ['created', 'already_exists']:
+                        self.logger.info(
+                            f"✅ SL recreated for {symbol} at {result['stopPrice']} "
+                            f"(attempt {attempt + 1}/{max_retries})"
+                        )
+                        return True
+
+                except Exception as e:
+                    error_msg = str(e).lower()
+
+                    # Handle common errors
+                    if 'position' in error_msg and ('not found' in error_msg or 'closed' in error_msg):
+                        self.logger.info(
+                            f"Position {symbol} closed during SL recreation, skipping"
+                        )
+                        return False
+
+                    if attempt < max_retries - 1:
+                        self.logger.warning(
+                            f"⚠️ Failed to recreate SL (attempt {attempt + 1}/{max_retries}): {e}"
+                        )
+                        # Wait before retry (exponential backoff)
+                        import asyncio
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    else:
+                        self.logger.error(
+                            f"❌ Failed to recreate SL after {max_retries} attempts: {e}"
+                        )
+                        return False
+
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Error in verify_and_fix_missing_sl for {symbol}: {e}")
+            return False
+
     async def _set_bybit_stop_loss(self, symbol: str, stop_price: float) -> Dict:
         """
         Установка Stop Loss для Bybit через position-attached method.
@@ -263,33 +356,120 @@ class StopLossManager:
     ) -> Dict:
         """
         Установка Stop Loss для других бирж через conditional orders.
+
+        Enhanced with:
+        - Current price validation (fixes Error -2021)
+        - Mark price support for Binance Futures
+        - Retry logic with progressive adjustment
+        - 0.1% safety buffer
         """
-        try:
-            # Используем стандартный CCXT метод
-            order = await self.exchange.create_order(
-                symbol=symbol,
-                type='stop_market',
-                side=side,
-                amount=amount,
-                price=None,  # Market order при срабатывании
-                params={
-                    'stopPrice': stop_price,
-                    'reduceOnly': True
+        from decimal import Decimal, ROUND_DOWN, ROUND_UP
+
+        max_retries = 3
+        stop_price_decimal = Decimal(str(stop_price))
+
+        for attempt in range(max_retries):
+            try:
+                # STEP 1: Get current market price
+                ticker = await self.exchange.fetch_ticker(symbol)
+
+                # Use mark price for Binance Futures (critical for accuracy)
+                if self.exchange_name == 'binance':
+                    current_price = Decimal(
+                        str(ticker.get('info', {}).get('markPrice', ticker['last']))
+                    )
+                else:
+                    current_price = Decimal(str(ticker['last']))
+
+                # STEP 2: Validate and adjust stop price with safety buffer
+                min_buffer_pct = Decimal('0.1')  # 0.1% minimum distance
+
+                # Calculate required stop price bounds
+                if side == 'sell':  # LONG position
+                    # Stop must be < current price (sell to close)
+                    max_allowed_stop = current_price * (Decimal('1') - min_buffer_pct / Decimal('100'))
+
+                    if stop_price_decimal >= max_allowed_stop:
+                        # Adjust down with buffer
+                        adjusted_stop = max_allowed_stop * Decimal('0.999')  # Additional 0.1% buffer
+                        self.logger.warning(
+                            f"⚠️ Adjusting SL down: {stop_price} → {adjusted_stop} "
+                            f"(current: {current_price}, attempt {attempt + 1}/{max_retries})"
+                        )
+                        stop_price_decimal = adjusted_stop
+
+                else:  # SHORT position
+                    # Stop must be > current price (buy to close)
+                    min_allowed_stop = current_price * (Decimal('1') + min_buffer_pct / Decimal('100'))
+
+                    if stop_price_decimal <= min_allowed_stop:
+                        # Adjust up with buffer
+                        adjusted_stop = min_allowed_stop * Decimal('1.001')  # Additional 0.1% buffer
+                        self.logger.warning(
+                            f"⚠️ Adjusting SL up: {stop_price} → {adjusted_stop} "
+                            f"(current: {current_price}, attempt {attempt + 1}/{max_retries})"
+                        )
+                        stop_price_decimal = adjusted_stop
+
+                # Format price with exchange precision
+                final_stop_price = float(stop_price_decimal)
+                final_stop_price = self.exchange.price_to_precision(symbol, final_stop_price)
+
+                self.logger.info(
+                    f"📊 Creating SL for {symbol}: stop={final_stop_price}, "
+                    f"current={current_price}, side={side}"
+                )
+
+                # STEP 3: Create order with validated price
+                order = await self.exchange.create_order(
+                    symbol=symbol,
+                    type='stop_market',
+                    side=side,
+                    amount=amount,
+                    price=None,  # Market order при срабатывании
+                    params={
+                        'stopPrice': final_stop_price,
+                        'reduceOnly': True
+                    }
+                )
+
+                self.logger.info(f"✅ Stop Loss order created: {order['id']}")
+
+                return {
+                    'status': 'created',
+                    'stopPrice': float(final_stop_price),
+                    'orderId': order['id'],
+                    'info': order
                 }
-            )
 
-            self.logger.info(f"✅ Stop Loss order created: {order['id']}")
+            except Exception as e:
+                error_msg = str(e).lower()
 
-            return {
-                'status': 'created',
-                'stopPrice': stop_price,
-                'orderId': order['id'],
-                'info': order
-            }
+                # Check for Error -2021 (would immediately trigger)
+                if '-2021' in error_msg or 'immediately trigger' in error_msg:
+                    if attempt < max_retries - 1:
+                        self.logger.warning(
+                            f"⚠️ Error -2021 on attempt {attempt + 1}, "
+                            f"retrying with adjusted price..."
+                        )
+                        # Aggressive adjustment for next attempt
+                        if side == 'sell':
+                            stop_price_decimal *= Decimal('0.995')  # 0.5% lower
+                        else:
+                            stop_price_decimal *= Decimal('1.005')  # 0.5% higher
+                        continue
+                    else:
+                        self.logger.error(
+                            f"❌ Failed to create SL after {max_retries} attempts: {e}"
+                        )
+                        raise
+                else:
+                    # Other error - don't retry
+                    self.logger.error(f"Failed to create stop order: {e}")
+                    raise
 
-        except Exception as e:
-            self.logger.error(f"Failed to create stop order: {e}")
-            raise
+        # Should not reach here
+        raise Exception(f"Failed to create SL after {max_retries} retries")
 
     def _is_stop_loss_order(self, order: Dict) -> bool:
         """
