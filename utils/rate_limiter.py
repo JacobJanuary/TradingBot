@@ -234,7 +234,7 @@ class RateLimiter:
                     
             except ccxt.NetworkError as e:
                 last_exception = e
-                
+
                 if attempt < self.config.max_retries - 1:
                     delay = self._calculate_backoff_delay(attempt)
                     logger.warning(
@@ -244,7 +244,13 @@ class RateLimiter:
                     await asyncio.sleep(delay)
                 else:
                     logger.error(f"Max retries exceeded for network error: {e}")
-                    
+
+            except ccxt.OrderNotFound as e:
+                # OrderNotFound is expected behavior (order filled/cancelled/expired)
+                # Not an error - log as INFO and re-raise without stats increment
+                logger.info(f"Order not found (likely filled/cancelled): {e}")
+                raise
+
             except Exception as e:
                 self.stats.failed_requests += 1
                 logger.error(f"Unexpected error in rate limited function: {e}")

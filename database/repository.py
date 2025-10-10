@@ -706,6 +706,131 @@ class Repository:
                 balance_data.get('unrealized_pnl', 0)
             )
 
+    # ============================================================
+    # Order Cache Methods (Phase 3: Bybit 500 order limit solution)
+    # ============================================================
+
+    async def cache_order(self, exchange: str, order_data: Dict) -> bool:
+        """
+        Cache order data locally for later retrieval.
+
+        Solves Bybit 500 order limit issue by storing all orders locally.
+
+        Args:
+            exchange: Exchange name ('binance', 'bybit', etc.)
+            order_data: Full order data from exchange API
+
+        Returns:
+            bool: True if cached successfully
+        """
+        import json
+        from datetime import datetime
+
+        query = """
+            INSERT INTO monitoring.orders_cache
+            (exchange, exchange_order_id, symbol, order_type, side, price, amount, filled, status, created_at, order_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (exchange, exchange_order_id) DO UPDATE
+            SET status = $9,
+                filled = $8,
+                order_data = $11,
+                cached_at = CURRENT_TIMESTAMP
+        """
+
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    query,
+                    exchange,
+                    order_data.get('id'),
+                    order_data.get('symbol'),
+                    order_data.get('type'),
+                    order_data.get('side'),
+                    float(order_data.get('price', 0)) if order_data.get('price') else None,
+                    float(order_data.get('amount', 0)),
+                    float(order_data.get('filled', 0)),
+                    order_data.get('status'),
+                    order_data.get('timestamp') if order_data.get('timestamp') else datetime.now(),
+                    json.dumps(order_data)  # Store full order data as JSONB
+                )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to cache order {order_data.get('id')}: {e}")
+            return False
+
+    async def get_cached_order(self, exchange: str, order_id: str) -> Optional[Dict]:
+        """
+        Retrieve cached order data.
+
+        Args:
+            exchange: Exchange name
+            order_id: Exchange order ID
+
+        Returns:
+            Dict: Order data if found, None otherwise
+        """
+        import json
+
+        query = """
+            SELECT order_data
+            FROM monitoring.orders_cache
+            WHERE exchange = $1 AND exchange_order_id = $2
+        """
+
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(query, exchange, order_id)
+
+                if row:
+                    order_data = json.loads(row['order_data']) if isinstance(row['order_data'], str) else row['order_data']
+                    logger.info(f"✅ Retrieved cached order {order_id} from {exchange}")
+                    return order_data
+
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve cached order {order_id}: {e}")
+            return None
+
+    async def get_cached_orders_by_symbol(self, exchange: str, symbol: str, limit: int = 100) -> List[Dict]:
+        """
+        Get cached orders for a symbol (useful for Bybit when fetchOrders fails).
+
+        Args:
+            exchange: Exchange name
+            symbol: Trading symbol
+            limit: Maximum orders to return
+
+        Returns:
+            List[Dict]: List of order data
+        """
+        import json
+
+        query = """
+            SELECT order_data
+            FROM monitoring.orders_cache
+            WHERE exchange = $1 AND symbol = $2
+            ORDER BY created_at DESC
+            LIMIT $3
+        """
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(query, exchange, symbol, limit)
+
+                orders = []
+                for row in rows:
+                    order_data = json.loads(row['order_data']) if isinstance(row['order_data'], str) else row['order_data']
+                    orders.append(order_data)
+
+                logger.info(f"Retrieved {len(orders)} cached orders for {symbol} on {exchange}")
+                return orders
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve cached orders for {symbol}: {e}")
+            return []
+
 
 # Add alias for compatibility
 TradingRepository = Repository
