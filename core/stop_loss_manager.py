@@ -235,7 +235,7 @@ class StopLossManager:
                     result = await self.set_stop_loss(
                         symbol=symbol,
                         side=order_side,
-                        amount=float(position.size),
+                        amount=float(position.quantity),
                         stop_price=stop_price
                     )
 
