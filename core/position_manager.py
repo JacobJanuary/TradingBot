@@ -1011,11 +1011,25 @@ class PositionManager:
         if trailing_manager and position.has_trailing_stop:
             update_result = await trailing_manager.update_price(symbol, position.current_price)
 
-            if update_result and update_result.get('action') == 'activated':
-                position.trailing_activated = True
-                logger.info(f"Trailing stop activated for {symbol}")
-                # Save trailing activation to database
-                await self.repository.update_position(position.id, trailing_activated=True)
+            if update_result:
+                action = update_result.get('action')
+
+                if action == 'activated':
+                    position.trailing_activated = True
+                    logger.info(f"Trailing stop activated for {symbol}")
+                    # Save trailing activation to database
+                    await self.repository.update_position(position.id, trailing_activated=True)
+
+                elif action == 'updated':
+                    # CRITICAL FIX: Save new trailing stop price to database
+                    new_stop = update_result.get('new_stop')
+                    if new_stop:
+                        position.stop_loss_price = new_stop
+                        await self.repository.update_position(
+                            position.id,
+                            stop_loss_price=new_stop
+                        )
+                        logger.info(f"✅ Saved new trailing stop price for {symbol}: {new_stop}")
 
         # Update database
         await self.repository.update_position_from_websocket({
