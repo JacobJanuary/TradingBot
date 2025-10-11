@@ -50,9 +50,15 @@ async def apply_critical_fixes(position_manager):
     original_close_position = position_manager.close_position
 
     # Patch _set_stop_loss with proper locking
-    async def patched_set_stop_loss(position, exchange_name):
+    # FIX: Match original signature (exchange, position, stop_price)
+    async def patched_set_stop_loss(exchange, position, stop_price):
         """Patched version with LockManager"""
-        resource = f"position_{position['symbol']}_{position['id']}"
+        # Extract data from position object
+        position_id = position.id if hasattr(position, 'id') else position.get('id')
+        symbol = position.symbol if hasattr(position, 'symbol') else position.get('symbol')
+        exchange_name = position.exchange if hasattr(position, 'exchange') else position.get('exchange', 'unknown')
+
+        resource = f"position_{symbol}_{position_id}"
 
         async with lock_manager.acquire_lock(
             resource=resource,
@@ -63,29 +69,29 @@ async def apply_critical_fixes(position_manager):
             await log_event(
                 EventType.STOP_LOSS_PLACED,
                 {
-                    'position_id': position['id'],
-                    'symbol': position['symbol'],
-                    'stop_price': position.get('stop_loss_price')
+                    'position_id': position_id,
+                    'symbol': symbol,
+                    'stop_price': stop_price
                 },
-                position_id=position['id'],
-                symbol=position['symbol'],
+                position_id=position_id,
+                symbol=symbol,
                 exchange=exchange_name
             )
 
-            # Call original method
-            result = await original_set_stop_loss(position, exchange_name)
+            # Call original method with correct signature
+            result = await original_set_stop_loss(exchange, position, stop_price)
 
             if result:
                 await log_event(
                     EventType.STOP_LOSS_PLACED,
                     {'status': 'success', 'order_id': result},
-                    position_id=position['id']
+                    position_id=position_id
                 )
             else:
                 await log_event(
                     EventType.STOP_LOSS_ERROR,
                     {'status': 'failed'},
-                    position_id=position['id'],
+                    position_id=position_id,
                     severity='ERROR'
                 )
 
@@ -128,92 +134,82 @@ async def apply_critical_fixes(position_manager):
     # Fix 4: Patch open_position to use atomic operations
     original_open_position = position_manager.open_position
 
-    async def patched_open_position(
-        signal_id: int,
-        symbol: str,
-        exchange: str,
-        side: str,
-        quantity: float,
-        entry_price: float,
-        stop_loss_price: float,
-        take_profit_price: Optional[float] = None,
-        metadata: Optional[Dict] = None
-    ):
-        """Patched version with atomic operations"""
-        correlation_id = f"open_position_{signal_id}_{datetime.now(timezone.utc).timestamp()}"
+    # FIX: TypeError - patched_open_position must accept PositionRequest object
+    # Changed from: multiple positional arguments
+    # Changed to: single request parameter matching original signature
+    async def patched_open_position(request):
+        """Patched version with proper locking and logging"""
+        correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
 
-        # Log event
-        await log_event(
-            EventType.POSITION_CREATED,
-            {
-                'signal_id': signal_id,
-                'symbol': symbol,
-                'exchange': exchange,
-                'side': side,
-                'quantity': quantity,
-                'entry_price': entry_price,
-                'stop_loss_price': stop_loss_price
-            },
-            correlation_id=correlation_id,
-            symbol=symbol,
-            exchange=exchange
-        )
+        # FIX: Handle position_locks as Dict[str, asyncio.Lock] instead of set
+        # After apply_critical_fixes, position_locks is converted to dict
+        # but original code still uses set methods (.add, .discard)
+        lock_key = f"{request.exchange.lower()}_{request.symbol}"
 
-        # Use atomic manager if available
-        try:
-            from core.atomic_position_manager import AtomicPositionManager
+        # Check if already being processed (replaces: if lock_key in self.position_locks)
+        if lock_key in position_manager.position_locks and position_manager.position_locks[lock_key].locked():
+            logger.warning(f"Position already being processed for {request.symbol}")
+            return None
 
-            if not hasattr(position_manager, '_atomic_manager'):
-                position_manager._atomic_manager = AtomicPositionManager(
-                    repository=position_manager.repository,
-                    exchange_manager=position_manager.exchanges,
-                    stop_loss_manager=position_manager
+        # Create lock for this position (replaces: self.position_locks.add(lock_key))
+        if not hasattr(position_manager, '_lock_creation_lock'):
+            position_manager._lock_creation_lock = asyncio.Lock()
+
+        async with position_manager._lock_creation_lock:
+            if lock_key not in position_manager.position_locks:
+                position_manager.position_locks[lock_key] = asyncio.Lock()
+
+        # Acquire the lock
+        async with position_manager.position_locks[lock_key]:
+            try:
+                # Log event before calling original
+                await log_event(
+                    EventType.POSITION_CREATED,
+                    {
+                        'signal_id': request.signal_id,
+                        'symbol': request.symbol,
+                        'exchange': request.exchange,
+                        'side': request.side,
+                        'entry_price': float(request.entry_price)
+                    },
+                    correlation_id=correlation_id,
+                    symbol=request.symbol,
+                    exchange=request.exchange
                 )
 
-            # Try atomic creation
-            result = await position_manager._atomic_manager.open_position_atomic(
-                signal_id=signal_id,
-                symbol=symbol,
-                exchange=exchange,
-                side=side,
-                quantity=quantity,
-                entry_price=entry_price,
-                stop_loss_price=stop_loss_price,
-                take_profit_price=take_profit_price,
-                metadata=metadata
-            )
+                # Temporarily bypass the original lock logic
+                # Save and replace position_locks to prevent .add/.discard errors
+                original_locks = position_manager.position_locks
+                position_manager.position_locks = set()  # Temporary empty set for original code
 
-            await log_event(
-                EventType.POSITION_CREATED,
-                {'status': 'success', 'position_id': result.get('position_id')},
-                correlation_id=correlation_id,
-                position_id=result.get('position_id')
-            )
+                try:
+                    # Call original function
+                    result = await original_open_position(request)
+                finally:
+                    # Restore the dict-based locks
+                    position_manager.position_locks = original_locks
 
-            return result
+                if result:
+                    await log_event(
+                        EventType.POSITION_CREATED,
+                        {'status': 'success', 'position_id': result.id if hasattr(result, 'id') else None},
+                        correlation_id=correlation_id,
+                        position_id=result.id if hasattr(result, 'id') else None
+                    )
+                else:
+                    await log_event(
+                        EventType.POSITION_ERROR,
+                        {'status': 'failed'},
+                        correlation_id=correlation_id,
+                        severity='ERROR'
+                    )
 
-        except Exception as e:
-            logger.warning(f"Atomic creation failed, using original: {e}")
+                return result
 
-            await log_event(
-                EventType.POSITION_ERROR,
-                {'error': str(e), 'fallback': 'original_method'},
-                correlation_id=correlation_id,
-                severity='WARNING'
-            )
-
-            # Fallback to original
-            return await original_open_position(
-                signal_id=signal_id,
-                symbol=symbol,
-                exchange=exchange,
-                side=side,
-                quantity=quantity,
-                entry_price=entry_price,
-                stop_loss_price=stop_loss_price,
-                take_profit_price=take_profit_price,
-                metadata=metadata
-            )
+            finally:
+                # Clean up the lock (replaces: self.position_locks.discard(lock_key))
+                # Keep the lock in dict for potential reuse, just release it
+                pass
 
     position_manager.open_position = patched_open_position
 
