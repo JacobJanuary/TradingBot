@@ -332,6 +332,28 @@ class TradingBot:
         """Start trading bot"""
         logger.info("🚀 Starting Trading Bot...")
 
+        # ⚠️ CRITICAL: Recovery for incomplete positions
+        try:
+            logger.info("🔍 Running position recovery check...")
+            from core.atomic_position_manager import AtomicPositionManager
+            from core.stop_loss_manager import StopLossManager
+
+            # Create atomic manager for recovery
+            sl_manager = StopLossManager(None, 'recovery')
+            atomic_manager = AtomicPositionManager(
+                repository=self.repository,
+                exchange_manager=self.exchanges,
+                stop_loss_manager=sl_manager
+            )
+
+            await atomic_manager.recover_incomplete_positions()
+            logger.info("✅ Position recovery check completed")
+
+        except ImportError:
+            logger.warning("AtomicPositionManager not available for recovery")
+        except Exception as e:
+            logger.error(f"Position recovery failed: {e}")
+
         self.running = True
 
         try:
