@@ -231,7 +231,21 @@ class TradingBot:
                 self.repository,
                 self.event_router
             )
-            
+
+            # Apply critical fixes to PositionManager
+            try:
+                from core.position_manager_integration import apply_critical_fixes, check_fixes_applied
+                await apply_critical_fixes(self.position_manager)
+
+                # Verify fixes are applied
+                fixes_status = check_fixes_applied(self.position_manager)
+                logger.info(f"Critical fixes status: {fixes_status}")
+
+                if not all(fixes_status.values()):
+                    logger.warning("⚠️ Some fixes may not be fully applied")
+            except Exception as e:
+                logger.error(f"Failed to apply critical fixes: {e}")
+
             # Load existing positions from database
             logger.info("Loading positions from database...")
             await self.position_manager.load_positions_from_db()
