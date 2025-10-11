@@ -178,10 +178,16 @@ class PositionManager:
 
         # Periodic sync task
         self.sync_task = None
-        self.sync_interval = 600  # 10 minutes (optimized to reduce API calls)
+        self.sync_interval = 120  # CRITICAL FIX: 2 minutes (was 10) for faster SL protection monitoring
         self.zombie_check_counter = 0  # Counter for tracking zombie checks
         self.last_zombie_count = 0  # Track last zombie count for trend monitoring
         self.aggressive_cleanup_threshold = 10  # Trigger aggressive cleanup if > 10 zombies
+
+        # CRITICAL FIX: Track when positions lost SL for alert timing
+        self.positions_without_sl_time = {}  # {symbol: timestamp when SL was first detected missing}
+
+        # CRITICAL FIX: Whitelist of protected order IDs (stop-loss, take-profit)
+        self.protected_order_ids = set()  # Set of order IDs that must never be cancelled
 
         logger.info("PositionManager initialized")
 
@@ -559,6 +565,9 @@ class PositionManager:
 
                 # Clean up zombie orders (orders without positions)
                 await self.cleanup_zombie_orders()
+
+                # CRITICAL FIX: Re-check SL protection after zombie cleanup
+                await self.check_positions_protection()
 
                 logger.info("✅ Periodic sync completed")
 
@@ -1498,9 +1507,33 @@ class PositionManager:
                     )
                     logger.info(f"✅ Synced {symbol} SL state to DB: has_sl=True, price={sl_price}")
 
+                    # CRITICAL FIX: Clear tracking if SL was restored
+                    if symbol in self.positions_without_sl_time:
+                        del self.positions_without_sl_time[symbol]
+
                 if not has_sl_on_exchange:
                     unprotected_positions.append(position)
-                    logger.warning(f"⚠️ Position {symbol} has no stop loss on exchange!")
+
+                    # CRITICAL FIX: Track time and alert if SL missing > 30 seconds
+                    import time
+                    current_time = time.time()
+
+                    if symbol not in self.positions_without_sl_time:
+                        # First time detected without SL - record time
+                        self.positions_without_sl_time[symbol] = current_time
+                        logger.warning(f"⚠️ Position {symbol} has no stop loss on exchange!")
+                    else:
+                        # Already detected before - check how long
+                        time_without_sl = current_time - self.positions_without_sl_time[symbol]
+
+                        if time_without_sl > 30:
+                            # CRITICAL: SL missing for more than 30 seconds
+                            logger.critical(
+                                f"🚨 CRITICAL ALERT: Position {symbol} WITHOUT STOP LOSS for {time_without_sl:.0f} seconds! "
+                                f"Position at risk!"
+                            )
+                        else:
+                            logger.warning(f"⚠️ Position {symbol} has no stop loss ({time_without_sl:.0f}s)")
 
             # If found unprotected positions, set stop losses using enhanced SL manager
             if unprotected_positions:
@@ -1529,7 +1562,7 @@ class PositionManager:
 
                         # Use enhanced SL manager with auto-validation and retry
                         sl_manager = StopLossManager(exchange.exchange, position.exchange)
-                        success = await sl_manager.verify_and_fix_missing_sl(
+                        success, order_id = await sl_manager.verify_and_fix_missing_sl(
                             position=position,
                             stop_price=stop_loss_price,
                             max_retries=3
@@ -1538,7 +1571,13 @@ class PositionManager:
                         if success:
                             position.has_stop_loss = True
                             position.stop_loss_price = stop_loss_price
-                            logger.info(f"✅ Stop loss set for {position.symbol} at {stop_loss_price:.8f}")
+
+                            # CRITICAL FIX: Add order_id to whitelist for protection
+                            if order_id:
+                                self.protected_order_ids.add(str(order_id))
+                                logger.info(f"✅ Stop loss set for {position.symbol} at {stop_loss_price:.8f}, order_id={order_id} added to whitelist")
+                            else:
+                                logger.info(f"✅ Stop loss set for {position.symbol} at {stop_loss_price:.8f}")
 
                             # Update database
                             await self.repository.update_position_stop_loss(
@@ -1740,7 +1779,11 @@ class PositionManager:
                             from core.binance_zombie_manager import BinanceZombieIntegration
 
                             # Initialize the Binance zombie manager integration
-                            integration = BinanceZombieIntegration(exchange.exchange)
+                            # CRITICAL FIX: Pass protected order IDs whitelist
+                            integration = BinanceZombieIntegration(
+                                exchange.exchange,
+                                protected_order_ids=self.protected_order_ids
+                            )
 
                             # Enable zombie protection with advanced features
                             logger.info(f"🔧 Running advanced Binance zombie cleanup for {exchange_name}")
@@ -1805,25 +1848,25 @@ class PositionManager:
                 # Alert and adjust if too many zombies
                 if total_zombies_found > self.aggressive_cleanup_threshold:
                     logger.critical(f"🚨 HIGH ZOMBIE COUNT DETECTED: {total_zombies_found} zombies!")
-                    logger.critical(f"🔄 Temporarily reducing sync interval from {self.sync_interval}s to 300s")
+                    logger.critical(f"🔄 Temporarily reducing sync interval from {self.sync_interval}s to 60s")
 
                     # Temporarily reduce sync interval to clean up faster
-                    self.sync_interval = min(300, self.sync_interval)  # Max 5 minutes for emergency cleanup
+                    self.sync_interval = min(60, self.sync_interval)  # CRITICAL FIX: 1 minute for emergency cleanup
 
                     logger.critical("📢 Manual intervention may be required - check exchange UI")
                 elif total_zombies_found > 5:
                     logger.warning(f"⚠️ Moderate zombie count: {total_zombies_found}")
                     # Slightly reduce interval if persistent zombies
-                    if self.sync_interval > 300:
-                        self.sync_interval = 450  # 7.5 minutes
+                    if self.sync_interval > 90:
+                        self.sync_interval = 90  # CRITICAL FIX: 1.5 minutes for moderate cleanup
                         logger.info(f"📉 Reduced sync interval to {self.sync_interval}s")
             else:
                 logger.info(f"✨ No zombie orders found (check #{self.zombie_check_counter}, duration: {cleanup_duration:.2f}s)")
 
                 # Gradually increase interval if no zombies found for multiple checks
                 if self.zombie_check_counter > 3 and self.last_zombie_count == 0:
-                    if self.sync_interval < 600:
-                        self.sync_interval = min(600, self.sync_interval + 60)
+                    if self.sync_interval < 120:
+                        self.sync_interval = min(120, self.sync_interval + 30)  # CRITICAL FIX: restore to 2 minutes max
                         logger.info(f"📈 Increased sync interval back to {self.sync_interval}s")
 
         except Exception as e:

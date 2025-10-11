@@ -192,7 +192,7 @@ class StopLossManager:
         position,
         stop_price: float,
         max_retries: int = 3
-    ) -> bool:
+    ):
         """
         Verify Stop Loss exists on exchange and recreate if missing.
 
@@ -207,7 +207,10 @@ class StopLossManager:
             max_retries: Maximum recreation attempts (default: 3)
 
         Returns:
-            bool: True if SL verified/created, False if position closed
+            tuple: (success: bool, order_id: str or None)
+                - (True, order_id) if SL created
+                - (True, None) if SL already exists
+                - (False, None) if position closed or failed
 
         Usage:
             Called from position_manager monitoring loop every 60 seconds
@@ -220,7 +223,7 @@ class StopLossManager:
 
             if has_sl:
                 self.logger.debug(f"✅ SL verified for {symbol}: {existing_sl}")
-                return True
+                return True, None  # CRITICAL FIX: Return tuple
 
             # STEP 2: SL missing - attempt to recreate
             self.logger.warning(
@@ -244,11 +247,13 @@ class StopLossManager:
                     )
 
                     if result['status'] in ['created', 'already_exists']:
+                        # CRITICAL FIX: Return order_id for whitelist protection
+                        order_id = result.get('orderId') or result.get('info', {}).get('id')
                         self.logger.info(
                             f"✅ SL recreated for {symbol} at {result['stopPrice']} "
-                            f"(attempt {attempt + 1}/{max_retries})"
+                            f"(attempt {attempt + 1}/{max_retries}), order_id={order_id}"
                         )
-                        return True
+                        return True, order_id
 
                 except Exception as e:
                     error_msg = str(e).lower()
@@ -258,7 +263,7 @@ class StopLossManager:
                         self.logger.info(
                             f"Position {symbol} closed during SL recreation, skipping"
                         )
-                        return False
+                        return False, None  # CRITICAL FIX: Return tuple
 
                     if attempt < max_retries - 1:
                         self.logger.warning(
@@ -272,13 +277,13 @@ class StopLossManager:
                         self.logger.error(
                             f"❌ Failed to recreate SL after {max_retries} attempts: {e}"
                         )
-                        return False
+                        return False, None  # CRITICAL FIX: Return tuple
 
-            return False
+            return False, None  # CRITICAL FIX: Return tuple
 
         except Exception as e:
             self.logger.error(f"Error in verify_and_fix_missing_sl for {symbol}: {e}")
-            return False
+            return False, None  # CRITICAL FIX: Return tuple
 
     async def _set_bybit_stop_loss(self, symbol: str, stop_price: float) -> Dict:
         """

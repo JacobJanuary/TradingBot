@@ -47,12 +47,13 @@ class BinanceZombieManager:
     - Caching to mitigate empty responses
     """
 
-    def __init__(self, exchange_connector):
+    def __init__(self, exchange_connector, protected_order_ids=None):
         """
         Initialize with existing Binance exchange connector
 
         Args:
             exchange_connector: Existing CCXT Binance instance or ExchangeManager
+            protected_order_ids: Set of order IDs that must never be cancelled (SL/TP)
         """
         # Support both raw CCXT and wrapped ExchangeManager
         if hasattr(exchange_connector, 'exchange'):
@@ -101,6 +102,9 @@ class BinanceZombieManager:
             'zombies_cleaned': 0,
             'async_delays_detected': 0,
         }
+
+        # CRITICAL FIX: Whitelist of protected order IDs
+        self.protected_order_ids = protected_order_ids or set()
 
         # Binance error codes
         self.BINANCE_ERROR_CODES = {
@@ -392,6 +396,11 @@ class BinanceZombieManager:
             # CRITICAL FIX: reduceOnly orders are always protective (SL/TP)
             if order.get('reduceOnly') == True:
                 logger.debug(f"Skipping reduceOnly order {order_id} - likely SL/TP")
+                return None
+
+            # CRITICAL FIX: Check whitelist of protected order IDs
+            if order_id in self.protected_order_ids:
+                logger.debug(f"Skipping whitelisted order {order_id} - protected by position manager")
                 return None
 
             # Skip if already closed
@@ -785,22 +794,36 @@ class BinanceZombieIntegration:
     Provides seamless integration without breaking existing code
     """
 
-    def __init__(self, exchange_connector):
-        """Initialize with existing exchange manager or direct ccxt exchange"""
+    def __init__(self, exchange_connector, protected_order_ids=None):
+        """Initialize with existing exchange manager or direct ccxt exchange
+
+        Args:
+            exchange_connector: ExchangeManager or ccxt exchange instance
+            protected_order_ids: Set of order IDs that must never be cancelled (SL/TP)
+        """
         self.exchange_connector = exchange_connector
         self.binance_managers = {}
         self.manager = None  # For direct exchange access
+        self.protected_order_ids = protected_order_ids or set()  # CRITICAL FIX: Whitelist
 
         # Handle both ExchangeManager and direct ccxt exchange
         if hasattr(exchange_connector, 'exchanges'):
             # ExchangeManager passed - iterate through exchanges
             for name, exchange in exchange_connector.exchanges.items():
                 if 'binance' in name.lower():
-                    self.binance_managers[name] = BinanceZombieManager(exchange)
+                    # CRITICAL FIX: Pass protected order IDs to manager
+                    self.binance_managers[name] = BinanceZombieManager(
+                        exchange,
+                        protected_order_ids=self.protected_order_ids
+                    )
                     logger.info(f"✅ BinanceZombieManager initialized for {name}")
         else:
             # Direct ccxt exchange passed (from position_manager or tests)
-            self.manager = BinanceZombieManager(exchange_connector)
+            # CRITICAL FIX: Pass protected order IDs to manager
+            self.manager = BinanceZombieManager(
+                exchange_connector,
+                protected_order_ids=self.protected_order_ids
+            )
             self.binance_managers['binance'] = self.manager
             logger.info(f"✅ BinanceZombieManager initialized for direct exchange")
 
