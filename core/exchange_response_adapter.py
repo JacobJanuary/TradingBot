@@ -112,7 +112,7 @@ class ExchangeResponseAdapter:
             average = float(info.get('lastExecPrice', 0))
 
         symbol = data.get('symbol') or info.get('symbol', '')
-        order_type = data.get('type', 'market').lower()
+        order_type = (data.get('type') or 'market').lower()
 
         logger.debug(f"Bybit order normalized: id={order_id}, status={status}, filled={filled}/{amount}")
 
@@ -158,7 +158,7 @@ class ExchangeResponseAdapter:
         price = data.get('price') or float(info.get('price', 0))
         average = data.get('average') or float(info.get('avgPrice', 0))
         symbol = data.get('symbol') or info.get('symbol', '')
-        order_type = data.get('type', 'market').lower()
+        order_type = (data.get('type') or 'market').lower()
 
         logger.debug(f"Binance order normalized: id={order_id}, status={status}, filled={filled}/{amount}")
 
