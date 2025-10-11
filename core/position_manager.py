@@ -660,7 +660,7 @@ class PositionManager:
             # ⚠️ ATOMIC OPERATION START
             # Try to use AtomicPositionManager if available
             try:
-                from core.atomic_position_manager import AtomicPositionManager, SymbolUnavailableError
+                from core.atomic_position_manager import AtomicPositionManager, SymbolUnavailableError, MinimumOrderLimitError
 
                 # Initialize atomic manager
                 from core.stop_loss_manager import StopLossManager
@@ -717,6 +717,10 @@ class PositionManager:
             except SymbolUnavailableError as e:
                 # Symbol is unavailable for trading (delisted, reduce-only, etc.)
                 logger.warning(f"⚠️ Symbol {symbol} unavailable for trading: {e}")
+                return None
+            except MinimumOrderLimitError as e:
+                # Order size doesn't meet minimum requirements
+                logger.warning(f"⚠️ Order size for {symbol} below minimum limit: {e}")
                 return None
             except ImportError:
                 # Fallback to non-atomic creation (old logic)
@@ -831,6 +835,11 @@ class PositionManager:
             # Symbol is unavailable for trading (delisted, reduce-only, etc.)
             logger.warning(f"⚠️ Skipping {symbol}: {e}")
             # Return None without error - this is expected for unavailable symbols
+            return None
+        except MinimumOrderLimitError as e:
+            # Order size doesn't meet minimum requirements
+            logger.warning(f"⚠️ Skipping {symbol}: {e}")
+            # Return None without error - this is expected for minimum limit issues
             return None
         except Exception as e:
             logger.error(f"Error opening position for {symbol}: {e}", exc_info=True)
