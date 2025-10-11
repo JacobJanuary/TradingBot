@@ -63,14 +63,18 @@ class StopLossManager:
             # ============================================================
             if self.exchange_name == 'bybit':
                 try:
-                    # КРИТИЧНО: Для Bybit ОБЯЗАТЕЛЬНО params={'category': 'linear'}
+                    # CRITICAL FIX: Import normalize_symbol for symbol comparison
+                    from core.position_manager import normalize_symbol
+
+                    # КРИТИЧНО: Fetch ALL positions since symbol format may not match
                     positions = await self.exchange.fetch_positions(
-                        symbols=[symbol],
                         params={'category': 'linear'}
                     )
 
+                    normalized_symbol = normalize_symbol(symbol)
+
                     for pos in positions:
-                        if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                        if normalize_symbol(pos['symbol']) == normalized_symbol and float(pos.get('contracts', 0)) > 0:
                             # КРИТИЧНО: Проверяем position.info.stopLoss
                             # Источник: core/position_manager.py:1324
                             stop_loss = pos.get('info', {}).get('stopLoss', '0')
@@ -283,18 +287,24 @@ class StopLossManager:
         Источник: core/exchange_manager.py:create_stop_loss_order (Bybit секция)
         """
         try:
-            # ШАГ 1: Получить позицию для positionIdx
+            # CRITICAL FIX: Import normalize_symbol for symbol comparison
+            from core.position_manager import normalize_symbol
+
+            # ШАГ 1: Получить ВСЕ позиции (не фильтруя по symbol, так как формат может не совпадать)
             positions = await self.exchange.fetch_positions(
-                symbols=[symbol],
                 params={'category': 'linear'}
             )
 
             position_idx = 0
             position_found = False
+            normalized_symbol = normalize_symbol(symbol)
+            actual_exchange_symbol = None  # Will store the actual symbol format from exchange
 
+            # CRITICAL FIX: Use normalize_symbol for comparison
             for pos in positions:
-                if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                if normalize_symbol(pos['symbol']) == normalized_symbol and float(pos.get('contracts', 0)) > 0:
                     position_idx = int(pos.get('info', {}).get('positionIdx', 0))
+                    actual_exchange_symbol = pos['symbol']  # Save the actual symbol format
                     position_found = True
                     break
 
@@ -302,8 +312,10 @@ class StopLossManager:
                 raise ValueError(f"No open position found for {symbol}")
 
             # ШАГ 2: Форматирование для Bybit API
-            bybit_symbol = symbol.replace('/', '').replace(':USDT', '')
-            sl_price_formatted = self.exchange.price_to_precision(symbol, stop_price)
+            # Use the actual exchange symbol format for API calls
+            exchange_symbol = actual_exchange_symbol or symbol
+            bybit_symbol = exchange_symbol.replace('/', '').replace(':USDT', '')
+            sl_price_formatted = self.exchange.price_to_precision(exchange_symbol, stop_price)
 
             # ШАГ 3: Установка через set_trading_stop (position-attached)
             params = {

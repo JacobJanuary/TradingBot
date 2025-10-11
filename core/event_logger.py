@@ -97,15 +97,15 @@ class EventLogger:
                     severity VARCHAR(20) DEFAULT 'INFO',
                     error_message TEXT,
                     stack_trace TEXT,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-
-                    -- Indexes for fast queries
-                    INDEX idx_events_type (event_type),
-                    INDEX idx_events_correlation (correlation_id),
-                    INDEX idx_events_position (position_id),
-                    INDEX idx_events_created (created_at DESC)
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Create indexes separately
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events (correlation_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_position ON events (position_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_at DESC)")
 
             # Transaction log table
             await conn.execute("""
@@ -118,12 +118,13 @@ class EventLogger:
                     completed_at TIMESTAMP WITH TIME ZONE,
                     duration_ms INTEGER,
                     affected_rows INTEGER,
-                    error_message TEXT,
-
-                    INDEX idx_tx_log_id (transaction_id),
-                    INDEX idx_tx_log_status (status)
+                    error_message TEXT
                 )
             """)
+
+            # Create indexes separately
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_id ON transaction_log (transaction_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_status ON transaction_log (status)")
 
             # Performance metrics table
             await conn.execute("""
@@ -132,12 +133,13 @@ class EventLogger:
                     metric_name VARCHAR(100),
                     metric_value DECIMAL(20, 8),
                     tags JSONB,
-                    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-
-                    INDEX idx_metrics_name (metric_name),
-                    INDEX idx_metrics_time (recorded_at DESC)
+                    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Create indexes separately
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_name ON performance_metrics (metric_name)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_time ON performance_metrics (recorded_at DESC)")
 
     async def log_event(
         self,
