@@ -19,6 +19,24 @@ from utils.rate_limiter import get_rate_limiter
 logger = logging.getLogger(__name__)
 
 
+def normalize_symbol(symbol: str) -> str:
+    """
+    Normalize symbol format for consistent comparison
+    Converts exchange format 'HIGH/USDT:USDT' to database format 'HIGHUSDT'
+
+    Args:
+        symbol: Symbol in any format
+
+    Returns:
+        Normalized symbol (e.g., 'BLASTUSDT')
+    """
+    if '/' in symbol and ':' in symbol:
+        # Exchange format: 'HIGH/USDT:USDT' -> 'HIGHUSDT'
+        base_quote = symbol.split(':')[0]  # 'HIGH/USDT'
+        return base_quote.replace('/', '')  # 'HIGHUSDT'
+    return symbol
+
+
 @dataclass
 class OrderResult:
     """Order execution result"""
@@ -147,6 +165,36 @@ class ExchangeManager:
         """Close exchange connection"""
         await self.exchange.close()
 
+    def find_exchange_symbol(self, normalized_symbol: str) -> Optional[str]:
+        """
+        Find exchange-specific symbol format by searching markets
+        CRITICAL FIX: Converts DB format ('BLASTUSDT') to exchange format ('BLAST/USDT:USDT')
+
+        Args:
+            normalized_symbol: Database format symbol (e.g., 'BLASTUSDT')
+
+        Returns:
+            Exchange format symbol (e.g., 'BLAST/USDT:USDT') or None if not found
+
+        Examples:
+            Binance: 'BTCUSDT' → 'BTCUSDT' (exact match)
+            Bybit: 'BLASTUSDT' → 'BLAST/USDT:USDT' (format conversion)
+        """
+        # Try exact match first (for exchanges that use simple format like Binance)
+        if normalized_symbol in self.markets:
+            return normalized_symbol
+
+        # Search for matching symbol in all markets
+        # This handles format conversion: 'BLASTUSDT' → 'BLAST/USDT:USDT'
+        for market_symbol in self.markets.keys():
+            if normalize_symbol(market_symbol) == normalized_symbol:
+                logger.debug(f"Symbol format conversion: {normalized_symbol} → {market_symbol} ({self.name})")
+                return market_symbol
+
+        # Symbol not found on this exchange
+        logger.warning(f"Symbol {normalized_symbol} not found in {len(self.markets)} markets on {self.name}")
+        return None
+
     # ============== Market Data ==============
 
     async def fetch_ticker(self, symbol: str, use_cache: bool = True) -> Dict:
@@ -245,10 +293,19 @@ class ExchangeManager:
             Order dictionary from exchange
         """
         try:
-            # Use rate limiter for order creation
+            # CRITICAL FIX: Convert symbol to exchange-specific format before API call
+            # DB stores 'BLASTUSDT', but Bybit needs 'BLAST/USDT:USDT'
+            exchange_symbol = self.find_exchange_symbol(symbol)
+
+            if not exchange_symbol:
+                error_msg = f"Symbol {symbol} not available on {self.name}"
+                logger.error(f"❌ {error_msg}")
+                raise ValueError(error_msg)
+
+            # Use rate limiter for order creation with converted symbol
             order = await self.rate_limiter.execute_request(
                 self.exchange.create_order,
-                symbol=symbol,
+                symbol=exchange_symbol,  # ✅ Use exchange-specific format
                 type=type,
                 side=side.lower(),
                 amount=amount,
@@ -288,10 +345,15 @@ class ExchangeManager:
             # Check and adjust amount to exchange limits
             amount = await self._validate_and_adjust_amount(symbol, float(amount))
 
+            # CRITICAL FIX: Convert symbol to exchange-specific format
+            exchange_symbol = self.find_exchange_symbol(symbol)
+            if not exchange_symbol:
+                raise ValueError(f"Symbol {symbol} not available on {self.name}")
+
             # Create market order with rate limiting
             order = await self.rate_limiter.execute_request(
                 self.exchange.create_market_order,
-                symbol=symbol,
+                symbol=exchange_symbol,  # ✅ Use exchange-specific format
                 side=side.lower(),
                 amount=amount,
                 params=params or {}
@@ -305,9 +367,14 @@ class ExchangeManager:
     async def create_limit_order(self, symbol: str, side: str, amount: Decimal, price: Decimal) -> OrderResult:
         """Create limit order"""
         try:
+            # CRITICAL FIX: Convert symbol to exchange-specific format
+            exchange_symbol = self.find_exchange_symbol(symbol)
+            if not exchange_symbol:
+                raise ValueError(f"Symbol {symbol} not available on {self.name}")
+
             order = await self.rate_limiter.execute_request(
                 self.exchange.create_limit_order,
-                symbol=symbol,
+                symbol=exchange_symbol,  # ✅ Use exchange-specific format
                 side=side.lower(),
                 amount=float(amount),
                 price=float(price)
@@ -676,10 +743,24 @@ class ExchangeManager:
             if symbol not in self.markets:
                 await self.exchange.load_markets()
 
-            market = self.markets.get(symbol)
+            # CRITICAL FIX: Convert symbol to exchange-specific format
+            # DB stores 'BLASTUSDT', Bybit needs 'BLAST/USDT:USDT'
+            exchange_symbol = self.find_exchange_symbol(symbol)
+
+            if not exchange_symbol:
+                logger.error(f"❌ Symbol {symbol} not available on exchange {self.name}")
+                logger.error(f"   Available exchanges may have different symbol listings")
+                raise ValueError(
+                    f"Symbol {symbol} not available on {self.name}. "
+                    f"This symbol may only be available on other exchanges."
+                )
+
+            # Use exchange_symbol for market info lookup
+            market = self.markets.get(exchange_symbol)
             if not market:
-                logger.warning(f"Market info not found for {symbol}, using original amount")
-                return amount
+                # This should never happen after find_exchange_symbol succeeds
+                logger.error(f"❌ Market info not found for {exchange_symbol} after symbol conversion")
+                raise ValueError(f"Market info unavailable for {symbol}")
 
             # Get limits
             min_amount = market.get('limits', {}).get('amount', {}).get('min', 0)
@@ -745,22 +826,36 @@ class ExchangeManager:
 
     def amount_to_precision(self, symbol: str, amount: Decimal) -> Decimal:
         """Format amount to exchange precision"""
-        return self.exchange.amount_to_precision(symbol, amount)
+        # CRITICAL FIX: Convert symbol to exchange-specific format
+        exchange_symbol = self.find_exchange_symbol(symbol)
+        if not exchange_symbol:
+            logger.warning(f"Symbol {symbol} not found, using original for precision")
+            exchange_symbol = symbol
+        return self.exchange.amount_to_precision(exchange_symbol, amount)
 
     def price_to_precision(self, symbol: str, price: Decimal) -> Decimal:
         """Format price to exchange precision"""
-        return self.exchange.price_to_precision(symbol, price)
+        # CRITICAL FIX: Convert symbol to exchange-specific format
+        exchange_symbol = self.find_exchange_symbol(symbol)
+        if not exchange_symbol:
+            logger.warning(f"Symbol {symbol} not found, using original for precision")
+            exchange_symbol = symbol
+        return self.exchange.price_to_precision(exchange_symbol, price)
 
     def get_min_amount(self, symbol: str) -> float:
         """Get minimum order amount for symbol"""
-        market = self.markets.get(symbol)
+        # CRITICAL FIX: Convert symbol to exchange-specific format
+        exchange_symbol = self.find_exchange_symbol(symbol) or symbol
+        market = self.markets.get(exchange_symbol)
         if market:
             return market['limits']['amount']['min']
         return 0.001  # Default
 
     def get_tick_size(self, symbol: str) -> float:
         """Get price tick size for symbol"""
-        market = self.markets.get(symbol)
+        # CRITICAL FIX: Convert symbol to exchange-specific format
+        exchange_symbol = self.find_exchange_symbol(symbol) or symbol
+        market = self.markets.get(exchange_symbol)
         if market:
             return market['precision']['price']
         return 0.01  # Default
