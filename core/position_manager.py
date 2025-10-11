@@ -572,14 +572,16 @@ class PositionManager:
 
     async def open_position(self, request: PositionRequest) -> Optional[PositionState]:
         """
-        Open new position with complete workflow:
+        Open new position with ATOMIC workflow:
         1. Validate request
         2. Check risk limits
         3. Calculate position size
-        4. Execute market order
-        5. Set stop loss
-        6. Initialize trailing stop
-        7. Save to database
+        4. ATOMIC: Execute market order + Set stop loss
+        5. Initialize trailing stop
+        6. Save to database
+
+        ⚠️ CRITICAL: Position and SL are created atomically
+        If SL fails, position is rolled back
         """
 
         symbol = request.symbol
@@ -624,8 +626,14 @@ class PositionManager:
             await self._validate_spread(exchange, symbol)
             # Не блокируем открытие позиций из-за спреда
 
-            # 6. Execute market order
-            logger.info(f"Opening position: {symbol} {request.side} {quantity}")
+            # 6. Calculate stop-loss price first
+            stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+            stop_loss_price = calculate_stop_loss(
+                to_decimal(request.entry_price), request.side, to_decimal(stop_loss_percent)
+            )
+
+            logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity}")
+            logger.info(f"Stop-loss will be set at: {stop_loss_price:.4f} ({stop_loss_percent}%)")
 
             # Convert side: long -> buy, short -> sell for Binance
             if request.side.lower() == 'long':
@@ -635,11 +643,48 @@ class PositionManager:
             else:
                 order_side = request.side.lower()
 
-            order = await exchange.create_market_order(symbol, order_side, quantity)
+            # ⚠️ ATOMIC OPERATION START
+            # Try to use AtomicPositionManager if available
+            try:
+                from core.atomic_position_manager import AtomicPositionManager
 
-            if not order or order.status != 'closed':
-                logger.error(f"Failed to open position for {symbol}")
-                return None
+                # Initialize atomic manager
+                from core.stop_loss_manager import StopLossManager
+                sl_manager = StopLossManager(exchange.exchange, exchange_name)
+
+                atomic_manager = AtomicPositionManager(
+                    repository=self.repository,
+                    exchange_manager={'binance': exchange, 'bybit': exchange},
+                    stop_loss_manager=sl_manager
+                )
+
+                # Execute atomic creation
+                atomic_result = await atomic_manager.open_position_atomic(
+                    signal_id=request.signal_id,
+                    symbol=symbol,
+                    exchange=exchange_name,
+                    side=order_side,
+                    quantity=quantity,
+                    entry_price=float(request.entry_price),
+                    stop_loss_price=float(stop_loss_price)
+                )
+
+                if atomic_result:
+                    logger.info(f"✅ Position created ATOMICALLY with guaranteed SL")
+                    order = atomic_result['entry_order']
+                else:
+                    logger.error(f"Failed to create atomic position for {symbol}")
+                    return None
+
+            except ImportError:
+                # Fallback to non-atomic creation (old logic)
+                logger.warning("⚠️ AtomicPositionManager not available, using legacy approach")
+
+                order = await exchange.create_market_order(symbol, order_side, quantity)
+
+                if not order or order.status != 'closed':
+                    logger.error(f"Failed to open position for {symbol}")
+                    return None
 
             # 7. Create position state
             position = PositionState(
