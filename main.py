@@ -332,6 +332,27 @@ class TradingBot:
         """Start trading bot"""
         logger.info("🚀 Starting Trading Bot...")
 
+        # Initialize EventLogger for audit trail
+        try:
+            from core.event_logger import EventLogger, EventType, set_event_logger
+            event_logger = EventLogger(self.repository.pool)
+            await event_logger.initialize()
+            set_event_logger(event_logger)
+
+            # Log bot startup
+            await event_logger.log_event(
+                EventType.BOT_STARTED,
+                {
+                    'mode': self.mode,
+                    'exchange': 'both',
+                    'version': '2.0'
+                },
+                severity='INFO'
+            )
+            logger.info("✅ EventLogger initialized - All operations will be logged")
+        except Exception as e:
+            logger.warning(f"EventLogger initialization failed: {e}")
+
         # ⚠️ CRITICAL: Recovery for incomplete positions
         try:
             logger.info("🔍 Running position recovery check...")
@@ -552,6 +573,21 @@ class TradingBot:
     async def cleanup(self):
         """Clean up resources"""
         logger.info("Cleaning up resources...")
+
+        # Shutdown EventLogger
+        try:
+            from core.event_logger import get_event_logger, EventType
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.BOT_STOPPED,
+                    {'mode': self.mode},
+                    severity='INFO'
+                )
+                await event_logger.shutdown()
+                logger.info("EventLogger shut down")
+        except Exception as e:
+            logger.warning(f"EventLogger shutdown failed: {e}")
 
         # Disconnect WebSocket streams
         for name, stream in self.websockets.items():
