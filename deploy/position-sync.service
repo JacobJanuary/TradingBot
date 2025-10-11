@@ -1,0 +1,36 @@
+[Unit]
+Description=Trading Bot Position Sync Service
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=trading
+Group=trading
+
+# Environment
+EnvironmentFile=/home/trading/TradingBot/.env
+WorkingDirectory=/home/trading/TradingBot
+
+# Python virtual environment
+ExecStartPre=/home/trading/TradingBot/.venv/bin/python -m pip install --quiet --requirement requirements.txt
+
+# Start service
+ExecStart=/home/trading/TradingBot/.venv/bin/python services/position_sync_service.py --interval 60
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitInterval=600
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

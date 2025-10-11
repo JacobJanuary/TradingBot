@@ -668,7 +668,7 @@ class PositionManager:
 
                 atomic_manager = AtomicPositionManager(
                     repository=self.repository,
-                    exchange_manager={'binance': exchange, 'bybit': exchange},
+                    exchange_manager=self.exchanges,  # FIX: Use self.exchanges instead of dict
                     stop_loss_manager=sl_manager
                 )
 
