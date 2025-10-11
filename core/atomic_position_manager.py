@@ -14,6 +14,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 import uuid
+from database.transactional_repository import TransactionalRepository
+from core.event_logger import EventLogger, EventType, log_event
 
 logger = logging.getLogger(__name__)
 
