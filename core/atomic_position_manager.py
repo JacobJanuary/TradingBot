@@ -41,6 +41,11 @@ class AtomicPositionError(Exception):
     pass
 
 
+class SymbolUnavailableError(Exception):
+    """Исключение когда символ недоступен для торговли (делистинг, только закрытие и т.д.)"""
+    pass
+
+
 class AtomicPositionManager:
     """
     Менеджер атомарного создания позиций
@@ -242,9 +247,27 @@ class AtomicPositionManager:
                 }
 
             except Exception as e:
+                # Check for Binance "Invalid symbol status" error
+                error_str = str(e)
+                if "code\":-4140" in error_str or "Invalid symbol status" in error_str:
+                    logger.warning(f"⚠️ Symbol {symbol} is unavailable for trading (delisted or reduce-only): {e}")
+
+                    # Clean up: Delete position from DB if it was created
+                    if position_id:
+                        try:
+                            await self.repository.update_position(position_id, **{
+                                'status': 'canceled',
+                                'exit_reason': 'Symbol unavailable for trading'
+                            })
+                        except:
+                            pass  # Ignore cleanup errors
+
+                    # Raise specific exception for unavailable symbols
+                    raise SymbolUnavailableError(f"Symbol {symbol} unavailable for trading on {exchange}")
+
                 logger.error(f"❌ Atomic position creation failed: {e}")
 
-                # CRITICAL: Rollback logic
+                # CRITICAL: Rollback logic for other errors
                 await self._rollback_position(
                     position_id=position_id,
                     entry_order=entry_order,
