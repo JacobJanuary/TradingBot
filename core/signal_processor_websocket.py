@@ -388,42 +388,49 @@ class WebSocketSignalProcessor:
     
     def _calculate_expected_wave_timestamp(self) -> str:
         """
-        Вычислить timestamp ожидаемой волны
-        
-        Логика: Волна появляется на сервере через ~20 минут после своего timestamp.
-        Бот проверяет в минуты WAVE_CHECK_MINUTES (например, [6, 20, 35, 50]).
-        Нужно вернуть timestamp волны, которая должна появиться СЕЙЧАС.
-        
-        Для WAVE_CHECK_MINUTES=[6, 20, 35, 50]:
-        - Проверка в 06 минут → ищем волну timestamp 45 (предыдущего часа)
-        - Проверка в 20 минут → ищем волну timestamp 00
-        - Проверка в 35 минут → ищем волну timestamp 15
-        - Проверка в 50 минут → ищем волну timestamp 30
-        
-        Общая формула: wave_timestamp = current_check_minute - 20 минут
-        
+        Вычислить timestamp ожидаемой волны (время ОТКРЫТИЯ 15-минутной свечи)
+
+        ⚠️ CRITICAL: DO NOT CHANGE THIS LOGIC WITHOUT EXPLICIT PERMISSION!
+
+        Логика: Сигналы генерируются для 15-минутных свечей и приходят через 5-8 минут.
+        Timestamp в сигнале = время ОТКРЫТИЯ свечи (:00, :15, :30, :45).
+
+        Бот проверяет волны начиная с WAVE_CHECK_MINUTES=[6, 20, 35, 50].
+
+        ⚠️ TIME-RANGE BASED MAPPING (verified and tested):
+        - Если сейчас 0-15 минут → ждем волну с timestamp :45 (предыдущего часа)
+        - Если сейчас 16-30 минут → ждем волну с timestamp :00
+        - Если сейчас 31-45 минут → ждем волну с timestamp :15
+        - Если сейчас 46-59 минут → ждем волну с timestamp :30
+
+        ⚠️ NO FORMULAS, NO CALCULATIONS - ONLY RANGE CHECKS!
+
+        Примеры:
+        - 00:06 (после закрытия свечи 45-00) → ищем timestamp 45 предыдущего часа
+        - 00:20 (после закрытия свечи 00-15) → ищем timestamp 00
+        - 00:35 (после закрытия свечи 15-30) → ищем timestamp 15
+        - 00:50 (после закрытия свечи 30-45) → ищем timestamp 30
+
         Returns:
             Timestamp волны в формате строки (с 'T' между датой и временем)
         """
         now = datetime.now(timezone.utc)
         current_minute = now.minute
-        
-        # Найти ближайшую предыдущую check_minute (на которой мы сейчас)
-        current_check_minute = None
-        for check_minute in sorted(self.wave_check_minutes, reverse=True):
-            if current_minute >= check_minute:
-                current_check_minute = check_minute
-                break
-        
-        # Если не нашли (current_minute < самой маленькой check_minute), значит мы в начале часа
-        # и проверяем волну из предыдущего часа
-        if current_check_minute is None:
-            current_check_minute = self.wave_check_minutes[-1]  # Последняя check_minute предыдущего часа
-            wave_time = now.replace(minute=current_check_minute, second=0, microsecond=0) - timedelta(hours=1, minutes=20)
-        else:
-            # Вычитаем 20 минут от текущей check_minute
-            wave_time = now.replace(minute=current_check_minute, second=0, microsecond=0) - timedelta(minutes=20)
-        
+
+        # ⚠️ CRITICAL: Time-range based mapping - DO NOT MODIFY!
+        if 0 <= current_minute <= 15:
+            # Ждем волну с timestamp :45 предыдущего часа
+            wave_time = now.replace(minute=45, second=0, microsecond=0) - timedelta(hours=1)
+        elif 16 <= current_minute <= 30:
+            # Ждем волну с timestamp :00 текущего часа
+            wave_time = now.replace(minute=0, second=0, microsecond=0)
+        elif 31 <= current_minute <= 45:
+            # Ждем волну с timestamp :15 текущего часа
+            wave_time = now.replace(minute=15, second=0, microsecond=0)
+        else:  # 46-59
+            # Ждем волну с timestamp :30 текущего часа
+            wave_time = now.replace(minute=30, second=0, microsecond=0)
+
         # ✅ Используем .isoformat() для формата с 'T' (как в сигналах от сервера)
         return wave_time.isoformat()
     
