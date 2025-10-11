@@ -13,6 +13,13 @@ STOP LOSS OPERATIONS
 
 См. docs/STOP_LOSS_ARCHITECTURE.md (если создан)
 ============================================================
+
+SOURCE OF TRUTH STRATEGY:
+------------------------
+Exchange is the primary source of truth for positions.
+Database serves as secondary cache with reconciliation.
+Reconciliation happens during periodic sync operations.
+============================================================
 """
 import asyncio
 import logging
@@ -414,7 +421,14 @@ class PositionManager:
             return False
 
     async def sync_exchange_positions(self, exchange_name: str):
-        """Sync positions from specific exchange"""
+        """Sync positions from specific exchange
+
+        RECONCILIATION LOGIC:
+        This method reconciles positions between exchange (source of truth) and database.
+        - Closes DB positions that don't exist on exchange
+        - Updates DB positions with exchange data
+        - Handles phantom positions appropriately
+        """
         try:
             exchange = self.exchanges.get(exchange_name)
             if not exchange:
@@ -989,61 +1003,68 @@ class PositionManager:
 
         This function now uses StopLossManager for ALL SL operations
         to ensure consistency across the system.
+
+        LOCK PROTECTION: This method uses proper locking to prevent race conditions.
         """
+        # LOCK: Acquire lock for stop-loss operation
+        lock_key = f"sl_update_{position.symbol}_{position.id}"
+        if lock_key not in self.position_locks:
+            self.position_locks[lock_key] = asyncio.Lock()
 
-        logger.info(f"Attempting to set stop loss for {position.symbol}")
-        logger.info(f"  Position: {position.side} {position.quantity} @ {position.entry_price}")
-        logger.info(f"  Stop price: ${stop_price:.4f}")
+        async with self.position_locks[lock_key]:
+            logger.info(f"Attempting to set stop loss for {position.symbol}")
+            logger.info(f"  Position: {position.side} {position.quantity} @ {position.entry_price}")
+            logger.info(f"  Stop price: ${stop_price:.4f}")
 
-        try:
-            # ============================================================
-            # UNIFIED APPROACH: Use StopLossManager for ALL SL operations
-            # ============================================================
-            from core.stop_loss_manager import StopLossManager
+            try:
+                # ============================================================
+                # UNIFIED APPROACH: Use StopLossManager for ALL SL operations
+                # ============================================================
+                from core.stop_loss_manager import StopLossManager
 
-            sl_manager = StopLossManager(exchange.exchange, position.exchange)
+                sl_manager = StopLossManager(exchange.exchange, position.exchange)
 
-            # CRITICAL: Check using unified has_stop_loss (checks both position.info.stopLoss AND orders)
-            has_sl, existing_sl_price = await sl_manager.has_stop_loss(position.symbol)
+                # CRITICAL: Check using unified has_stop_loss (checks both position.info.stopLoss AND orders)
+                has_sl, existing_sl_price = await sl_manager.has_stop_loss(position.symbol)
 
-            if has_sl:
-                logger.info(f"📌 Stop loss already exists for {position.symbol} at {existing_sl_price}")
-                return True  # Stop loss exists, no need to create new one
+                if has_sl:
+                    logger.info(f"📌 Stop loss already exists for {position.symbol} at {existing_sl_price}")
+                    return True  # Stop loss exists, no need to create new one
 
-            # No SL exists - create it using unified set_stop_loss
-            order_side = 'sell' if position.side == 'long' else 'buy'
+                # No SL exists - create it using unified set_stop_loss
+                order_side = 'sell' if position.side == 'long' else 'buy'
 
-            result = await sl_manager.set_stop_loss(
-                symbol=position.symbol,
-                side=order_side,
-                amount=float(position.quantity),
-                stop_price=stop_price
-            )
-
-            if result['status'] in ['created', 'already_exists']:
-                # CRITICAL FIX: Update both memory and database
-                position.has_stop_loss = True
-                position.stop_loss_price = result['stopPrice']
-
-                # Update database
-                logger.info(f"🔍 Updating DB: position_id={position.id}, has_stop_loss=True, stop_loss_price={result['stopPrice']}")
-                await self.repository.update_position(
-                    position.id,
-                    has_stop_loss=True,
-                    stop_loss_price=result['stopPrice']
+                result = await sl_manager.set_stop_loss(
+                    symbol=position.symbol,
+                    side=order_side,
+                    amount=float(position.quantity),
+                    stop_price=stop_price
                 )
-                logger.info(f"✅ DB updated for {position.symbol}")
 
-                logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}")
-                return True
-            else:
-                logger.warning(f"⚠️ Unexpected result from set_stop_loss: {result}")
-                return False
+                if result['status'] in ['created', 'already_exists']:
+                    # CRITICAL FIX: Update both memory and database
+                    position.has_stop_loss = True
+                    position.stop_loss_price = result['stopPrice']
 
-        except Exception as e:
-            logger.error(f"Failed to set stop loss for {position.symbol}: {e}", exc_info=True)
+                    # Update database
+                    logger.info(f"🔍 Updating DB: position_id={position.id}, has_stop_loss=True, stop_loss_price={result['stopPrice']}")
+                    await self.repository.update_position(
+                        position.id,
+                        has_stop_loss=True,
+                        stop_loss_price=result['stopPrice']
+                    )
+                    logger.info(f"✅ DB updated for {position.symbol}")
 
-        return False
+                    logger.info(f"✅ Stop loss set for {position.symbol} at {result['stopPrice']}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Unexpected result from set_stop_loss: {result}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Failed to set stop loss for {position.symbol}: {e}", exc_info=True)
+
+            return False
 
     async def _on_position_update(self, data: Dict):
         """Handle position update from WebSocket"""
@@ -1077,29 +1098,35 @@ class PositionManager:
                 )
 
         # Update trailing stop
-        trailing_manager = self.trailing_managers.get(position.exchange)
-        if trailing_manager and position.has_trailing_stop:
-            update_result = await trailing_manager.update_price(symbol, position.current_price)
+        # LOCK: Acquire lock for trailing stop update
+        trailing_lock_key = f"trailing_stop_{symbol}"
+        if trailing_lock_key not in self.position_locks:
+            self.position_locks[trailing_lock_key] = asyncio.Lock()
 
-            if update_result:
-                action = update_result.get('action')
+        async with self.position_locks[trailing_lock_key]:
+            trailing_manager = self.trailing_managers.get(position.exchange)
+            if trailing_manager and position.has_trailing_stop:
+                update_result = await trailing_manager.update_price(symbol, position.current_price)
 
-                if action == 'activated':
-                    position.trailing_activated = True
-                    logger.info(f"Trailing stop activated for {symbol}")
-                    # Save trailing activation to database
-                    await self.repository.update_position(position.id, trailing_activated=True)
+                if update_result:
+                    action = update_result.get('action')
 
-                elif action == 'updated':
-                    # CRITICAL FIX: Save new trailing stop price to database
-                    new_stop = update_result.get('new_stop')
-                    if new_stop:
-                        position.stop_loss_price = new_stop
-                        await self.repository.update_position(
-                            position.id,
-                            stop_loss_price=new_stop
-                        )
-                        logger.info(f"✅ Saved new trailing stop price for {symbol}: {new_stop}")
+                    if action == 'activated':
+                        position.trailing_activated = True
+                        logger.info(f"Trailing stop activated for {symbol}")
+                        # Save trailing activation to database
+                        await self.repository.update_position(position.id, trailing_activated=True)
+
+                    elif action == 'updated':
+                        # CRITICAL FIX: Save new trailing stop price to database
+                        new_stop = update_result.get('new_stop')
+                        if new_stop:
+                            position.stop_loss_price = new_stop
+                            await self.repository.update_position(
+                                position.id,
+                                stop_loss_price=new_stop
+                            )
+                            logger.info(f"✅ Saved new trailing stop price for {symbol}: {new_stop}")
 
         # Update database
         await self.repository.update_position_from_websocket({
@@ -1248,11 +1275,16 @@ class PositionManager:
                 order_side = 'sell' if position.side == 'long' else 'buy'
 
                 # Place limit order through standard exchange manager
+                # UNIQUE ORDER ID: Generate unique client_order_id
+                import uuid
+                client_order_id = f"bot_{uuid.uuid4().hex[:16]}"
+
                 order = await exchange.create_limit_order(
                     symbol=symbol,
                     side=order_side,
                     amount=position.quantity,
-                    price=target_price
+                    price=target_price,
+                    params={'clientOrderId': client_order_id}
                 )
             
             # CRITICAL FIX: Handle OrderResult safely
