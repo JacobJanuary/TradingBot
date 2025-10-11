@@ -16,6 +16,7 @@ from decimal import Decimal
 import uuid
 from database.transactional_repository import TransactionalRepository
 from core.event_logger import EventLogger, EventType, log_event
+from core.exchange_response_adapter import ExchangeResponseAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class AtomicPositionManager:
         - Логирование всех этапов
         """
         self.active_operations[operation_id] = {
-            'started_at': datetime.now(timezone.utc),
+            'started_at': datetime.utcnow(),  # FIX: Use offset-naive datetime for consistency
             'status': 'in_progress'
         }
 
@@ -153,24 +154,32 @@ class AtomicPositionManager:
                 logger.info(f"📊 Placing entry order for {symbol}")
                 state = PositionState.ENTRY_PLACED
 
-                exchange_instance = self.exchange_manager.get_exchange(exchange)
+                # FIX: exchange_manager is a dict, not an object with get_exchange method
+                exchange_instance = self.exchange_manager.get(exchange)
                 if not exchange_instance:
                     raise AtomicPositionError(f"Exchange {exchange} not available")
 
-                entry_order = await exchange_instance.create_market_order(
+                raw_order = await exchange_instance.create_market_order(
                     symbol, side, quantity
                 )
 
-                if not entry_order or entry_order.status != 'closed':
-                    raise AtomicPositionError(f"Entry order failed: {entry_order}")
+                # Normalize order response
+                entry_order = ExchangeResponseAdapter.normalize_order(raw_order, exchange)
+
+                if not ExchangeResponseAdapter.is_order_filled(entry_order):
+                    raise AtomicPositionError(f"Entry order failed: {entry_order.status}")
 
                 logger.info(f"✅ Entry order placed: {entry_order.id}")
 
                 # Update position with entry details
-                await self.repository.update_position(position_id, {
-                    'entry_order_id': entry_order.id,
-                    'actual_entry_price': entry_order.price,
-                    'status': state.value
+                # Extract execution price from normalized order
+                exec_price = ExchangeResponseAdapter.extract_execution_price(entry_order)
+
+                # FIX: Use only columns that exist in database schema
+                await self.repository.update_position(position_id, **{
+                    'entry_price': exec_price,  # Update existing entry_price field
+                    'status': state.value,
+                    'exchange_order_id': entry_order.id  # Track order ID
                 })
 
                 # Step 3: Размещение stop-loss с retry
@@ -211,10 +220,9 @@ class AtomicPositionManager:
 
                 # Step 4: Активация позиции
                 state = PositionState.ACTIVE
-                await self.repository.update_position(position_id, {
-                    'has_stop_loss': True,
-                    'stop_loss_price': stop_loss_price,
-                    'stop_loss_order_id': sl_order.get('orderId', ''),
+                # FIX: Use only columns that exist in database schema
+                await self.repository.update_position(position_id, **{
+                    'stop_loss_price': stop_loss_price,  # Setting this indicates SL is active
                     'status': state.value
                 })
 
@@ -226,10 +234,10 @@ class AtomicPositionManager:
                     'exchange': exchange,
                     'side': position_data['side'],
                     'quantity': quantity,
-                    'entry_price': entry_order.price,
+                    'entry_price': exec_price,  # Use extracted execution price
                     'stop_loss_price': stop_loss_price,
                     'state': state.value,
-                    'entry_order': entry_order,
+                    'entry_order': entry_order.raw_data,  # Return raw data for compatibility
                     'sl_order': sl_order
                 }
 
@@ -270,10 +278,12 @@ class AtomicPositionManager:
                 logger.critical(f"⚠️ CRITICAL: Position without SL detected, closing immediately!")
 
                 # Немедленное закрытие позиции
-                exchange_instance = self.exchange_manager.get_exchange(exchange)
+                # FIX: exchange_manager is a dict, not an object with get_exchange method
+                exchange_instance = self.exchange_manager.get(exchange)
                 if exchange_instance:
                     try:
                         # Закрываем market ордером
+                        # entry_order теперь NormalizedOrder
                         close_side = 'sell' if entry_order.side == 'buy' else 'buy'
                         close_order = await exchange_instance.create_market_order(
                             symbol, close_side, entry_order.filled
@@ -285,9 +295,10 @@ class AtomicPositionManager:
 
             # Обновляем статус в БД
             if position_id:
-                await self.repository.update_position(position_id, {
+                # FIX: update_position expects **kwargs, not dict as second argument
+                await self.repository.update_position(position_id, **{
                     'status': PositionState.ROLLED_BACK.value,
-                    'closed_at': datetime.now(timezone.utc),
+                    'closed_at': datetime.utcnow(),  # FIX: Use offset-naive datetime for database compatibility
                     'exit_reason': f'rollback: {error}'
                 })
 
@@ -327,7 +338,8 @@ class AtomicPositionManager:
 
                 if state == PositionState.PENDING_ENTRY.value:
                     # Entry не был размещен - безопасно пометить как failed
-                    await self.repository.update_position(pos['id'], {
+                    # FIX: update_position expects **kwargs, not dict as second argument
+                    await self.repository.update_position(pos['id'], **{
                         'status': PositionState.FAILED.value,
                         'exit_reason': 'incomplete: entry not placed'
                     })
@@ -362,9 +374,9 @@ class AtomicPositionManager:
             )
 
             if sl_result and sl_result.get('status') in ['created', 'already_exists']:
-                await self.repository.update_position(position['id'], {
-                    'has_stop_loss': True,
-                    'stop_loss_price': sl_result.get('stopPrice'),
+                # FIX: Use only columns that exist in database schema
+                await self.repository.update_position(position['id'], **{
+                    'stop_loss_price': sl_result.get('stopPrice'),  # Setting this indicates SL is active
                     'status': PositionState.ACTIVE.value
                 })
                 logger.info(f"✅ SL restored for {symbol}")
@@ -383,9 +395,9 @@ class AtomicPositionManager:
 
         if has_sl[0]:
             # SL уже установлен
-            await self.repository.update_position(position['id'], {
-                'has_stop_loss': True,
-                'stop_loss_price': has_sl[1],
+            # FIX: Use only columns that exist in database schema
+            await self.repository.update_position(position['id'], **{
+                'stop_loss_price': has_sl[1],  # Setting this indicates SL is active
                 'status': PositionState.ACTIVE.value
             })
         else:
@@ -397,18 +409,20 @@ class AtomicPositionManager:
         logger.critical(f"🚨 EMERGENCY CLOSE for {position['symbol']}")
 
         try:
-            exchange = self.exchange_manager.get_exchange(position['exchange'])
+            # FIX: exchange_manager is a dict, not an object with get_exchange method
+            exchange = self.exchange_manager.get(position['exchange'])
             if exchange:
                 close_side = 'sell' if position['side'] == 'long' else 'buy'
                 close_order = await exchange.create_market_order(
                     position['symbol'], close_side, position['quantity']
                 )
 
-                await self.repository.update_position(position['id'], {
+                # FIX: Use only columns that exist in database schema
+                await self.repository.update_position(position['id'], **{
                     'status': 'closed',
-                    'closed_at': datetime.now(timezone.utc),
+                    'closed_at': datetime.utcnow(),  # FIX: Use offset-naive datetime for database compatibility
                     'exit_reason': 'emergency: no stop loss',
-                    'exit_price': close_order.price if close_order else None
+                    'current_price': close_order.price if close_order else None  # Use current_price instead of exit_price
                 })
 
                 logger.info(f"✅ Emergency close completed")
