@@ -703,10 +703,11 @@ class PositionManager:
 
                     # Skip database creation - position already exists!
                     # Jump directly to tracking
-                    self.positions[atomic_result['position_id']] = position
+                    self.positions[symbol] = position  # Track by symbol, not ID
                     self.position_locks.discard(lock_key)
 
                     logger.info(f"✅ Position #{atomic_result['position_id']} for {symbol} opened ATOMICALLY at ${atomic_result['entry_price']:.4f}")
+                    logger.info(f"✅ Added {symbol} to tracked positions (total: {len(self.positions)})")
 
                     return position  # Return early - atomic creation is complete
 
@@ -1512,11 +1513,16 @@ class PositionManager:
                             logger.error(f"Exchange {position.exchange} not available for {position.symbol}")
                             continue
 
+                        # Skip if position already has stop loss
+                        if position.has_stop_loss and position.stop_loss_price:
+                            logger.debug(f"Position {position.symbol} already has SL at {position.stop_loss_price}, skipping")
+                            continue
+
                         # Calculate stop loss price (Decimal-safe)
                         stop_loss_percent = self.config.stop_loss_percent
 
                         stop_loss_price = calculate_stop_loss(
-                            entry_price=position.entry_price,  # Already Decimal from DB
+                            entry_price=Decimal(str(position.entry_price)),  # Convert float to Decimal safely
                             side=position.side,
                             stop_loss_percent=Decimal(str(stop_loss_percent))
                         )
