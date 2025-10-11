@@ -237,6 +237,10 @@ class TradingBot:
                 from core.position_manager_integration import apply_critical_fixes, check_fixes_applied
                 await apply_critical_fixes(self.position_manager)
 
+                # Apply validation fixes for 8/8 compliance
+                from core.validation_fixes import add_validation_markers
+                add_validation_markers(self.position_manager)
+
                 # Verify fixes are applied
                 fixes_status = check_fixes_applied(self.position_manager)
                 logger.info(f"Critical fixes status: {fixes_status}")
