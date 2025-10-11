@@ -65,13 +65,13 @@ async def apply_critical_fixes(position_manager):
             operation="set_stop_loss",
             timeout=30.0
         ):
-            # Log event
+            # Log event (convert Decimal to float for JSON serialization)
             await log_event(
                 EventType.STOP_LOSS_PLACED,
                 {
                     'position_id': position_id,
                     'symbol': symbol,
-                    'stop_price': stop_price
+                    'stop_price': float(stop_price) if stop_price is not None else None
                 },
                 position_id=position_id,
                 symbol=symbol,
