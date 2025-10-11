@@ -381,6 +381,19 @@ class BinanceZombieManager:
                 logger.debug(f"Skipping protective order {order_id} ({order_type}) - managed by exchange")
                 return None
 
+            # CRITICAL FIX: Additional protection - check for protective keywords
+            # Protects against format mismatches (e.g. 'StopMarket' vs 'STOP_MARKET')
+            PROTECTIVE_KEYWORDS = ['STOP', 'TAKE_PROFIT', 'TRAILING']
+            order_type_upper = order_type.upper()
+            if any(keyword in order_type_upper for keyword in PROTECTIVE_KEYWORDS):
+                logger.debug(f"Skipping protective order {order_id} ({order_type}) - contains protective keyword")
+                return None
+
+            # CRITICAL FIX: reduceOnly orders are always protective (SL/TP)
+            if order.get('reduceOnly') == True:
+                logger.debug(f"Skipping reduceOnly order {order_id} - likely SL/TP")
+                return None
+
             # Skip if already closed
             if status in ['closed', 'canceled', 'filled', 'rejected', 'expired']:
                 return None
@@ -636,6 +649,14 @@ class BinanceZombieManager:
         for attempt in range(max_retries):
             try:
                 await self.check_and_wait_rate_limit('cancel_order')
+
+                # CRITICAL FIX: Log detailed information BEFORE cancelling
+                logger.warning(
+                    f"🧟 DELETING ORDER: {zombie.order_id} on {zombie.symbol}\n"
+                    f"  Type: {zombie.order_type}, Side: {zombie.side}, Amount: {zombie.amount}\n"
+                    f"  Zombie Type: {zombie.zombie_type}, Reason: {zombie.reason}\n"
+                    f"  ⚠️ IF THIS IS A STOP-LOSS - CRITICAL BUG!"
+                )
 
                 if hasattr(self.exchange, 'cancel_order'):
                     result = await self.exchange.cancel_order(zombie.order_id, zombie.symbol)
