@@ -660,7 +660,7 @@ class PositionManager:
             # ⚠️ ATOMIC OPERATION START
             # Try to use AtomicPositionManager if available
             try:
-                from core.atomic_position_manager import AtomicPositionManager
+                from core.atomic_position_manager import AtomicPositionManager, SymbolUnavailableError
 
                 # Initialize atomic manager
                 from core.stop_loss_manager import StopLossManager
@@ -714,6 +714,10 @@ class PositionManager:
                     logger.error(f"Failed to create atomic position for {symbol}")
                     return None
 
+            except SymbolUnavailableError as e:
+                # Symbol is unavailable for trading (delisted, reduce-only, etc.)
+                logger.warning(f"⚠️ Symbol {symbol} unavailable for trading: {e}")
+                return None
             except ImportError:
                 # Fallback to non-atomic creation (old logic)
                 logger.warning("⚠️ AtomicPositionManager not available, using legacy approach")
@@ -823,6 +827,11 @@ class PositionManager:
 
             return position
 
+        except SymbolUnavailableError as e:
+            # Symbol is unavailable for trading (delisted, reduce-only, etc.)
+            logger.warning(f"⚠️ Skipping {symbol}: {e}")
+            # Return None without error - this is expected for unavailable symbols
+            return None
         except Exception as e:
             logger.error(f"Error opening position for {symbol}: {e}", exc_info=True)
             return None
