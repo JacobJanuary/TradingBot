@@ -163,6 +163,11 @@ class Repository:
 
     async def create_position(self, position_data: Dict) -> int:
         """Create new position record"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"🔍 REPO DEBUG: create_position() called for {position_data['symbol']}, signal_id={position_data.get('signal_id')}")
+
         query = """
             INSERT INTO monitoring.positions (
                 signal_id, symbol, exchange, side, quantity,
@@ -172,6 +177,9 @@ class Repository:
         """
 
         async with self.pool.acquire() as conn:
+            logger.info(f"🔍 REPO DEBUG: Got connection from pool for {position_data['symbol']}")
+            logger.info(f"🔍 REPO DEBUG: Executing INSERT for {position_data['symbol']}, quantity={position_data['quantity']}")
+
             position_id = await conn.fetchval(
                 query,
                 position_data.get('signal_id'),
@@ -183,6 +191,7 @@ class Repository:
                 position_data.get('exchange_order_id')  # ✅ Save exchange_order_id
             )
 
+            logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {position_data['symbol']}")
             return position_id
 
     async def open_position(self, position_data: Dict) -> int:

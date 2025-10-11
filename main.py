@@ -12,7 +12,7 @@ from typing import Dict, Optional
 import argparse
 
 from config.settings import config as settings
-from utils.process_lock import ProcessLock, ensure_single_instance, check_running_instances, kill_all_instances
+from utils.single_instance import SingleInstance, check_running, kill_running
 from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
 from core.signal_processor_websocket import WebSocketSignalProcessor
@@ -606,9 +606,8 @@ def main():
 
     # Check for running instances
     if args.check_instances:
-        count = check_running_instances()
-        if count > 0:
-            logger.error(f"Found {count} running instances")
+        if check_running('trading_bot'):
+            logger.error("Found running instance")
             sys.exit(1)
         else:
             logger.info("No running instances found")
@@ -616,19 +615,14 @@ def main():
 
     # Force kill existing instances if requested
     if args.force:
-        killed = kill_all_instances()
-        if killed > 0:
-            logger.info(f"Killed {killed} existing instances")
-            # Wait for processes to die
+        if kill_running('trading_bot', force=True):
+            logger.info("Killed existing instance")
+            # Wait for process to die
             import time
             time.sleep(2)
 
-    # Acquire process lock
-    process_lock = ProcessLock('bot.pid')
-    if not process_lock.acquire():
-        logger.error("❌ Cannot start: another instance is already running")
-        logger.error("Use --force to kill existing instances, or --check-instances to verify")
-        sys.exit(1)
+    # Acquire single instance lock (auto-exits if another instance is running)
+    app_lock = SingleInstance('trading_bot')
 
     try:
         # Create bot instance
@@ -648,8 +642,8 @@ def main():
             logger.critical(f"Fatal error: {e}", exc_info=True)
             sys.exit(1)
     finally:
-        # Release process lock
-        process_lock.release()
+        # Lock is automatically released by SingleInstance on exit
+        pass
 
 
 async def async_main(bot: TradingBot):

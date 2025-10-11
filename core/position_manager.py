@@ -478,7 +478,7 @@ class PositionManager:
                 # Check if position exists in our tracking
                 if symbol not in self.positions or self.positions[symbol].exchange != exchange_name:
                     # New position - add to database
-                    db_position = await self.repository.create_position({
+                    position_id = await self.repository.create_position({
                         'symbol': symbol,
                         'exchange': exchange_name,
                         'side': side,
@@ -491,7 +491,7 @@ class PositionManager:
 
                     # Create position state
                     position_state = PositionState(
-                        id=db_position['id'],
+                        id=position_id,
                         symbol=symbol,
                         exchange=exchange_name,
                         side=side,
@@ -656,6 +656,7 @@ class PositionManager:
             )
 
             # 8. Save to database
+            logger.info(f"🔍 DEBUG: About to create trade for {symbol}, signal_id={request.signal_id}")
             trade_id = await self.repository.create_trade({
                 'signal_id': request.signal_id,
                 'symbol': symbol,
@@ -668,7 +669,9 @@ class PositionManager:
                 'order_id': order.id,
                 'status': 'FILLED'
             })
+            logger.info(f"🔍 DEBUG: Trade created with ID={trade_id} for {symbol}")
 
+            logger.info(f"🔍 DEBUG: About to create position for {symbol}, signal_id={request.signal_id}, quantity={position.quantity}")
             position_id = await self.repository.create_position({
                 'signal_id': request.signal_id,
                 'symbol': symbol,
@@ -677,8 +680,10 @@ class PositionManager:
                 'quantity': position.quantity,
                 'entry_price': position.entry_price
             })
+            logger.info(f"🔍 DEBUG: Position created with ID={position_id} for {symbol}")
 
             position.id = position_id
+            logger.info(f"🔍 DEBUG: position.id set to {position_id} for {symbol}")
 
             # 9. Set stop loss
             stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent

@@ -368,6 +368,19 @@ class BinanceZombieManager:
             timestamp = order.get('timestamp', 0)
             order_list_id = order.get('info', {}).get('orderListId', -1) if order.get('info') else -1
 
+            # CRITICAL FIX: Skip protective orders - exchange manages their lifecycle
+            # On futures, exchange auto-cancels these when position closes
+            # If they exist → position is ACTIVE → NOT orphaned
+            PROTECTIVE_ORDER_TYPES = [
+                'STOP_LOSS', 'STOP_LOSS_LIMIT', 'STOP_MARKET',
+                'TAKE_PROFIT', 'TAKE_PROFIT_LIMIT', 'TAKE_PROFIT_MARKET',
+                'TRAILING_STOP_MARKET', 'STOP', 'TAKE_PROFIT'
+            ]
+            # CCXT returns lowercase types, so convert to uppercase for comparison
+            if order_type.upper() in PROTECTIVE_ORDER_TYPES:
+                logger.debug(f"Skipping protective order {order_id} ({order_type}) - managed by exchange")
+                return None
+
             # Skip if already closed
             if status in ['closed', 'canceled', 'filled', 'rejected', 'expired']:
                 return None
