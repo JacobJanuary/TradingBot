@@ -685,7 +685,31 @@ class PositionManager:
 
                 if atomic_result:
                     logger.info(f"✅ Position created ATOMICALLY with guaranteed SL")
-                    order = atomic_result['entry_order']
+                    # ATOMIC CREATION ALREADY CREATED POSITION IN DB!
+                    # Use data from atomic_result, DO NOT create duplicate position
+
+                    position = PositionState(
+                        id=atomic_result['position_id'],  # Use existing ID from atomic creation
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        side=atomic_result['side'],
+                        quantity=atomic_result['quantity'],
+                        entry_price=atomic_result['entry_price'],
+                        current_price=atomic_result['entry_price'],
+                        unrealized_pnl=0,
+                        unrealized_pnl_percent=0,
+                        opened_at=datetime.now(timezone.utc)
+                    )
+
+                    # Skip database creation - position already exists!
+                    # Jump directly to tracking
+                    self.positions[atomic_result['position_id']] = position
+                    self.position_locks.discard(lock_key)
+
+                    logger.info(f"✅ Position #{atomic_result['position_id']} for {symbol} opened ATOMICALLY at ${atomic_result['entry_price']:.4f}")
+
+                    return position  # Return early - atomic creation is complete
+
                 else:
                     logger.error(f"Failed to create atomic position for {symbol}")
                     return None
@@ -700,68 +724,76 @@ class PositionManager:
                     logger.error(f"Failed to open position for {symbol}")
                     return None
 
-            # 7. Create position state
-            position = PositionState(
-                id=None,  # Will be set after DB insert
-                symbol=symbol,
-                exchange=exchange_name,
-                side='long' if request.side == 'BUY' else 'short',
-                quantity=order.filled,
-                entry_price=order.price,
-                current_price=order.price,
-                unrealized_pnl=0,
-                unrealized_pnl_percent=0,
-                opened_at=datetime.now(timezone.utc)
-            )
-
-            # 8. Save to database
-            logger.info(f"🔍 DEBUG: About to create trade for {symbol}, signal_id={request.signal_id}")
-            trade_id = await self.repository.create_trade({
-                'signal_id': request.signal_id,
-                'symbol': symbol,
-                'exchange': exchange_name,
-                'side': order_side,
-                'quantity': order.amount,
-                'price': order.price,
-                'executed_qty': order.filled,
-                'average_price': order.price,
-                'order_id': order.id,
-                'status': 'FILLED'
-            })
-            logger.info(f"🔍 DEBUG: Trade created with ID={trade_id} for {symbol}")
-
-            logger.info(f"🔍 DEBUG: About to create position for {symbol}, signal_id={request.signal_id}, quantity={position.quantity}")
-            position_id = await self.repository.create_position({
-                'signal_id': request.signal_id,
-                'symbol': symbol,
-                'exchange': exchange_name,
-                'side': position.side,
-                'quantity': position.quantity,
-                'entry_price': position.entry_price
-            })
-            logger.info(f"🔍 DEBUG: Position created with ID={position_id} for {symbol}")
-
-            position.id = position_id
-            logger.info(f"🔍 DEBUG: position.id set to {position_id} for {symbol}")
-
-            # 9. Set stop loss
-            stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
-            stop_loss_price = calculate_stop_loss(
-                to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
-            )
-            
-            logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
-
-            if await self._set_stop_loss(exchange, position, stop_loss_price):
-                position.has_stop_loss = True
-                position.stop_loss_price = stop_loss_price
-                logger.info(f"✅ Stop loss confirmed for {symbol}")
-
-                await self.repository.update_position_stop_loss(
-                    position_id, stop_loss_price, ""
+                # 7. Create position state for NON-ATOMIC path only
+                position = PositionState(
+                    id=None,  # Will be set after DB insert
+                    symbol=symbol,
+                    exchange=exchange_name,
+                    side='long' if request.side == 'BUY' else 'short',
+                    quantity=order.filled,
+                    entry_price=order.price,
+                    current_price=order.price,
+                    unrealized_pnl=0,
+                    unrealized_pnl_percent=0,
+                    opened_at=datetime.now(timezone.utc)
                 )
+
+            # Check if position was already created (atomic path)
+            # If position.id is set, it means atomic creation succeeded
+            if position.id is not None:
+                logger.info(f"📌 Position already created atomically with ID={position.id}, skipping DB creation")
             else:
-                logger.warning(f"⚠️ Failed to set stop loss for {symbol}")
+                # 8. Save to database (NON-ATOMIC path only!)
+                logger.info(f"🔍 DEBUG: NON-ATOMIC path - creating trade for {symbol}, signal_id={request.signal_id}")
+                trade_id = await self.repository.create_trade({
+                    'signal_id': request.signal_id,
+                    'symbol': symbol,
+                    'exchange': exchange_name,
+                    'side': order_side,
+                    'quantity': order.amount,
+                    'price': order.price,
+                    'executed_qty': order.filled,
+                    'average_price': order.price,
+                    'order_id': order.id,
+                    'status': 'FILLED'
+                })
+                logger.info(f"🔍 DEBUG: Trade created with ID={trade_id} for {symbol}")
+
+                logger.info(f"🔍 DEBUG: About to create position for {symbol}, signal_id={request.signal_id}, quantity={position.quantity}")
+                position_id = await self.repository.create_position({
+                    'signal_id': request.signal_id,
+                    'symbol': symbol,
+                    'exchange': exchange_name,
+                    'side': position.side,
+                    'quantity': position.quantity,
+                    'entry_price': position.entry_price
+                })
+                logger.info(f"🔍 DEBUG: Position created with ID={position_id} for {symbol}")
+
+                position.id = position_id
+                logger.info(f"🔍 DEBUG: position.id set to {position_id} for {symbol}")
+
+            # 9. Set stop loss (only for NON-ATOMIC path, atomic already has SL)
+            if position.id is not None and hasattr(position, 'has_stop_loss') and position.has_stop_loss:
+                logger.info(f"✅ Stop loss already set atomically for {symbol}")
+            else:
+                stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+                stop_loss_price = calculate_stop_loss(
+                    to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
+                )
+
+                logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
+
+                if await self._set_stop_loss(exchange, position, stop_loss_price):
+                    position.has_stop_loss = True
+                    position.stop_loss_price = stop_loss_price
+                    logger.info(f"✅ Stop loss confirmed for {symbol}")
+
+                    await self.repository.update_position_stop_loss(
+                        position.id, stop_loss_price, ""
+                    )
+                else:
+                    logger.warning(f"⚠️ Failed to set stop loss for {symbol}")
 
             # 10. Initialize trailing stop
             trailing_manager = self.trailing_managers.get(exchange_name)
