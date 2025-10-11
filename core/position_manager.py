@@ -1408,7 +1408,34 @@ class PositionManager:
                     logger.warning(
                         f"⏰ Position {symbol} exceeded max age: {position.age_hours:.1f} hours (max: {max_age_hours}h)"
                     )
-                    
+
+                    # CRITICAL FIX: Fetch real-time price before making decision
+                    exchange = self.exchanges.get(position.exchange)
+                    if not exchange:
+                        logger.error(f"Exchange {position.exchange} not available for {symbol}")
+                        continue
+
+                    try:
+                        # Fetch current market price from exchange
+                        ticker = await exchange.exchange.fetch_ticker(symbol)
+                        real_time_price = ticker.get('last') or ticker.get('markPrice')
+
+                        if real_time_price:
+                            old_cached_price = position.current_price
+                            position.current_price = real_time_price
+
+                            # Log price update for transparency
+                            price_diff_pct = ((real_time_price - old_cached_price) / old_cached_price * 100) if old_cached_price else 0
+                            logger.info(
+                                f"📊 Price check for {symbol}:\n"
+                                f"  Cached price: ${old_cached_price:.2f}\n"
+                                f"  Real-time:    ${real_time_price:.2f}\n"
+                                f"  Difference:   {price_diff_pct:+.2f}%"
+                            )
+                    except Exception as e:
+                        logger.error(f"Failed to fetch current price for {symbol}: {e}")
+                        logger.warning(f"Using cached price ${position.current_price:.2f} (may be outdated)")
+
                     # Рассчитываем цену безубытка с учетом комиссий
                     if position.side == 'long':
                         breakeven_price = position.entry_price * (1 + commission_percent / 100)
@@ -1416,8 +1443,6 @@ class PositionManager:
                     else:  # short
                         breakeven_price = position.entry_price * (1 - commission_percent / 100)
                         is_profitable = position.current_price <= breakeven_price
-                    
-                    exchange = self.exchanges.get(position.exchange)
                     
                     # Проверяем, есть ли уже pending ордер
                     if position.pending_close_order:
@@ -1443,17 +1468,23 @@ class PositionManager:
                         elif is_profitable:
                             # Позиция в плюсе - закрываем по рынку
                             logger.info(
-                                f"✅ Expired position {symbol} is profitable "
-                                f"(current: {position.current_price}, breakeven: {breakeven_price:.2f}). "
-                                f"Closing by market order."
+                                f"✅ Expired position {symbol} is profitable\n"
+                                f"  Entry:     ${position.entry_price:.2f}\n"
+                                f"  Current:   ${position.current_price:.2f}\n"
+                                f"  Breakeven: ${breakeven_price:.2f}\n"
+                                f"  Closing by market order."
                             )
                             await self.close_position(symbol, f'max_age_market_{max_age_hours}h')
                         else:
                             # For expired positions at loss, still close them but log the loss
                             pnl_percent = position.unrealized_pnl_percent
                             logger.warning(
-                                f"⚠️ Expired position {symbol} at {pnl_percent:.2f}% loss. "
-                                f"Closing anyway due to age ({position.age_hours:.1f}h > {max_age_hours}h)"
+                                f"⚠️ Expired position {symbol} at {pnl_percent:.2f}% loss\n"
+                                f"  Entry:     ${position.entry_price:.2f}\n"
+                                f"  Current:   ${position.current_price:.2f}\n"
+                                f"  Breakeven: ${breakeven_price:.2f}\n"
+                                f"  Age:       {position.age_hours:.1f}h (max: {max_age_hours}h)\n"
+                                f"  Closing anyway due to age limit."
                             )
                             await self.close_position(symbol, f'max_age_expired_{max_age_hours}h')
                         
