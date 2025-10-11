@@ -46,6 +46,11 @@ class SymbolUnavailableError(Exception):
     pass
 
 
+class MinimumOrderLimitError(Exception):
+    """Исключение когда количество контрактов не соответствует минимальным требованиям биржи"""
+    pass
+
+
 class AtomicPositionManager:
     """
     Менеджер атомарного создания позиций
@@ -168,8 +173,16 @@ class AtomicPositionManager:
                     symbol, side, quantity
                 )
 
+                # Check if order was created
+                if raw_order is None:
+                    raise AtomicPositionError(f"Failed to create order for {symbol}: order returned None")
+
                 # Normalize order response
                 entry_order = ExchangeResponseAdapter.normalize_order(raw_order, exchange)
+
+                # Check if normalization succeeded
+                if entry_order is None:
+                    raise AtomicPositionError(f"Failed to normalize order for {symbol}")
 
                 if not ExchangeResponseAdapter.is_order_filled(entry_order):
                     raise AtomicPositionError(f"Entry order failed: {entry_order.status}")
@@ -247,8 +260,9 @@ class AtomicPositionManager:
                 }
 
             except Exception as e:
-                # Check for Binance "Invalid symbol status" error
                 error_str = str(e)
+
+                # Check for Binance "Invalid symbol status" error
                 if "code\":-4140" in error_str or "Invalid symbol status" in error_str:
                     logger.warning(f"⚠️ Symbol {symbol} is unavailable for trading (delisted or reduce-only): {e}")
 
@@ -264,6 +278,23 @@ class AtomicPositionManager:
 
                     # Raise specific exception for unavailable symbols
                     raise SymbolUnavailableError(f"Symbol {symbol} unavailable for trading on {exchange}")
+
+                # Check for Bybit "minimum limit" error
+                if "retCode\":10001" in error_str or "exceeds minimum limit" in error_str:
+                    logger.warning(f"⚠️ Order size for {symbol} doesn't meet exchange requirements: {e}")
+
+                    # Clean up: Delete position from DB if it was created
+                    if position_id:
+                        try:
+                            await self.repository.update_position(position_id, **{
+                                'status': 'canceled',
+                                'exit_reason': 'Order size below minimum limit'
+                            })
+                        except:
+                            pass  # Ignore cleanup errors
+
+                    # Raise specific exception for minimum limit
+                    raise MinimumOrderLimitError(f"Order size for {symbol} below minimum limit on {exchange}")
 
                 logger.error(f"❌ Atomic position creation failed: {e}")
 
