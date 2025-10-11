@@ -334,7 +334,16 @@ class TradingBot:
         """Log initial system state"""
         for name, exchange in self.exchanges.items():
             balance = await exchange.fetch_balance()
-            usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
+            # Для Bybit unified account баланс может быть в info
+            if name == 'bybit' and 'info' in balance:
+                # Попробуем получить баланс из info для unified account
+                try:
+                    info = balance['info'].get('result', {}).get('list', [{}])[0]
+                    usdt_balance = float(info.get('totalAvailableBalance', 0))
+                except:
+                    usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
+            else:
+                usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
             logger.info(f"{name.capitalize()} balance: ${usdt_balance:.2f} USDT")
 
             positions = await exchange.fetch_positions()
@@ -566,7 +575,15 @@ class TradingBot:
         for name, exchange in self.exchanges.items():
             try:
                 balance = await exchange.fetch_balance()
-                balances[name] = balance.get('USDT', {}).get('free', 0)
+                # Для Bybit unified account баланс может быть в info
+                if name == 'bybit' and 'info' in balance:
+                    try:
+                        info = balance['info'].get('result', {}).get('list', [{}])[0]
+                        balances[name] = float(info.get('totalAvailableBalance', 0))
+                    except:
+                        balances[name] = balance.get('USDT', {}).get('free', 0)
+                else:
+                    balances[name] = balance.get('USDT', {}).get('free', 0)
             except Exception as e:
                 logger.warning(f"Failed to fetch balance for {name}: {e}")
                 balances[name] = 0

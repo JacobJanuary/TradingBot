@@ -48,7 +48,6 @@ async def apply_critical_fixes(position_manager):
     # Save original methods
     original_set_stop_loss = position_manager._set_stop_loss
     original_close_position = position_manager.close_position
-    original_trailing_stop_check = position_manager.trailing_stop_check
 
     # Patch _set_stop_loss with proper locking
     async def patched_set_stop_loss(position, exchange_name):
@@ -115,23 +114,9 @@ async def apply_critical_fixes(position_manager):
             # Call original method
             return await original_close_position(position_id, reason)
 
-    # Patch trailing_stop_check with proper locking
-    async def patched_trailing_stop_check():
-        """Patched version with LockManager"""
-        resource = "trailing_stop_global"
-
-        async with lock_manager.acquire_lock(
-            resource=resource,
-            operation="trailing_stop_check",
-            timeout=120.0
-        ):
-            # Call original method
-            return await original_trailing_stop_check()
-
     # Apply patches
     position_manager._set_stop_loss = patched_set_stop_loss
     position_manager.close_position = patched_close_position
-    position_manager.trailing_stop_check = patched_trailing_stop_check
 
     # Fix 3: Add TransactionalRepository
     if hasattr(position_manager, 'repository'):
