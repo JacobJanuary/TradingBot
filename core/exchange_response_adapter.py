@@ -76,11 +76,20 @@ class ExchangeResponseAdapter:
 
         # Status mapping для Bybit
         status_map = {
+            # Bybit API format (uppercase)
             'Filled': 'closed',
             'PartiallyFilled': 'open',
             'New': 'open',
             'Cancelled': 'canceled',
             'Rejected': 'canceled',
+
+            # CCXT normalized format (lowercase)
+            # CRITICAL FIX: CCXT returns lowercase statuses ('open', 'closed', 'canceled')
+            # but status_map only had uppercase Bybit API formats
+            # This caused 'open' → 'unknown' → order rejection
+            'closed': 'closed',
+            'open': 'open',
+            'canceled': 'canceled',
         }
         raw_status = info.get('orderStatus') or data.get('status', '')
 
