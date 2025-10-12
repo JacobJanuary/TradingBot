@@ -305,6 +305,7 @@ class AtomicPositionManager:
                     symbol=symbol,
                     exchange=exchange,
                     state=state,
+                    quantity=quantity,  # CRITICAL FIX: pass quantity for proper close
                     error=str(e)
                 )
 
@@ -317,6 +318,7 @@ class AtomicPositionManager:
         symbol: str,
         exchange: str,
         state: PositionState,
+        quantity: float,  # CRITICAL FIX: needed for proper position close on rollback
         error: str
     ):
         """
@@ -339,8 +341,10 @@ class AtomicPositionManager:
                         # Закрываем market ордером
                         # entry_order теперь NormalizedOrder
                         close_side = 'sell' if entry_order.side == 'buy' else 'buy'
+                        # CRITICAL FIX: Use quantity instead of entry_order.filled
+                        # entry_order.filled=0 for newly created orders that haven't filled yet
                         close_order = await exchange_instance.create_market_order(
-                            symbol, close_side, entry_order.filled
+                            symbol, close_side, quantity
                         )
                         logger.info(f"✅ Emergency close executed: {close_order.id}")
                     except Exception as close_error:
