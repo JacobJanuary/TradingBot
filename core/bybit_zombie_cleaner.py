@@ -303,7 +303,8 @@ class BybitZombieOrderCleaner:
                 # Make direct API call since CCXT doesn't support this endpoint
                 response = await self.exchange.private_post_v5_position_trading_stop(params)
 
-                if response.get('retCode') == 0:
+                # CRITICAL FIX: Convert retCode to int (Bybit API returns string "0")
+                if int(response.get('retCode', 1)) == 0:
                     logger.info(f"✅ Cleared TP/SL for {symbol} positionIdx={position_idx}")
                     success_count += 1
 

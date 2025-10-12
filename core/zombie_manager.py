@@ -517,7 +517,8 @@ class EnhancedZombieOrderManager:
 
                     response = await self.exchange.exchange.private_post_v5_position_trading_stop(params)
 
-                    if response.get('retCode') == 0:
+                    # CRITICAL FIX: Convert retCode to int (Bybit API returns string "0")
+                    if int(response.get('retCode', 1)) == 0:
                         logger.info(f"✅ Cleared TP/SL for {symbol} positionIdx={position_idx}")
 
                 except Exception as e:

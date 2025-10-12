@@ -361,7 +361,8 @@ class StopLossManager:
             result = await self.exchange.private_post_v5_position_trading_stop(params)
 
             # Обработка результата
-            ret_code = result.get('retCode', 1)
+            # CRITICAL FIX: Convert retCode to int (Bybit API returns string "0", not number 0)
+            ret_code = int(result.get('retCode', 1))
             ret_msg = result.get('retMsg', 'Unknown error')
 
             if ret_code == 0:
