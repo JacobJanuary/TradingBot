@@ -1506,7 +1506,11 @@ class PositionManager:
             unprotected_positions = []
 
             # Check all positions for stop loss - verify on exchange using unified manager
-            for symbol, position in self.positions.items():
+            # FIX: Create snapshot of keys to avoid "dictionary changed size during iteration"
+            for symbol in list(self.positions.keys()):
+                if symbol not in self.positions:
+                    continue  # Position was removed during iteration
+                position = self.positions[symbol]
                 exchange = self.exchanges.get(position.exchange)
                 if not exchange:
                     continue

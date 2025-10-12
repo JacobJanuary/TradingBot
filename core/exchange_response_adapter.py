@@ -83,7 +83,7 @@ class ExchangeResponseAdapter:
             'Rejected': 'canceled',
         }
         raw_status = info.get('orderStatus') or data.get('status', '')
-        status = status_map.get(raw_status, data.get('status', 'unknown'))
+        status = status_map.get(raw_status) or data.get('status') or 'unknown'
 
         # Для market orders Bybit может не возвращать side
         # Извлекаем из info или используем дефолт
@@ -150,7 +150,7 @@ class ExchangeResponseAdapter:
             'EXPIRED': 'canceled'
         }
         raw_status = info.get('status') or data.get('status', '')
-        status = status_map.get(raw_status, data.get('status', 'unknown'))
+        status = status_map.get(raw_status) or data.get('status') or 'unknown'
 
         side = data.get('side', '').lower()
         amount = data.get('amount') or float(info.get('origQty', 0))
