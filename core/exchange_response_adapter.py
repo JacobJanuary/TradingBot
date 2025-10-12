@@ -80,6 +80,7 @@ class ExchangeResponseAdapter:
             'Filled': 'closed',
             'PartiallyFilled': 'open',
             'New': 'open',
+            'Created': 'open',
             'Cancelled': 'canceled',
             'Rejected': 'canceled',
 
@@ -93,10 +94,10 @@ class ExchangeResponseAdapter:
         }
         raw_status = info.get('orderStatus') or data.get('status', '')
 
-        # CRITICAL FIX: Bybit instant market orders return empty status
-        # This happens because order is executed faster than status is set
-        # For market orders: empty status = instantly filled = closed
-        if not raw_status and data.get('type') == 'market':
+        # CRITICAL FIX: Bybit create_order returns None status (API v5 minimal response)
+        # Bybit API v5 returns only orderId - all other fields are None
+        # Market orders execute instantly → treat None/empty as filled
+        if raw_status is None or raw_status == '':
             status = 'closed'
         else:
             status = status_map.get(raw_status) or data.get('status') or 'unknown'
