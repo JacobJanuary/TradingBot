@@ -656,7 +656,10 @@ class PositionManager:
             )
 
             logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity}")
-            logger.info(f"Stop-loss will be set at: {stop_loss_price:.4f} ({stop_loss_percent}%)")
+            # COSMETIC FIX: Show scientific notation for small numbers instead of 0.0000
+            # For numbers < 0.0001, .4f rounds to 0.0000 which is confusing
+            # Using float() for automatic formatting (scientific notation for small numbers)
+            logger.info(f"Stop-loss will be set at: {float(stop_loss_price)} ({stop_loss_percent}%)")
 
             # Convert side: long -> buy, short -> sell for Binance
             if request.side.lower() == 'long':
