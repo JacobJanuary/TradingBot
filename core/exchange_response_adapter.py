@@ -83,7 +83,14 @@ class ExchangeResponseAdapter:
             'Rejected': 'canceled',
         }
         raw_status = info.get('orderStatus') or data.get('status', '')
-        status = status_map.get(raw_status) or data.get('status') or 'unknown'
+
+        # CRITICAL FIX: Bybit instant market orders return empty status
+        # This happens because order is executed faster than status is set
+        # For market orders: empty status = instantly filled = closed
+        if not raw_status and data.get('type') == 'market':
+            status = 'closed'
+        else:
+            status = status_map.get(raw_status) or data.get('status') or 'unknown'
 
         # Для market orders Bybit может не возвращать side
         # Извлекаем из info или используем дефолт
