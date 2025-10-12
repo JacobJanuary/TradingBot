@@ -339,15 +339,41 @@ class AtomicPositionManager:
                 exchange_instance = self.exchange_manager.get(exchange)
                 if exchange_instance:
                     try:
-                        # Закрываем market ордером
-                        # entry_order теперь NormalizedOrder
-                        close_side = 'sell' if entry_order.side == 'buy' else 'buy'
-                        # CRITICAL FIX: Use quantity instead of entry_order.filled
-                        # entry_order.filled=0 for newly created orders that haven't filled yet
-                        close_order = await exchange_instance.create_market_order(
-                            symbol, close_side, quantity
-                        )
-                        logger.info(f"✅ Emergency close executed: {close_order.id}")
+                        # CRITICAL FIX: Poll for position visibility before closing
+                        # Race condition: position may not be visible immediately
+                        from core.position_manager import normalize_symbol
+
+                        our_position = None
+                        max_attempts = 10
+
+                        for attempt in range(max_attempts):
+                            positions = await exchange_instance.exchange.fetch_positions(
+                                params={'category': 'linear'}
+                            )
+
+                            for pos in positions:
+                                if normalize_symbol(pos['symbol']) == normalize_symbol(symbol) and \
+                                   float(pos.get('contracts', 0)) > 0:
+                                    our_position = pos
+                                    break
+
+                            if our_position:
+                                logger.info(f"✅ Position found on attempt {attempt + 1}/{max_attempts}")
+                                break
+
+                            if attempt < max_attempts - 1:
+                                await asyncio.sleep(0.5)  # Poll every 500ms
+
+                        if our_position:
+                            # Закрываем market ордером
+                            close_side = 'sell' if entry_order.side == 'buy' else 'buy'
+                            close_order = await exchange_instance.create_market_order(
+                                symbol, close_side, quantity
+                            )
+                            logger.info(f"✅ Emergency close executed: {close_order.id}")
+                        else:
+                            logger.critical(f"❌ Position {symbol} not found after {max_attempts} attempts!")
+                            logger.critical(f"⚠️ ALERT: Open position without SL may exist on exchange!")
                     except Exception as close_error:
                         logger.critical(f"❌ FAILED to close unprotected position: {close_error}")
                         # TODO: Send alert to administrator
