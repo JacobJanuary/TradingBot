@@ -99,7 +99,8 @@ async def protect_bybit_positions():
                             'positionIdx': 0  # One-way mode
                         })
 
-                        if result.get('retCode') == 0:
+                        # CRITICAL FIX: Convert retCode to int (Bybit API returns string "0")
+                        if int(result.get('retCode', 1)) == 0:
                             print('✅ Установлен через API')
                             protected += 1
                         else:
