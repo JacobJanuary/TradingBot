@@ -162,20 +162,10 @@ async def apply_critical_fixes(position_manager):
         # Acquire the lock
         async with position_manager.position_locks[lock_key]:
             try:
-                # Log event before calling original
-                await log_event(
-                    EventType.POSITION_CREATED,
-                    {
-                        'signal_id': request.signal_id,
-                        'symbol': request.symbol,
-                        'exchange': request.exchange,
-                        'side': request.side,
-                        'entry_price': float(request.entry_price)
-                    },
-                    correlation_id=correlation_id,
-                    symbol=request.symbol,
-                    exchange=request.exchange
-                )
+                # CRITICAL FIX: Removed premature logging - log only after successful creation
+                # This prevents position_created events for positions that fail to open
+                # Previously: logged before creation, causing 2 logs per position and desync
+                # Now: single accurate log after atomic creation completes
 
                 # Temporarily bypass the original lock logic
                 # Save and replace position_locks to prevent .add/.discard errors
@@ -189,19 +179,41 @@ async def apply_critical_fixes(position_manager):
                     # Restore the dict-based locks
                     position_manager.position_locks = original_locks
 
+                # CRITICAL FIX: Log only after successful atomic creation
+                # This ensures position_created events are 1:1 with actual positions
+                # Includes full context for traceability and analysis
                 if result:
                     await log_event(
                         EventType.POSITION_CREATED,
-                        {'status': 'success', 'position_id': result.id if hasattr(result, 'id') else None},
+                        {
+                            'status': 'success',
+                            'signal_id': request.signal_id,  # For traceability
+                            'symbol': request.symbol,         # For filtering logs
+                            'exchange': request.exchange,     # For filtering logs
+                            'side': request.side,             # For analysis
+                            'entry_price': float(request.entry_price),  # For analysis
+                            'position_id': result.id if hasattr(result, 'id') else None
+                        },
                         correlation_id=correlation_id,
-                        position_id=result.id if hasattr(result, 'id') else None
+                        position_id=result.id if hasattr(result, 'id') else None,
+                        symbol=request.symbol,
+                        exchange=request.exchange
                     )
                 else:
+                    # Log failure with full context for debugging
                     await log_event(
                         EventType.POSITION_ERROR,
-                        {'status': 'failed'},
+                        {
+                            'status': 'failed',
+                            'signal_id': request.signal_id,   # For debugging
+                            'symbol': request.symbol,          # For debugging
+                            'exchange': request.exchange,      # For debugging
+                            'reason': 'Position creation returned None'  # Clarity
+                        },
                         correlation_id=correlation_id,
-                        severity='ERROR'
+                        severity='ERROR',
+                        symbol=request.symbol,
+                        exchange=request.exchange
                     )
 
                 return result
