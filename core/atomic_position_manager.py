@@ -194,8 +194,9 @@ class AtomicPositionManager:
                 exec_price = ExchangeResponseAdapter.extract_execution_price(entry_order)
 
                 # FIX: Use only columns that exist in database schema
+                # CRITICAL FIX: Update current_price, NOT entry_price (entry_price is immutable)
                 await self.repository.update_position(position_id, **{
-                    'entry_price': exec_price,  # Update existing entry_price field
+                    'current_price': exec_price,  # Update current price with execution price
                     'status': state.value,
                     'exchange_order_id': entry_order.id  # Track order ID
                 })
