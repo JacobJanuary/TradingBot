@@ -1282,6 +1282,26 @@ class PositionManager:
                     f"PnL: ${realized_pnl:.2f} ({realized_pnl_percent:.2f}%)"
                 )
 
+                # PREVENTIVE FIX: Cancel any remaining SL orders for this symbol
+                # This prevents old SL orders from being reused by future positions
+                try:
+                    # Fetch open orders for symbol
+                    open_orders = await exchange.exchange.fetch_open_orders(symbol)
+
+                    # Cancel stop-loss orders
+                    for order in open_orders:
+                        order_type = order.get('type', '').lower()
+                        is_stop = 'stop' in order_type or order_type in ['stop_market', 'stop_loss', 'stop_loss_limit']
+
+                        if is_stop:
+                            logger.info(f"🧹 Cleaning up SL order {order['id']} for closed position {symbol}")
+                            await exchange.exchange.cancel_order(order['id'], symbol)
+
+                except Exception as cleanup_error:
+                    # Don't fail position close if SL cleanup fails
+                    logger.warning(f"⚠️ Failed to cleanup SL orders for {symbol}: {cleanup_error}")
+                    # Position is already closed, this is just cleanup
+
         except Exception as e:
             logger.error(f"Error closing position {symbol}: {e}", exc_info=True)
 
