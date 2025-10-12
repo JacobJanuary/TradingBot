@@ -473,6 +473,14 @@ class Repository:
         if not kwargs:
             return False
 
+        # CRITICAL FIX: entry_price is immutable - set ONCE at creation, never updated
+        if 'entry_price' in kwargs:
+            logger.warning(f"⚠️ Attempted to update entry_price for position {position_id} - IGNORED (entry_price is immutable)")
+            del kwargs['entry_price']
+            # If only entry_price was in kwargs, nothing to update
+            if not kwargs:
+                return False
+
         # Build dynamic UPDATE query
         set_clauses = []
         values = []
