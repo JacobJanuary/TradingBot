@@ -316,42 +316,21 @@ class StopLossManager:
         Источник: core/exchange_manager.py:create_stop_loss_order (Bybit секция)
         """
         try:
-            # CRITICAL FIX: Import normalize_symbol for symbol comparison
-            from core.position_manager import normalize_symbol
+            # CRITICAL FIX: Direct SL placement without fetch_positions
+            # Race condition fix: Bybit position may not be visible via fetch_positions
+            # immediately after order creation. Let Bybit API validate position existence.
+            # If position doesn't exist, Bybit returns retCode=10001
 
-            # ШАГ 1: Получить ВСЕ позиции (не фильтруя по symbol, так как формат может не совпадать)
-            positions = await self.exchange.fetch_positions(
-                params={'category': 'linear'}
-            )
+            # Format for Bybit API (no fetch_positions needed)
+            bybit_symbol = symbol.replace('/', '').replace(':USDT', '')
+            sl_price_formatted = self.exchange.price_to_precision(symbol, stop_price)
 
-            position_idx = 0
-            position_found = False
-            normalized_symbol = normalize_symbol(symbol)
-            actual_exchange_symbol = None  # Will store the actual symbol format from exchange
-
-            # CRITICAL FIX: Use normalize_symbol for comparison
-            for pos in positions:
-                if normalize_symbol(pos['symbol']) == normalized_symbol and float(pos.get('contracts', 0)) > 0:
-                    position_idx = int(pos.get('info', {}).get('positionIdx', 0))
-                    actual_exchange_symbol = pos['symbol']  # Save the actual symbol format
-                    position_found = True
-                    break
-
-            if not position_found:
-                raise ValueError(f"No open position found for {symbol}")
-
-            # ШАГ 2: Форматирование для Bybit API
-            # Use the actual exchange symbol format for API calls
-            exchange_symbol = actual_exchange_symbol or symbol
-            bybit_symbol = exchange_symbol.replace('/', '').replace(':USDT', '')
-            sl_price_formatted = self.exchange.price_to_precision(exchange_symbol, stop_price)
-
-            # ШАГ 3: Установка через set_trading_stop (position-attached)
+            # Set SL via trading_stop (position-attached)
             params = {
                 'category': 'linear',
                 'symbol': bybit_symbol,
                 'stopLoss': str(sl_price_formatted),
-                'positionIdx': position_idx,
+                'positionIdx': 0,  # One-way mode (default)
                 'slTriggerBy': 'LastPrice',
                 'tpslMode': 'Full'
             }
@@ -373,6 +352,9 @@ class StopLossManager:
                     'stopPrice': float(sl_price_formatted),
                     'info': result
                 }
+            elif ret_code == 10001:
+                # Position not found (race condition - position not visible yet)
+                raise ValueError(f"No open position found for {symbol}")
             elif ret_code == 34040 and 'not modified' in ret_msg:
                 # SL уже установлен на правильной цене
                 self.logger.info(f"✅ Stop Loss already set at {stop_price} (not modified)")
