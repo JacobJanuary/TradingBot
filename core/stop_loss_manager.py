@@ -167,14 +167,38 @@ class StopLossManager:
             has_sl, existing_sl = await self.has_stop_loss(symbol)
 
             if has_sl:
-                self.logger.info(
-                    f"⚠️ Stop Loss already exists at {existing_sl}, skipping"
+                # CRITICAL FIX: Validate existing SL before reusing
+                # This prevents reusing old SL from previous positions with different entry prices
+                is_valid, reason = self._validate_existing_sl(
+                    existing_sl_price=float(existing_sl),
+                    target_sl_price=float(stop_price),
+                    side=side,
+                    tolerance_percent=5.0
                 )
-                return {
-                    'status': 'already_exists',
-                    'stopPrice': existing_sl,
-                    'reason': 'Stop Loss already set'
-                }
+
+                if is_valid:
+                    # Existing SL is valid and can be reused
+                    self.logger.info(
+                        f"✅ Stop Loss already exists at {existing_sl} and is valid ({reason}), skipping"
+                    )
+                    return {
+                        'status': 'already_exists',
+                        'stopPrice': existing_sl,
+                        'reason': 'Stop Loss already set and validated'
+                    }
+                else:
+                    # Existing SL is invalid (wrong price from previous position)
+                    self.logger.warning(
+                        f"⚠️ Stop Loss exists at {existing_sl} but is INVALID: {reason}"
+                    )
+                    self.logger.info(
+                        f"🔄 Cancelling old SL and creating new one at {stop_price}"
+                    )
+
+                    # Cancel the invalid SL
+                    await self._cancel_existing_sl(symbol, float(existing_sl))
+
+                    # Fall through to create new SL below
 
             # ШАГ 2: Установка через ExchangeManager
             # Используем проверенную логику из core/exchange_manager.py
@@ -552,6 +576,85 @@ class StopLossManager:
         except Exception as e:
             self.logger.debug(f"Error extracting stop price: {e}")
             return None
+
+    def _validate_existing_sl(
+        self,
+        existing_sl_price: float,
+        target_sl_price: float,
+        side: str,
+        tolerance_percent: float = 5.0
+    ) -> tuple:
+        """
+        CRITICAL FIX: Validate if existing SL is acceptable for current position
+
+        This prevents reusing old SL from previous positions that may have:
+        - Wrong price (different entry price)
+        - Wrong direction (opposite position type)
+
+        Args:
+            existing_sl_price: Price of existing SL on exchange
+            target_sl_price: Desired SL price for new position
+            side: 'sell' for LONG position, 'buy' for SHORT position
+            tolerance_percent: Allow X% price difference (default: 5%)
+
+        Returns:
+            tuple: (is_valid: bool, reason: str)
+
+        Validation rules:
+        1. Price difference must be within tolerance
+        2. Price ratio should be reasonable (0.5x - 2.0x)
+        """
+        # Rule 1: Check price difference
+        price_diff_percent = abs(existing_sl_price - target_sl_price) / target_sl_price * 100
+
+        if price_diff_percent > tolerance_percent:
+            return False, f"Price differs by {price_diff_percent:.2f}% (> {tolerance_percent}%)"
+
+        # Rule 2: Check price ratio (prevents reusing SL from vastly different price range)
+        ratio = existing_sl_price / target_sl_price
+        if ratio < 0.5 or ratio > 2.0:
+            return False, f"Price ratio {ratio:.2f} outside reasonable range (0.5-2.0)"
+
+        return True, "SL is valid and can be reused"
+
+    async def _cancel_existing_sl(self, symbol: str, sl_price: float):
+        """
+        CRITICAL FIX: Cancel existing (invalid) SL order
+
+        Args:
+            symbol: Trading symbol
+            sl_price: SL price to help identify order
+
+        Raises:
+            Exception if cancellation fails
+        """
+        try:
+            # Fetch open orders
+            open_orders = await self.exchange.fetch_open_orders(symbol)
+
+            # Find and cancel stop orders matching the price
+            for order in open_orders:
+                order_type = order.get('type', '').lower()
+                is_stop = 'stop' in order_type or order_type in ['stop_market', 'stop_loss', 'stop_loss_limit']
+
+                if is_stop:
+                    # Check if this is the SL we want to cancel (match by price)
+                    order_stop_price = order.get('stopPrice', order.get('price'))
+
+                    if order_stop_price:
+                        # Match by price (within 1% tolerance)
+                        price_diff = abs(float(order_stop_price) - float(sl_price)) / float(sl_price)
+
+                        if price_diff < 0.01:  # Within 1%
+                            self.logger.info(f"Cancelling old SL order {order['id']} at {order_stop_price}")
+                            await self.exchange.cancel_order(order['id'], symbol)
+                            return
+
+            self.logger.warning(f"No matching SL order found to cancel (price: {sl_price})")
+
+        except Exception as e:
+            self.logger.error(f"Error cancelling SL: {e}")
+            raise
 
 
 # ============================================================
