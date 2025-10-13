@@ -1593,15 +1593,55 @@ class PositionManager:
                         del self.positions_without_sl_time[symbol]
 
                 if not has_sl_on_exchange:
-                    # NEW: Skip TS-managed positions
+                    # Check if TS Manager SHOULD be managing SL
                     if position.has_trailing_stop and position.trailing_activated:
-                        logger.debug(
-                            f"{symbol} SL managed by TS Manager "
-                            f"(has_trailing_stop={position.has_trailing_stop}, "
-                            f"trailing_activated={position.trailing_activated}), "
-                            f"skipping protection check"
-                        )
-                        continue  # Skip to next position
+                        # NEW: Fallback protection - check TS health
+                        ts_last_update = position.ts_last_update_time
+
+                        if ts_last_update:
+                            ts_inactive_seconds = (datetime.now() - ts_last_update).total_seconds()
+                            ts_inactive_minutes = ts_inactive_seconds / 60
+
+                            # TS inactive for > 5 minutes → TAKE OVER
+                            if ts_inactive_minutes > 5:
+                                logger.warning(
+                                    f"⚠️  {symbol} TS Manager inactive for {ts_inactive_minutes:.1f} minutes "
+                                    f"(last update: {ts_last_update}), Protection Manager taking over"
+                                )
+
+                                # Reset TS flags to allow Protection Manager control
+                                position.has_trailing_stop = False
+                                position.trailing_activated = False
+                                position.sl_managed_by = 'protection'  # Mark ownership
+
+                                # Save to DB
+                                await self.repository.update_position(
+                                    position.id,
+                                    has_trailing_stop=False,
+                                    trailing_activated=False
+                                )
+
+                                # Now add to unprotected list (will set Protection SL)
+                                unprotected_positions.append(position)
+
+                                logger.info(
+                                    f"✅ {symbol} Protection Manager took over SL management "
+                                    f"(TS fallback triggered)"
+                                )
+                            else:
+                                # TS active recently - skip protection
+                                logger.debug(
+                                    f"{symbol} SL managed by TS Manager "
+                                    f"(last update {ts_inactive_minutes:.1f}m ago), skipping"
+                                )
+                                continue
+                        else:
+                            # No ts_last_update_time yet (TS just initialized)
+                            # Skip protection for now
+                            logger.debug(
+                                f"{symbol} TS Manager just initialized (no health data yet), skipping"
+                            )
+                            continue
 
                     # Normal protection logic for non-TS positions
                     unprotected_positions.append(position)
