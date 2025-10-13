@@ -1587,6 +1587,17 @@ class PositionManager:
                         del self.positions_without_sl_time[symbol]
 
                 if not has_sl_on_exchange:
+                    # NEW: Skip TS-managed positions
+                    if position.has_trailing_stop and position.trailing_activated:
+                        logger.debug(
+                            f"{symbol} SL managed by TS Manager "
+                            f"(has_trailing_stop={position.has_trailing_stop}, "
+                            f"trailing_activated={position.trailing_activated}), "
+                            f"skipping protection check"
+                        )
+                        continue  # Skip to next position
+
+                    # Normal protection logic for non-TS positions
                     unprotected_positions.append(position)
 
                     # CRITICAL FIX: Track time and alert if SL missing > 30 seconds
