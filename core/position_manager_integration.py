@@ -252,6 +252,5 @@ def check_fixes_applied(position_manager) -> Dict[str, bool]:
         'proper_locks': isinstance(position_manager.position_locks, dict),
         'lock_creation': hasattr(position_manager, '_lock_creation_lock'),
         'transactional_repo': hasattr(position_manager, 'transactional_repo'),
-        'atomic_manager': hasattr(position_manager, '_atomic_manager'),
         'get_lock_method': hasattr(position_manager, 'get_lock') and callable(position_manager.get_lock)
     }
