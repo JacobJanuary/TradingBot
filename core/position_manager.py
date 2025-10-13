@@ -1705,13 +1705,81 @@ class PositionManager:
                             logger.debug(f"Position {position.symbol} already has SL at {position.stop_loss_price}, skipping")
                             continue
 
-                        # Calculate stop loss price (Decimal-safe)
-                        stop_loss_percent = self.config.stop_loss_percent
+                        # CRITICAL FIX (2025-10-13): Use current_price instead of entry_price when price
+                        # has drifted significantly. This prevents "base_price validation" errors from Bybit.
+                        # See: CORRECT_SOLUTION_SL_PRICE_DRIFT.md for details
 
+                        # STEP 1: Get current market price from exchange
+                        try:
+                            ticker = await exchange.exchange.fetch_ticker(position.symbol)
+                            current_price = float(ticker.get('last') or ticker.get('mark') or 0)
+
+                            if current_price == 0:
+                                logger.error(f"Failed to get current price for {position.symbol}, skipping SL setup")
+                                continue
+
+                        except Exception as e:
+                            logger.error(f"Failed to fetch ticker for {position.symbol}: {e}")
+                            continue
+
+                        # STEP 2: Calculate price drift from entry
+                        entry_price = float(position.entry_price)
+                        price_drift_pct = abs((current_price - entry_price) / entry_price)
+
+                        # STEP 3: Choose base price for SL calculation
+                        # If price drifted more than STOP_LOSS_PERCENT, use current price
+                        # This prevents creating invalid SL that would be rejected by exchange
+                        stop_loss_percent = self.config.stop_loss_percent
+                        stop_loss_percent_decimal = float(stop_loss_percent) / 100  # Convert from percent to decimal (e.g. 2.0 -> 0.02)
+
+                        if price_drift_pct > stop_loss_percent_decimal:
+                            # Price has moved significantly - use current price as base
+                            logger.warning(
+                                f"⚠️ {position.symbol}: Price drifted {price_drift_pct*100:.2f}% "
+                                f"(threshold: {stop_loss_percent*100:.2f}%). Using current price {current_price:.6f} "
+                                f"instead of entry {entry_price:.6f} for SL calculation"
+                            )
+                            base_price = current_price
+                        else:
+                            # Price is stable - use entry price to protect initial capital
+                            logger.debug(
+                                f"✓ {position.symbol}: Price drift {price_drift_pct*100:.2f}% within threshold. "
+                                f"Using entry price for SL"
+                            )
+                            base_price = entry_price
+
+                        # STEP 4: Calculate SL from chosen base price (Decimal-safe)
                         stop_loss_price = calculate_stop_loss(
-                            entry_price=Decimal(str(position.entry_price)),  # Convert float to Decimal safely
+                            entry_price=Decimal(str(base_price)),  # Use chosen base, not always entry
                             side=position.side,
                             stop_loss_percent=Decimal(str(stop_loss_percent))
+                        )
+
+                        # STEP 5: Safety validation - ensure SL makes sense vs current market
+                        stop_loss_float = float(stop_loss_price)
+
+                        if position.side == 'long':
+                            if stop_loss_float >= current_price:
+                                logger.error(
+                                    f"❌ {position.symbol}: Calculated SL {stop_loss_float:.6f} >= "
+                                    f"current {current_price:.6f} for LONG position! Using emergency fallback"
+                                )
+                                # Emergency: force SL below current price
+                                stop_loss_price = Decimal(str(current_price * (1 - stop_loss_percent)))
+
+                        else:  # short
+                            if stop_loss_float <= current_price:
+                                logger.error(
+                                    f"❌ {position.symbol}: Calculated SL {stop_loss_float:.6f} <= "
+                                    f"current {current_price:.6f} for SHORT position! Using emergency fallback"
+                                )
+                                # Emergency: force SL above current price
+                                stop_loss_price = Decimal(str(current_price * (1 + stop_loss_percent)))
+
+                        # Log final decision for debugging
+                        logger.info(
+                            f"📊 {position.symbol} SL calculation: entry={entry_price:.6f}, "
+                            f"current={current_price:.6f}, base={base_price:.6f}, SL={float(stop_loss_price):.6f}"
                         )
 
                         # Use enhanced SL manager with auto-validation and retry
