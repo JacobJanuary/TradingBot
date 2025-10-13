@@ -111,6 +111,9 @@ class PositionState:
     has_trailing_stop: bool = False
     trailing_activated: bool = False
 
+    # NEW: SL ownership tracking
+    sl_managed_by: Optional[str] = None  # 'protection' | 'trailing_stop' | None
+
     opened_at: datetime = None
     age_hours: float = 0
     
