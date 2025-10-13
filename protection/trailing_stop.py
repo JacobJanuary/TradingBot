@@ -403,6 +403,86 @@ class SmartTrailingStopManager:
             logger.error(f"Failed to place stop order for {ts.symbol}: {e}")
             return False
 
+    async def _cancel_protection_sl_if_binance(self, ts: TrailingStopInstance) -> bool:
+        """
+        Cancel Protection Manager SL order before creating TS SL (Binance only)
+
+        WHY: Binance creates separate STOP_MARKET orders
+        - Protection Manager: creates Order #A
+        - TS Manager: creates Order #B
+        - Result: TWO SL orders → duplication → orphan orders
+
+        SOLUTION: Cancel Order #A before creating Order #B
+
+        Returns:
+            bool: True if cancelled or not needed, False if error
+        """
+        try:
+            # Only for Binance
+            if self.exchange.id.lower() != 'binance':
+                logger.debug(f"{ts.symbol} Not Binance, skipping Protection SL cancellation")
+                return True
+
+            # Fetch all open orders for this symbol
+            logger.debug(f"{ts.symbol} Fetching open orders to find Protection SL...")
+            orders = await self.exchange.fetch_open_orders(ts.symbol)
+
+            # Find Protection Manager SL order
+            # Characteristics:
+            # - type: 'STOP_MARKET' or 'stop_market'
+            # - side: opposite of position (sell for long, buy for short)
+            # - reduceOnly: True
+            expected_side = 'sell' if ts.side == 'long' else 'buy'
+
+            protection_sl_orders = []
+            for order in orders:
+                order_type = order.get('type', '').upper()
+                order_side = order.get('side', '').lower()
+                reduce_only = order.get('reduceOnly', False)
+
+                if (order_type == 'STOP_MARKET' and
+                    order_side == expected_side and
+                    reduce_only):
+                    protection_sl_orders.append(order)
+
+            # Cancel found Protection SL orders
+            if protection_sl_orders:
+                for order in protection_sl_orders:
+                    order_id = order['id']
+                    stop_price = order.get('stopPrice', 'unknown')
+
+                    logger.info(
+                        f"🗑️  {ts.symbol}: Canceling Protection Manager SL "
+                        f"(order_id={order_id}, stopPrice={stop_price}) "
+                        f"before TS activation"
+                    )
+
+                    await self.exchange.cancel_order(order_id, ts.symbol)
+
+                    # Small delay to ensure cancellation processed
+                    await asyncio.sleep(0.1)
+
+                logger.info(
+                    f"✅ {ts.symbol}: Cancelled {len(protection_sl_orders)} "
+                    f"Protection SL order(s)"
+                )
+                return True
+            else:
+                logger.debug(
+                    f"{ts.symbol} No Protection SL orders found "
+                    f"(expected side={expected_side}, reduceOnly=True)"
+                )
+                return True
+
+        except Exception as e:
+            logger.error(
+                f"❌ {ts.symbol}: Failed to cancel Protection SL: {e}",
+                exc_info=True
+            )
+            # Don't fail TS activation if cancellation fails
+            # Protection SL will remain → duplication (acceptable vs NO SL)
+            return False
+
     async def _update_stop_order(self, ts: TrailingStopInstance) -> bool:
         """Update stop order on exchange"""
         try:
