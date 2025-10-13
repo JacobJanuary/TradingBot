@@ -1,0 +1,386 @@
+-- Backup of monitoring schema
+-- Created: 2025-10-12T03:45:49.156590
+-- Database: fox_crypto_test
+--====================================================================
+
+-- Create monitoring schema if not exists
+CREATE SCHEMA IF NOT EXISTS monitoring;
+
+-- Table: monitoring.emergency_control
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.emergency_control (
+--   id integer NOT NULL DEFAULT 1
+--   emergency_active boolean DEFAULT false
+--   emergency_severity character varying(20)
+--   trigger_liquidation boolean DEFAULT false
+--   trigger_reason character varying(200)
+--   triggered_at timestamp without time zone
+--   cooldown_until timestamp without time zone
+--   cooldown_active boolean DEFAULT false
+--   trading_disabled boolean DEFAULT false
+--   disabled_at timestamp without time zone
+--   disabled_reason character varying(200)
+--   emergency_counter integer DEFAULT 0
+--   last_check_at timestamp without time zone
+--   created_at timestamp without time zone DEFAULT now()
+--   updated_at timestamp without time zone DEFAULT now()
+-- );
+
+-- No data in monitoring.emergency_control
+
+-- Table: monitoring.emergency_events
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.emergency_events (
+--   id integer NOT NULL DEFAULT nextval('monitoring.emergency_events_id_seq'::regclass)
+--   timestamp timestamp without time zone NOT NULL DEFAULT now()
+--   severity character varying(20) NOT NULL
+--   trigger_reason character varying(200) NOT NULL
+--   trigger_type character varying(20) NOT NULL
+--   balance_before numeric
+--   balance_after numeric
+--   positions_open_before integer
+--   positions_closed integer
+--   total_unrealized_pnl numeric
+--   total_exposure_usd numeric
+--   execution_start timestamp without time zone
+--   execution_end timestamp without time zone
+--   execution_duration_ms integer
+--   success boolean
+--   error_message text
+--   actions_json jsonb
+--   cooldown_duration_seconds integer
+--   cooldown_until timestamp without time zone
+--   recovered_at timestamp without time zone
+--   recovery_notes text
+--   initiated_by character varying(50)
+--   admin_notes text
+-- );
+
+-- No data in monitoring.emergency_events
+
+-- Table: monitoring.emergency_metrics
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.emergency_metrics (
+--   id integer NOT NULL DEFAULT nextval('monitoring.emergency_metrics_id_seq'::regclass)
+--   timestamp timestamp without time zone NOT NULL DEFAULT now()
+--   current_balance numeric
+--   peak_balance numeric
+--   balance_drop_percent numeric
+--   total_positions integer
+--   total_unrealized_pnl numeric
+--   unrealized_loss_percent numeric
+--   total_exposure_usd numeric
+--   exposure_ratio numeric
+--   positions_closed_last_5min integer
+--   consecutive_api_failures integer
+--   trigger_balance_drop boolean DEFAULT false
+--   trigger_unrealized_loss boolean DEFAULT false
+--   trigger_exposure_overload boolean DEFAULT false
+--   trigger_cascade boolean DEFAULT false
+--   trigger_system_malfunction boolean DEFAULT false
+--   any_trigger_active boolean DEFAULT false
+-- );
+
+-- No data in monitoring.emergency_metrics
+
+-- Table: monitoring.events
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.events (
+--   id integer NOT NULL DEFAULT nextval('monitoring.events_id_seq'::regclass)
+--   event_type character varying(50) NOT NULL
+--   event_data jsonb
+--   correlation_id character varying(100)
+--   position_id integer
+--   order_id character varying(100)
+--   symbol character varying(50)
+--   exchange character varying(50)
+--   severity character varying(20) DEFAULT 'INFO'::character varying
+--   error_message text
+--   stack_trace text
+--   created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+-- );
+
+-- Data for monitoring.events (172 rows)
+-- Note: This backup contains structure info only
+-- Use pg_dump for full data restore
+
+-- Table: monitoring.orders
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.orders (
+--   id integer NOT NULL DEFAULT nextval('monitoring.orders_id_seq'::regclass)
+--   position_id character varying(100)
+--   exchange character varying(50) NOT NULL
+--   symbol character varying(20) NOT NULL
+--   order_id character varying(100)
+--   client_order_id character varying(100)
+--   type character varying(20) NOT NULL
+--   side character varying(10) NOT NULL
+--   size numeric
+--   price numeric
+--   status character varying(20) NOT NULL
+--   filled numeric DEFAULT 0
+--   remaining numeric
+--   fee numeric
+--   fee_currency character varying(10)
+--   created_at timestamp without time zone DEFAULT now()
+--   updated_at timestamp without time zone DEFAULT now()
+-- );
+
+-- No data in monitoring.orders
+
+-- Table: monitoring.performance_metrics
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.performance_metrics (
+--   id integer NOT NULL DEFAULT nextval('monitoring.performance_metrics_id_seq'::regclass)
+--   metric_name character varying(100)
+--   metric_value numeric
+--   tags jsonb
+--   recorded_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+-- );
+
+-- No data in monitoring.performance_metrics
+
+-- Table: monitoring.positions
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.positions (
+--   id integer NOT NULL DEFAULT nextval('monitoring.positions_id_seq'::regclass)
+--   signal_id integer
+--   symbol character varying(20) NOT NULL
+--   exchange character varying(50) NOT NULL
+--   side character varying(10) NOT NULL
+--   quantity numeric NOT NULL
+--   entry_price numeric NOT NULL
+--   current_price numeric
+--   stop_loss_price numeric
+--   take_profit_price numeric
+--   unrealized_pnl numeric
+--   realized_pnl numeric
+--   fees numeric DEFAULT 0
+--   status character varying(20) NOT NULL DEFAULT 'active'::character varying
+--   exit_reason character varying(100)
+--   opened_at timestamp without time zone DEFAULT now()
+--   closed_at timestamp without time zone
+--   updated_at timestamp without time zone DEFAULT now()
+--   leverage numeric DEFAULT 1.0
+--   stop_loss numeric
+--   take_profit numeric
+--   pnl numeric
+--   pnl_percentage numeric
+--   trailing_activated boolean DEFAULT false
+--   created_at timestamp without time zone DEFAULT now()
+--   has_stop_loss boolean DEFAULT false
+--   has_trailing_stop boolean DEFAULT false
+--   unrealized_pnl_percent double precision
+--   exit_price double precision
+--   exit_quantity double precision
+--   position_size_usd double precision
+--   exchange_order_id character varying(100)
+--   error_message text
+-- );
+
+-- Data for monitoring.positions (133 rows)
+-- Note: This backup contains structure info only
+-- Use pg_dump for full data restore
+
+-- Table: monitoring.risk_events
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.risk_events (
+--   id integer NOT NULL DEFAULT nextval('monitoring.risk_events_id_seq'::regclass)
+--   event_type character varying(50) NOT NULL
+--   risk_level character varying(20) NOT NULL
+--   position_id character varying(100)
+--   details jsonb
+--   created_at timestamp without time zone DEFAULT now()
+-- );
+
+-- No data in monitoring.risk_events
+
+-- Table: monitoring.risk_violations
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.risk_violations (
+--   id integer NOT NULL DEFAULT nextval('monitoring.risk_violations_id_seq'::regclass)
+--   violation_type character varying(50) NOT NULL
+--   risk_level character varying(20) NOT NULL
+--   message text
+--   timestamp timestamp without time zone DEFAULT now()
+-- );
+
+-- No data in monitoring.risk_violations
+
+-- Table: monitoring.trades
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.trades (
+--   id integer NOT NULL DEFAULT nextval('monitoring.trades_id_seq'::regclass)
+--   signal_id integer
+--   symbol character varying(20) NOT NULL
+--   exchange character varying(50) NOT NULL
+--   side character varying(10) NOT NULL
+--   order_type character varying(20)
+--   quantity numeric
+--   price numeric
+--   executed_qty numeric
+--   average_price numeric
+--   order_id character varying(100)
+--   client_order_id character varying(100)
+--   status character varying(20)
+--   fee numeric
+--   fee_currency character varying(10)
+--   executed_at timestamp without time zone DEFAULT now()
+-- );
+
+-- Data for monitoring.trades (58 rows)
+-- Note: This backup contains structure info only
+-- Use pg_dump for full data restore
+
+-- Table: monitoring.transaction_log
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.transaction_log (
+--   id integer NOT NULL DEFAULT nextval('monitoring.transaction_log_id_seq'::regclass)
+--   transaction_id character varying(100)
+--   operation character varying(100)
+--   status character varying(20)
+--   started_at timestamp with time zone
+--   completed_at timestamp with time zone
+--   duration_ms integer
+--   affected_rows integer
+--   error_message text
+-- );
+
+-- No data in monitoring.transaction_log
+
+-- Table: monitoring.v_emergency_stats
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.v_emergency_stats (
+--   total_events bigint
+--   successful_events bigint
+--   failed_events bigint
+--   critical_events bigint
+--   high_events bigint
+--   medium_events bigint
+--   auto_triggered bigint
+--   manual_triggered bigint
+--   total_positions_closed bigint
+--   avg_execution_time_ms numeric
+--   last_emergency_at timestamp without time zone
+-- );
+
+-- Data for monitoring.v_emergency_stats (1 rows)
+-- Note: This backup contains structure info only
+-- Use pg_dump for full data restore
+
+-- Table: monitoring.v_emergency_status
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.v_emergency_status (
+--   emergency_active boolean
+--   emergency_severity character varying(20)
+--   cooldown_active boolean
+--   cooldown_until timestamp without time zone
+--   trading_disabled boolean
+--   emergency_counter integer
+--   last_check_at timestamp without time zone
+--   cooldown_remaining_seconds numeric
+--   in_cooldown boolean
+-- );
+
+-- No data in monitoring.v_emergency_status
+
+-- Table: monitoring.v_recent_emergencies
+----------------------------------------------------------------------
+-- CREATE TABLE monitoring.v_recent_emergencies (
+--   id integer
+--   timestamp timestamp without time zone
+--   severity character varying(20)
+--   trigger_reason character varying(200)
+--   trigger_type character varying(20)
+--   positions_closed integer
+--   success boolean
+--   execution_duration_ms integer
+--   cooldown_until text
+--   recovered boolean
+-- );
+
+-- No data in monitoring.v_recent_emergencies
+
+-- Indexes
+----------------------------------------------------------------------
+-- CREATE UNIQUE INDEX emergency_control_pkey ON monitoring.emergency_control USING btree (id);
+-- CREATE UNIQUE INDEX emergency_events_pkey ON monitoring.emergency_events USING btree (id);
+-- CREATE UNIQUE INDEX emergency_metrics_pkey ON monitoring.emergency_metrics USING btree (id);
+-- CREATE UNIQUE INDEX events_pkey ON monitoring.events USING btree (id);
+-- CREATE INDEX idx_emergency_events_severity ON monitoring.emergency_events USING btree (severity);
+-- CREATE INDEX idx_emergency_events_success ON monitoring.emergency_events USING btree (success);
+-- CREATE INDEX idx_emergency_events_timestamp ON monitoring.emergency_events USING btree ("timestamp" DESC);
+-- CREATE INDEX idx_emergency_metrics_timestamp ON monitoring.emergency_metrics USING btree ("timestamp" DESC);
+-- CREATE INDEX idx_emergency_metrics_triggers ON monitoring.emergency_metrics USING btree (any_trigger_active, "timestamp" DESC);
+-- CREATE INDEX idx_events_correlation ON monitoring.events USING btree (correlation_id);
+-- CREATE INDEX idx_events_created ON monitoring.events USING btree (created_at DESC);
+-- CREATE INDEX idx_events_position ON monitoring.events USING btree (position_id);
+-- CREATE INDEX idx_events_type ON monitoring.events USING btree (event_type);
+-- CREATE INDEX idx_metrics_name ON monitoring.performance_metrics USING btree (metric_name);
+-- CREATE INDEX idx_metrics_time ON monitoring.performance_metrics USING btree (recorded_at DESC);
+-- CREATE INDEX idx_orders_position ON monitoring.orders USING btree (position_id);
+-- CREATE INDEX idx_orders_status ON monitoring.orders USING btree (status);
+-- CREATE INDEX idx_positions_opened_at ON monitoring.positions USING btree (opened_at);
+-- CREATE INDEX idx_positions_status ON monitoring.positions USING btree (status);
+-- CREATE INDEX idx_positions_symbol ON monitoring.positions USING btree (symbol);
+-- CREATE INDEX idx_tx_log_id ON monitoring.transaction_log USING btree (transaction_id);
+-- CREATE INDEX idx_tx_log_status ON monitoring.transaction_log USING btree (status);
+-- CREATE UNIQUE INDEX orders_pkey ON monitoring.orders USING btree (id);
+-- CREATE UNIQUE INDEX performance_metrics_pkey ON monitoring.performance_metrics USING btree (id);
+-- CREATE UNIQUE INDEX positions_pkey ON monitoring.positions USING btree (id);
+-- CREATE UNIQUE INDEX risk_events_pkey ON monitoring.risk_events USING btree (id);
+-- CREATE UNIQUE INDEX risk_violations_pkey ON monitoring.risk_violations USING btree (id);
+-- CREATE UNIQUE INDEX trades_pkey ON monitoring.trades USING btree (id);
+-- CREATE UNIQUE INDEX transaction_log_pkey ON monitoring.transaction_log USING btree (id);
+-- CREATE UNIQUE INDEX transaction_log_transaction_id_key ON monitoring.transaction_log USING btree (transaction_id);
+
+-- Constraints
+----------------------------------------------------------------------
+-- 681492_681930_14_not_null (CHECK)
+-- 681492_681930_1_not_null (CHECK)
+-- 681492_681930_3_not_null (CHECK)
+-- 681492_681930_4_not_null (CHECK)
+-- 681492_681930_5_not_null (CHECK)
+-- 681492_681930_6_not_null (CHECK)
+-- 681492_681930_7_not_null (CHECK)
+-- 681492_681944_11_not_null (CHECK)
+-- 681492_681944_1_not_null (CHECK)
+-- 681492_681944_3_not_null (CHECK)
+-- 681492_681944_4_not_null (CHECK)
+-- 681492_681944_7_not_null (CHECK)
+-- 681492_681944_8_not_null (CHECK)
+-- 681492_681954_1_not_null (CHECK)
+-- 681492_681954_3_not_null (CHECK)
+-- 681492_681954_4_not_null (CHECK)
+-- 681492_681954_5_not_null (CHECK)
+-- 681492_681962_1_not_null (CHECK)
+-- 681492_681962_2_not_null (CHECK)
+-- 681492_681962_3_not_null (CHECK)
+-- 681492_681972_1_not_null (CHECK)
+-- 681492_681972_2_not_null (CHECK)
+-- 681492_681972_3_not_null (CHECK)
+-- 681492_682112_1_not_null (CHECK)
+-- 681492_682127_1_not_null (CHECK)
+-- 681492_682127_2_not_null (CHECK)
+-- 681492_682127_3_not_null (CHECK)
+-- 681492_682127_4_not_null (CHECK)
+-- 681492_682127_5_not_null (CHECK)
+-- 681492_682140_1_not_null (CHECK)
+-- 681492_682140_2_not_null (CHECK)
+-- 681492_685450_1_not_null (CHECK)
+-- 681492_685450_2_not_null (CHECK)
+-- 681492_685465_1_not_null (CHECK)
+-- 681492_685478_1_not_null (CHECK)
+-- emergency_control_pkey (PRIMARY KEY)
+-- emergency_events_pkey (PRIMARY KEY)
+-- emergency_metrics_pkey (PRIMARY KEY)
+-- events_pkey (PRIMARY KEY)
+-- orders_pkey (PRIMARY KEY)
+-- performance_metrics_pkey (PRIMARY KEY)
+-- positions_pkey (PRIMARY KEY)
+-- risk_events_pkey (PRIMARY KEY)
+-- risk_violations_pkey (PRIMARY KEY)
+-- single_row (CHECK)
+-- trades_pkey (PRIMARY KEY)
+-- transaction_log_pkey (PRIMARY KEY)
+-- transaction_log_transaction_id_key (UNIQUE)

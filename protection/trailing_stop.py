@@ -173,25 +173,42 @@ class SmartTrailingStopManager:
         Returns:
             Dict with action if stop needs update, None otherwise
         """
+        # DEBUG: Log entry point
+        logger.debug(f"[TS] update_price called: {symbol} @ {price}")
+
         if symbol not in self.trailing_stops:
+            logger.debug(f"[TS] Symbol {symbol} NOT in trailing_stops dict (available: {list(self.trailing_stops.keys())[:5]}...)")
             return None
 
         async with self.lock:
             ts = self.trailing_stops[symbol]
+            old_price = ts.current_price
             ts.current_price = Decimal(str(price))
 
             # Update highest/lowest
             if ts.side == 'long':
                 if ts.current_price > ts.highest_price:
+                    old_highest = ts.highest_price
                     ts.highest_price = ts.current_price
+                    logger.debug(f"[TS] {symbol} highest_price updated: {old_highest} → {ts.highest_price}")
             else:
                 if ts.current_price < ts.lowest_price:
+                    old_lowest = ts.lowest_price
                     ts.lowest_price = ts.current_price
+                    logger.debug(f"[TS] {symbol} lowest_price updated: {old_lowest} → {ts.lowest_price}")
 
             # Calculate current profit
             profit_percent = self._calculate_profit_percent(ts)
             if profit_percent > ts.highest_profit_percent:
                 ts.highest_profit_percent = profit_percent
+
+            # DEBUG: Log current state
+            logger.debug(
+                f"[TS] {symbol} @ {ts.current_price:.4f} | "
+                f"profit: {profit_percent:.2f}% | "
+                f"activation: {ts.activation_price:.4f} | "
+                f"state: {ts.state.name}"
+            )
 
             # State machine
             if ts.state == TrailingStopState.INACTIVE:

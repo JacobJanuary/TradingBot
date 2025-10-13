@@ -414,13 +414,6 @@ class PositionManager:
                             quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0))
                         )
                         position.has_trailing_stop = True
-
-                        # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
-                        await self.repository.update_position(
-                            position.id,
-                            has_trailing_stop=True
-                        )
-
                         logger.info(f"✅ Trailing stop initialized for {symbol}")
                     else:
                         logger.warning(f"⚠️ No trailing manager for exchange {position.exchange}")
@@ -834,13 +827,6 @@ class PositionManager:
                     initial_stop=stop_loss_price
                 )
                 position.has_trailing_stop = True
-
-                # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
-                # Position was already saved in steps 8-9, now update TS flag
-                await self.repository.update_position(
-                    position.id,
-                    has_trailing_stop=True
-                )
 
             # 11. Update internal tracking
             self.positions[symbol] = position
@@ -1295,26 +1281,6 @@ class PositionManager:
                     f"Position closed: {symbol} {reason} "
                     f"PnL: ${realized_pnl:.2f} ({realized_pnl_percent:.2f}%)"
                 )
-
-                # PREVENTIVE FIX: Cancel any remaining SL orders for this symbol
-                # This prevents old SL orders from being reused by future positions
-                try:
-                    # Fetch open orders for symbol
-                    open_orders = await exchange.exchange.fetch_open_orders(symbol)
-
-                    # Cancel stop-loss orders
-                    for order in open_orders:
-                        order_type = order.get('type', '').lower()
-                        is_stop = 'stop' in order_type or order_type in ['stop_market', 'stop_loss', 'stop_loss_limit']
-
-                        if is_stop:
-                            logger.info(f"🧹 Cleaning up SL order {order['id']} for closed position {symbol}")
-                            await exchange.exchange.cancel_order(order['id'], symbol)
-
-                except Exception as cleanup_error:
-                    # Don't fail position close if SL cleanup fails
-                    logger.warning(f"⚠️ Failed to cleanup SL orders for {symbol}: {cleanup_error}")
-                    # Position is already closed, this is just cleanup
 
         except Exception as e:
             logger.error(f"Error closing position {symbol}: {e}", exc_info=True)

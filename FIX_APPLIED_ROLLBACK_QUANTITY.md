@@ -1,7 +1,7 @@
 # ✅ FIX APPLIED: Rollback использует quantity вместо entry_order.filled
 
 **Дата:** 2025-10-12 19:30
-**Commit:** (будет добавлен после commit)
+**Commit:** d444ce3b334350c03b1299409dc61dfb5f067910
 **Файл:** `core/atomic_position_manager.py`
 **Тип:** CRITICAL BUG FIX
 
@@ -260,8 +260,8 @@ git checkout dbc4da8 -- core/atomic_position_manager.py
 - [x] Тест пройден
 - [x] Верификация OK
 - [x] Документация создана
-- [ ] Commit сделан (next step)
-- [ ] Testnet проверка
+- [x] Commit сделан (d444ce3)
+- [ ] Testnet проверка (next step)
 - [ ] Production deploy
 
 ---
