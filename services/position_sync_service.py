@@ -8,7 +8,7 @@ import logging
 import signal
 import sys
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict
 import asyncpg
 import os
 from dotenv import load_dotenv

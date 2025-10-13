@@ -506,7 +506,7 @@ class WebSocketSignalProcessor:
         Returns:
             bool: True if position opened successfully, False otherwise
         """
-        signal_id = signal.get('id', 'unknown')
+        signal_id = signal.get('id')  # None if not present
         
         try:
             # Check if action is present
