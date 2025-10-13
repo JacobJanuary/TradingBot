@@ -286,6 +286,11 @@ class SmartTrailingStopManager:
             f"stop at {ts.current_stop_price:.4f}"
         )
 
+        # NEW: Mark SL ownership (logging only for now)
+        # Note: sl_managed_by field already exists in PositionState
+        # PositionManager will see trailing_activated=True and skip protection
+        logger.debug(f"{ts.symbol} SL ownership: trailing_stop (via trailing_activated=True)")
+
         return {
             'action': 'activated',
             'symbol': ts.symbol,
