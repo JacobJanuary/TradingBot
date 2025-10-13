@@ -1189,6 +1189,9 @@ class PositionManager:
         async with self.position_locks[trailing_lock_key]:
             trailing_manager = self.trailing_managers.get(position.exchange)
             if trailing_manager and position.has_trailing_stop:
+                # NEW: Update TS health timestamp before calling TS Manager
+                position.ts_last_update_time = datetime.now()
+
                 update_result = await trailing_manager.update_price(symbol, position.current_price)
 
                 if update_result:
