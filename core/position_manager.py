@@ -114,6 +114,9 @@ class PositionState:
     # NEW: SL ownership tracking
     sl_managed_by: Optional[str] = None  # 'protection' | 'trailing_stop' | None
 
+    # NEW: TS health tracking for fallback
+    ts_last_update_time: Optional[datetime] = None  # Last TS update
+
     opened_at: datetime = None
     age_hours: float = 0
     
