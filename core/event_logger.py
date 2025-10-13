@@ -49,6 +49,89 @@ class EventType(Enum):
     TRANSACTION_COMMITTED = "transaction_committed"
     TRANSACTION_ROLLED_BACK = "transaction_rolled_back"
 
+    # Wave events (Signal Processing)
+    WAVE_MONITORING_STARTED = "wave_monitoring_started"
+    WAVE_DETECTED = "wave_detected"
+    WAVE_COMPLETED = "wave_completed"
+    WAVE_NOT_FOUND = "wave_not_found"
+    WAVE_DUPLICATE_DETECTED = "wave_duplicate_detected"
+    WAVE_PROCESSING_STARTED = "wave_processing_started"
+    WAVE_TARGET_REACHED = "wave_target_reached"
+    WAVE_BUFFER_EXHAUSTED = "wave_buffer_exhausted"
+
+    # Signal events (Individual Signal Execution)
+    SIGNAL_EXECUTED = "signal_executed"
+    SIGNAL_EXECUTION_FAILED = "signal_execution_failed"
+    SIGNAL_FILTERED = "signal_filtered"
+    SIGNAL_VALIDATION_FAILED = "signal_validation_failed"
+    BAD_SYMBOL_LEAKED = "bad_symbol_leaked"
+    INSUFFICIENT_FUNDS = "insufficient_funds"
+
+    # Trailing Stop events (Protection)
+    TRAILING_STOP_CREATED = "trailing_stop_created"
+    TRAILING_STOP_ACTIVATED = "trailing_stop_activated"
+    TRAILING_STOP_UPDATED = "trailing_stop_updated"
+    TRAILING_STOP_BREAKEVEN = "trailing_stop_breakeven"
+    TRAILING_STOP_REMOVED = "trailing_stop_removed"
+    PROTECTION_SL_CANCELLED = "protection_sl_cancelled"
+    PROTECTION_SL_CANCEL_FAILED = "protection_sl_cancel_failed"
+
+    # Synchronization events (Position Sync)
+    SYNCHRONIZATION_STARTED = "synchronization_started"
+    SYNCHRONIZATION_COMPLETED = "synchronization_completed"
+    PHANTOM_POSITION_CLOSED = "phantom_position_closed"
+    PHANTOM_POSITION_DETECTED = "phantom_position_detected"
+    MISSING_POSITION_ADDED = "missing_position_added"
+    MISSING_POSITION_REJECTED = "missing_position_rejected"
+    QUANTITY_MISMATCH_DETECTED = "quantity_mismatch_detected"
+    QUANTITY_UPDATED = "quantity_updated"
+    POSITION_VERIFIED = "position_verified"
+
+    # Zombie Order events (Cleanup)
+    ZOMBIE_ORDERS_DETECTED = "zombie_orders_detected"
+    ZOMBIE_ORDER_CANCELLED = "zombie_order_cancelled"
+    ZOMBIE_CLEANUP_COMPLETED = "zombie_cleanup_completed"
+    ZOMBIE_ALERT_TRIGGERED = "zombie_alert_triggered"
+    AGGRESSIVE_CLEANUP_TRIGGERED = "aggressive_cleanup_triggered"
+    TPSL_ORDERS_CLEARED = "tpsl_orders_cleared"
+
+    # Position Manager events (Lifecycle)
+    POSITION_DUPLICATE_PREVENTED = "position_duplicate_prevented"
+    POSITION_NOT_FOUND_ON_EXCHANGE = "position_not_found_on_exchange"
+    POSITIONS_LOADED = "positions_loaded"
+    POSITIONS_WITHOUT_SL_DETECTED = "positions_without_sl_detected"
+    POSITION_CREATION_FAILED = "position_creation_failed"
+
+    # Risk Management events
+    RISK_LIMITS_EXCEEDED = "risk_limits_exceeded"
+
+    # Symbol/Order Validation events
+    SYMBOL_UNAVAILABLE = "symbol_unavailable"
+    ORDER_BELOW_MINIMUM = "order_below_minimum"
+
+    # Stop Loss Management events (General)
+    STOP_LOSS_SET_ON_LOAD = "stop_loss_set_on_load"
+    STOP_LOSS_SET_FAILED = "stop_loss_set_failed"
+    ORPHANED_SL_CLEANED = "orphaned_sl_cleaned"
+    EMERGENCY_STOP_PLACED = "emergency_stop_placed"
+    STOP_MOVED_TO_BREAKEVEN = "stop_moved_to_breakeven"
+
+    # Recovery events (System Health)
+    POSITION_RECOVERY_STARTED = "position_recovery_started"
+    POSITION_RECOVERY_COMPLETED = "position_recovery_completed"
+    INCOMPLETE_POSITION_DETECTED = "incomplete_position_detected"
+
+    # System Health events
+    PERIODIC_SYNC_STARTED = "periodic_sync_started"
+    EMERGENCY_CLOSE_ALL_TRIGGERED = "emergency_close_all_triggered"
+    HEALTH_CHECK_FAILED = "health_check_failed"
+
+    # WebSocket events (Connectivity)
+    WEBSOCKET_CONNECTED = "websocket_connected"
+    WEBSOCKET_DISCONNECTED = "websocket_disconnected"
+    WEBSOCKET_ERROR = "websocket_error"
+    SIGNALS_RECEIVED = "signals_received"
+
 
 class EventLogger:
     """
