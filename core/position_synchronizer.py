@@ -376,20 +376,20 @@ class PositionSynchronizer:
             exchange_position: Full position data from exchange
         """
         try:
-            # For now, just log the discrepancy
-            # The update_position method in repository needs to be fixed for trading_bot schema
-            logger.warning(
-                f"    ⚠️ Quantity mismatch detected but update skipped (schema issue). "
-                f"Position ID {position_id} should be {new_quantity}"
+            # Extract additional fields from exchange position
+            current_price = exchange_position.get('markPrice')
+            unrealized_pnl = exchange_position.get('unrealizedPnl', 0)
+
+            logger.info(
+                f"    📊 Updating quantity for position {position_id}: {new_quantity}"
             )
 
-            # TODO: Fix repository.update_position to use trading_bot.positions schema
-            # await self.repository.update_position(
-            #     position_id=position_id,
-            #     quantity=new_quantity,
-            #     current_price=current_price,
-            #     pnl=unrealized_pnl
-            # )
+            await self.repository.update_position(
+                position_id=position_id,
+                quantity=new_quantity,
+                current_price=current_price,
+                unrealized_pnl=unrealized_pnl
+            )
 
         except Exception as e:
             logger.error(f"Failed to update position quantity: {e}")
