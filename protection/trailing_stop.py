@@ -381,6 +381,10 @@ class SmartTrailingStopManager:
     async def _place_stop_order(self, ts: TrailingStopInstance) -> bool:
         """Place initial stop order on exchange"""
         try:
+            # NEW: For Binance, cancel Protection Manager SL first
+            # This prevents duplication (two STOP_MARKET orders)
+            await self._cancel_protection_sl_if_binance(ts)
+
             # Cancel existing stop order if any
             if ts.stop_order_id:
                 await self.exchange.cancel_order(ts.stop_order_id, ts.symbol)
