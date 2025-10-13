@@ -1712,7 +1712,8 @@ class PositionManager:
                         # STEP 1: Get current market price from exchange
                         try:
                             ticker = await exchange.exchange.fetch_ticker(position.symbol)
-                            current_price = float(ticker.get('last') or ticker.get('mark') or 0)
+                            mark_price = ticker.get('info', {}).get('markPrice')
+                            current_price = float(mark_price or ticker.get('last') or 0)
 
                             if current_price == 0:
                                 logger.error(f"Failed to get current price for {position.symbol}, skipping SL setup")
