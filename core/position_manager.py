@@ -734,6 +734,28 @@ class PositionManager:
                     logger.info(f"✅ Position #{atomic_result['position_id']} for {symbol} opened ATOMICALLY at ${atomic_result['entry_price']:.4f}")
                     logger.info(f"✅ Added {symbol} to tracked positions (total: {len(self.positions)})")
 
+                    # 10. Initialize trailing stop (ATOMIC path)
+                    trailing_manager = self.trailing_managers.get(exchange_name)
+                    if trailing_manager:
+                        await trailing_manager.create_trailing_stop(
+                            symbol=symbol,
+                            side=position.side,
+                            entry_price=position.entry_price,
+                            quantity=position.quantity,
+                            initial_stop=stop_loss_price
+                        )
+                        position.has_trailing_stop = True
+
+                        # Save has_trailing_stop to database for restart persistence
+                        await self.repository.update_position(
+                            position.id,
+                            has_trailing_stop=True
+                        )
+
+                        logger.info(f"✅ Trailing stop initialized for {symbol}")
+                    else:
+                        logger.warning(f"⚠️ No trailing manager for exchange {exchange_name}")
+
                     return position  # Return early - atomic creation is complete
 
                 else:
