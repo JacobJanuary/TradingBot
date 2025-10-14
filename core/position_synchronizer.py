@@ -7,6 +7,7 @@ import logging
 from typing import Dict, List, Set, Tuple, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
+from core.event_logger import get_event_logger, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,18 @@ class PositionSynchronizer:
         logger.info("STARTING POSITION SYNCHRONIZATION")
         logger.info("="*60)
 
+        # Log synchronization start
+        event_logger = get_event_logger()
+        if event_logger:
+            await event_logger.log_event(
+                EventType.SYNCHRONIZATION_STARTED,
+                {
+                    'exchanges': list(self.exchanges.keys()),
+                    'exchange_count': len(self.exchanges)
+                },
+                severity='INFO'
+            )
+
         results = {}
 
         for exchange_name, exchange_instance in self.exchanges.items():
@@ -90,6 +103,23 @@ class PositionSynchronizer:
         logger.info(f"  ➕ Missing added: {self.stats['added_missing']}")
         logger.info(f"  📝 Quantity updated: {self.stats['updated_quantity']}")
         logger.info(f"  ❌ Errors: {self.stats['errors']}")
+
+        # Log synchronization completion
+        event_logger = get_event_logger()
+        if event_logger:
+            await event_logger.log_event(
+                EventType.SYNCHRONIZATION_COMPLETED,
+                {
+                    'db_positions': self.stats['db_positions'],
+                    'exchange_positions': self.stats['exchange_positions'],
+                    'verified': self.stats['verified'],
+                    'closed_phantom': self.stats['closed_phantom'],
+                    'added_missing': self.stats['added_missing'],
+                    'updated_quantity': self.stats['updated_quantity'],
+                    'errors': self.stats['errors']
+                },
+                severity='INFO'
+            )
 
         return results
 
@@ -147,6 +177,23 @@ class PositionSynchronizer:
                             f"DB: {db_quantity}, Exchange: {exchange_quantity}"
                         )
 
+                        # Log quantity mismatch detection
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.QUANTITY_MISMATCH_DETECTED,
+                                {
+                                    'symbol': symbol,
+                                    'exchange': exchange_name,
+                                    'db_quantity': db_quantity,
+                                    'exchange_quantity': exchange_quantity,
+                                    'difference': abs(db_quantity - exchange_quantity)
+                                },
+                                symbol=symbol,
+                                exchange=exchange_name,
+                                severity='WARNING'
+                            )
+
                         # Update DB with correct quantity
                         await self._update_position_quantity(
                             db_pos['id'], exchange_quantity, exchange_pos
@@ -158,9 +205,42 @@ class PositionSynchronizer:
                         result['verified'].append(symbol)
                         self.stats['verified'] += 1
 
+                        # Log position verification
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.POSITION_VERIFIED,
+                                {
+                                    'symbol': symbol,
+                                    'exchange': exchange_name,
+                                    'db_quantity': db_quantity,
+                                    'exchange_quantity': exchange_quantity
+                                },
+                                symbol=symbol,
+                                exchange=exchange_name,
+                                severity='INFO'
+                            )
+
                 else:
                     # Position doesn't exist on exchange - PHANTOM!
                     logger.warning(f"  🗑️ {symbol}: PHANTOM position (not on exchange)")
+
+                    # Log phantom position detection
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.PHANTOM_POSITION_DETECTED,
+                            {
+                                'symbol': symbol,
+                                'exchange': exchange_name,
+                                'position_id': db_pos['id'],
+                                'db_quantity': float(db_pos['quantity']),
+                                'entry_price': float(db_pos.get('entry_price', 0))
+                            },
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            severity='WARNING'
+                        )
 
                     # Close in database
                     await self._close_phantom_position(db_pos)
@@ -266,6 +346,7 @@ class PositionSynchronizer:
         try:
             position_id = db_position['id']
             symbol = db_position['symbol']
+            exchange = db_position.get('exchange', 'unknown')
 
             # Update position status to closed
             # Since position doesn't exist on exchange, just mark it as closed
@@ -281,6 +362,22 @@ class PositionSynchronizer:
                 await conn.execute(query, position_id)
 
             logger.info(f"    Closed phantom position: {symbol} (ID: {position_id})")
+
+            # Log phantom position closure
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.PHANTOM_POSITION_CLOSED,
+                    {
+                        'symbol': symbol,
+                        'exchange': exchange,
+                        'position_id': position_id,
+                        'reason': 'not_on_exchange'
+                    },
+                    symbol=symbol,
+                    exchange=exchange,
+                    severity='WARNING'
+                )
 
         except Exception as e:
             logger.error(f"Failed to close phantom position {db_position['symbol']}: {e}")
@@ -321,6 +418,24 @@ class PositionSynchronizer:
                     f"    ⚠️ REJECTED: {symbol} - No exchange_order_id found. "
                     f"This may be stale CCXT data (info keys: {list(info.keys())})"
                 )
+
+                # Log missing position rejection
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.MISSING_POSITION_REJECTED,
+                        {
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'reason': 'no_exchange_order_id',
+                            'contracts': abs(contracts),
+                            'info_keys': list(info.keys())
+                        },
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='WARNING'
+                    )
+
                 return False
 
             # Determine side
@@ -360,6 +475,25 @@ class PositionSynchronizer:
                 f"({side} {abs(contracts)} @ ${entry_price:.4f}, order_id={exchange_order_id})"
             )
 
+            # Log missing position added
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.MISSING_POSITION_ADDED,
+                    {
+                        'symbol': symbol,
+                        'exchange': exchange_name,
+                        'position_id': position_id,
+                        'side': side,
+                        'quantity': abs(contracts),
+                        'entry_price': entry_price,
+                        'exchange_order_id': str(exchange_order_id)
+                    },
+                    symbol=symbol,
+                    exchange=exchange_name,
+                    severity='INFO'
+                )
+
             return True
 
         except Exception as e:
@@ -379,6 +513,7 @@ class PositionSynchronizer:
             # Extract additional fields from exchange position
             current_price = exchange_position.get('markPrice')
             unrealized_pnl = exchange_position.get('unrealizedPnl', 0)
+            symbol = exchange_position.get('symbol', 'unknown')
 
             logger.info(
                 f"    📊 Updating quantity for position {position_id}: {new_quantity}"
@@ -390,6 +525,22 @@ class PositionSynchronizer:
                 current_price=current_price,
                 unrealized_pnl=unrealized_pnl
             )
+
+            # Log quantity update
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.QUANTITY_UPDATED,
+                    {
+                        'position_id': position_id,
+                        'symbol': symbol,
+                        'new_quantity': new_quantity,
+                        'current_price': float(current_price) if current_price else None,
+                        'unrealized_pnl': float(unrealized_pnl)
+                    },
+                    symbol=symbol,
+                    severity='INFO'
+                )
 
         except Exception as e:
             logger.error(f"Failed to update position quantity: {e}")
