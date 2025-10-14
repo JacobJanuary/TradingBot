@@ -126,6 +126,9 @@ class EventType(Enum):
     EMERGENCY_CLOSE_ALL_TRIGGERED = "emergency_close_all_triggered"
     HEALTH_CHECK_FAILED = "health_check_failed"
 
+    # Database events (Data Persistence)
+    DATABASE_ERROR = "database_error"
+
     # WebSocket events (Connectivity)
     WEBSOCKET_CONNECTED = "websocket_connected"
     WEBSOCKET_DISCONNECTED = "websocket_disconnected"

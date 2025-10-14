@@ -1045,9 +1045,30 @@ class PositionManager:
                             severity='INFO'
                         )
 
-                    await self.repository.update_position_stop_loss(
-                        position.id, stop_loss_price, ""
-                    )
+                    try:
+                        await self.repository.update_position_stop_loss(
+                            position.id, stop_loss_price, ""
+                        )
+                    except Exception as db_error:
+                        logger.error(f"Failed to update stop loss in database for {symbol}: {db_error}")
+
+                        # Log database update failure
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.DATABASE_ERROR,
+                                {
+                                    'symbol': symbol,
+                                    'position_id': position.id,
+                                    'operation': 'update_position_stop_loss',
+                                    'error': str(db_error),
+                                    'stop_loss_price': float(stop_loss_price)
+                                },
+                                position_id=position.id,
+                                symbol=symbol,
+                                exchange=exchange_name,
+                                severity='ERROR'
+                            )
                 else:
                     logger.warning(f"⚠️ Failed to set stop loss for {symbol}")
 
@@ -1082,10 +1103,30 @@ class PositionManager:
 
                 # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
                 # Position was already saved in steps 8-9, now update TS flag
-                await self.repository.update_position(
-                    position.id,
-                    has_trailing_stop=True
-                )
+                try:
+                    await self.repository.update_position(
+                        position.id,
+                        has_trailing_stop=True
+                    )
+                except Exception as db_error:
+                    logger.error(f"Failed to update trailing stop flag in database for {symbol}: {db_error}")
+
+                    # Log database update failure
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.DATABASE_ERROR,
+                            {
+                                'symbol': symbol,
+                                'position_id': position.id,
+                                'operation': 'update_position_trailing_stop',
+                                'error': str(db_error)
+                            },
+                            position_id=position.id,
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            severity='ERROR'
+                        )
 
             # 11. Update internal tracking
             self.positions[symbol] = position
@@ -1440,28 +1481,90 @@ class PositionManager:
                         position.trailing_activated = True
                         logger.info(f"Trailing stop activated for {symbol}")
                         # Save trailing activation to database
-                        await self.repository.update_position(position.id, trailing_activated=True)
+                        try:
+                            await self.repository.update_position(position.id, trailing_activated=True)
+                        except Exception as db_error:
+                            logger.error(f"Failed to update trailing activation in database for {symbol}: {db_error}")
+
+                            # Log database update failure
+                            event_logger = get_event_logger()
+                            if event_logger:
+                                await event_logger.log_event(
+                                    EventType.DATABASE_ERROR,
+                                    {
+                                        'symbol': symbol,
+                                        'position_id': position.id,
+                                        'operation': 'update_trailing_activation',
+                                        'error': str(db_error)
+                                    },
+                                    position_id=position.id,
+                                    symbol=symbol,
+                                    exchange=position.exchange,
+                                    severity='ERROR'
+                                )
 
                     elif action == 'updated':
                         # CRITICAL FIX: Save new trailing stop price to database
                         new_stop = update_result.get('new_stop')
                         if new_stop:
                             position.stop_loss_price = new_stop
-                            await self.repository.update_position(
-                                position.id,
-                                stop_loss_price=new_stop
-                            )
-                            logger.info(f"✅ Saved new trailing stop price for {symbol}: {new_stop}")
+                            try:
+                                await self.repository.update_position(
+                                    position.id,
+                                    stop_loss_price=new_stop
+                                )
+                                logger.info(f"✅ Saved new trailing stop price for {symbol}: {new_stop}")
+                            except Exception as db_error:
+                                logger.error(f"Failed to update trailing stop price in database for {symbol}: {db_error}")
+
+                                # Log database update failure
+                                event_logger = get_event_logger()
+                                if event_logger:
+                                    await event_logger.log_event(
+                                        EventType.DATABASE_ERROR,
+                                        {
+                                            'symbol': symbol,
+                                            'position_id': position.id,
+                                            'operation': 'update_trailing_stop_price',
+                                            'error': str(db_error),
+                                            'new_stop_price': float(new_stop)
+                                        },
+                                        position_id=position.id,
+                                        symbol=symbol,
+                                        exchange=position.exchange,
+                                        severity='ERROR'
+                                    )
 
         # Update database
-        await self.repository.update_position_from_websocket({
-            'symbol': symbol,
-            'exchange': position.exchange,
-            'current_price': position.current_price,
-            'mark_price': position.current_price,
-            'unrealized_pnl': position.unrealized_pnl,
-            'unrealized_pnl_percent': position.unrealized_pnl_percent
-        })
+        try:
+            await self.repository.update_position_from_websocket({
+                'symbol': symbol,
+                'exchange': position.exchange,
+                'current_price': position.current_price,
+                'mark_price': position.current_price,
+                'unrealized_pnl': position.unrealized_pnl,
+                'unrealized_pnl_percent': position.unrealized_pnl_percent
+            })
+        except Exception as db_error:
+            logger.error(f"Failed to update position from websocket in database for {symbol}: {db_error}")
+
+            # Log database update failure
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.DATABASE_ERROR,
+                    {
+                        'symbol': symbol,
+                        'position_id': position.id,
+                        'operation': 'update_position_from_websocket',
+                        'error': str(db_error),
+                        'current_price': float(position.current_price)
+                    },
+                    position_id=position.id,
+                    symbol=symbol,
+                    exchange=position.exchange,
+                    severity='ERROR'
+                )
 
     async def _on_order_filled(self, data: Dict):
         """Handle order filled event"""
@@ -1696,11 +1799,33 @@ class PositionManager:
                 }
                 
                 # Update database with pending close order
-                await self.repository.update_position(position.id, {
-                    'pending_close_order_id': order['id'],
-                    'pending_close_price': to_decimal(target_price),
-                    'exit_reason': reason
-                })
+                try:
+                    await self.repository.update_position(position.id, {
+                        'pending_close_order_id': order['id'],
+                        'pending_close_price': to_decimal(target_price),
+                        'exit_reason': reason
+                    })
+                except Exception as db_error:
+                    logger.error(f"Failed to update pending close order in database for {symbol}: {db_error}")
+
+                    # Log database update failure
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.DATABASE_ERROR,
+                            {
+                                'symbol': symbol,
+                                'position_id': position.id,
+                                'operation': 'update_pending_close_order',
+                                'error': str(db_error),
+                                'order_id': order_id,
+                                'target_price': float(target_price)
+                            },
+                            position_id=position.id,
+                            symbol=symbol,
+                            exchange=position.exchange,
+                            severity='ERROR'
+                        )
             else:
                 logger.error(f"Failed to place limit order for {symbol}")
                 
