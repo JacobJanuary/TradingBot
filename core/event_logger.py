@@ -168,16 +168,20 @@ class EventLogger:
 
     async def initialize(self):
         """Initialize event logger and create tables if needed"""
-        await self._create_tables()
-        self._worker_task = asyncio.create_task(self._event_worker())
-        logger.info("EventLogger initialized")
+        try:
+            await self._create_tables()
+            self._worker_task = asyncio.create_task(self._event_worker())
+            logger.info("EventLogger initialized")
+        except Exception as e:
+            logger.error(f"EventLogger initialization failed: {e}", exc_info=True)
+            raise
 
     async def _create_tables(self):
         """Create event logging tables if not exists"""
         async with self.pool.acquire() as conn:
             # Events table
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS events (
+                CREATE TABLE IF NOT EXISTS monitoring.events (
                     id SERIAL PRIMARY KEY,
                     event_type VARCHAR(50) NOT NULL,
                     event_data JSONB,
@@ -194,14 +198,14 @@ class EventLogger:
             """)
 
             # Create indexes separately
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON events (event_type)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events (correlation_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_position ON events (position_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_at DESC)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON monitoring.events (event_type)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_correlation ON monitoring.events (correlation_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_position ON monitoring.events (position_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_created ON monitoring.events (created_at DESC)")
 
             # Transaction log table
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS transaction_log (
+                CREATE TABLE IF NOT EXISTS monitoring.transaction_log (
                     id SERIAL PRIMARY KEY,
                     transaction_id VARCHAR(100) UNIQUE,
                     operation VARCHAR(100),
@@ -215,12 +219,12 @@ class EventLogger:
             """)
 
             # Create indexes separately
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_id ON transaction_log (transaction_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_status ON transaction_log (status)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_id ON monitoring.transaction_log (transaction_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_status ON monitoring.transaction_log (status)")
 
             # Performance metrics table
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS performance_metrics (
+                CREATE TABLE IF NOT EXISTS monitoring.event_performance_metrics (
                     id SERIAL PRIMARY KEY,
                     metric_name VARCHAR(100),
                     metric_value DECIMAL(20, 8),
@@ -230,8 +234,8 @@ class EventLogger:
             """)
 
             # Create indexes separately
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_name ON performance_metrics (metric_name)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_time ON performance_metrics (recorded_at DESC)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_event_metrics_name ON monitoring.event_performance_metrics (metric_name)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_event_metrics_time ON monitoring.event_performance_metrics (recorded_at DESC)")
 
     async def log_event(
         self,
@@ -293,6 +297,7 @@ class EventLogger:
         """Background worker to batch write events"""
         batch = []
         last_flush = asyncio.get_event_loop().time()
+        logger.info("EventLogger worker started")
 
         while not self._shutdown:
             try:
@@ -314,12 +319,13 @@ class EventLogger:
                 )
 
                 if should_flush and batch:
+                    logger.info(f"EventLogger flushing {len(batch)} events")
                     await self._write_batch(batch)
                     batch = []
                     last_flush = current_time
 
             except Exception as e:
-                logger.error(f"Event worker error: {e}")
+                logger.error(f"EventLogger worker error: {e}", exc_info=True)
                 await asyncio.sleep(1)
 
         # Final flush on shutdown
@@ -330,7 +336,7 @@ class EventLogger:
         """Write single event to database"""
         async with self.pool.acquire() as conn:
             query = """
-                INSERT INTO events (
+                INSERT INTO monitoring.events (
                     event_type, event_data, correlation_id,
                     position_id, order_id, symbol, exchange,
                     severity, error_message, stack_trace, created_at
@@ -357,29 +363,57 @@ class EventLogger:
             return
 
         async with self.pool.acquire() as conn:
+            # DEBUG: показать куда подключились
+            db_info = await conn.fetchrow("""
+                SELECT current_database() as db,
+                       inet_server_addr() as host,
+                       inet_server_port() as port
+            """)
+            logger.info(f"EventLogger connected to: {db_info['host']}:{db_info['port']}/{db_info['db']}")
+
+            # Count BEFORE insert
+            count_before = await conn.fetchval("SELECT COUNT(*) FROM monitoring.events")
+
             # Prepare batch insert
             query = """
-                INSERT INTO events (
+                INSERT INTO monitoring.events (
                     event_type, event_data, correlation_id,
                     position_id, order_id, symbol, exchange,
                     severity, error_message, stack_trace, created_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """
 
-            # Execute batch
-            await conn.executemany(
-                query,
-                [
-                    (
-                        e['event_type'], e['event_data'], e['correlation_id'],
-                        e['position_id'], e['order_id'], e['symbol'], e['exchange'],
-                        e['severity'], e['error_message'], e['stack_trace'], e['created_at']
-                    )
-                    for e in batch
-                ]
-            )
+            logger.info(f"EventLogger executing INSERT for {len(batch)} events (count_before={count_before})")
 
-            logger.debug(f"Wrote batch of {len(batch)} events")
+            try:
+                # Execute batch
+                await conn.executemany(
+                    query,
+                    [
+                        (
+                            e['event_type'], e['event_data'], e['correlation_id'],
+                            e['position_id'], e['order_id'], e['symbol'], e['exchange'],
+                            e['severity'], e['error_message'], e['stack_trace'], e['created_at']
+                        )
+                        for e in batch
+                    ]
+                )
+
+                # Count AFTER insert (same connection)
+                count_after = await conn.fetchval("SELECT COUNT(*) FROM monitoring.events")
+
+                # Get last 3 IDs to verify
+                last_ids = await conn.fetch("SELECT id, event_type FROM monitoring.events ORDER BY id DESC LIMIT 3")
+                last_ids_str = ', '.join([f"id={r['id']}:{r['event_type']}" for r in last_ids])
+
+                logger.info(f"EventLogger wrote {len(batch)} events to DB (count_before={count_before}, count_after={count_after}, delta={count_after - count_before}, last_ids=[{last_ids_str}])")
+            except Exception as e:
+                logger.error(f"EventLogger batch write failed: {e}", exc_info=True)
+
+        # Verify write from new connection
+        async with self.pool.acquire() as conn:
+            count = await conn.fetchval("SELECT COUNT(*) FROM monitoring.events")
+            logger.info(f"EventLogger DB verify from NEW connection: {count}")
 
     async def log_transaction(
         self,
@@ -398,7 +432,7 @@ class EventLogger:
 
         async with self.pool.acquire() as conn:
             query = """
-                INSERT INTO transaction_log (
+                INSERT INTO monitoring.transaction_log (
                     transaction_id, operation, status,
                     started_at, completed_at, duration_ms,
                     affected_rows, error_message
@@ -426,7 +460,7 @@ class EventLogger:
         """Log performance metric"""
         async with self.pool.acquire() as conn:
             query = """
-                INSERT INTO performance_metrics (
+                INSERT INTO monitoring.event_performance_metrics (
                     metric_name, metric_value, tags, recorded_at
                 ) VALUES ($1, $2, $3, $4)
             """
@@ -447,7 +481,7 @@ class EventLogger:
         """Get recent events from the log"""
         async with self.pool.acquire() as conn:
             query = """
-                SELECT * FROM events
+                SELECT * FROM monitoring.events
                 WHERE ($1::varchar IS NULL OR event_type = $1)
                   AND ($2::integer IS NULL OR position_id = $2)
                 ORDER BY created_at DESC
@@ -470,7 +504,7 @@ class EventLogger:
                     event_type,
                     COUNT(*) as count,
                     MAX(created_at) as last_occurrence
-                FROM events
+                FROM monitoring.events
                 WHERE severity IN ('ERROR', 'CRITICAL')
                   AND created_at > NOW() - INTERVAL '%s hours'
                 GROUP BY event_type

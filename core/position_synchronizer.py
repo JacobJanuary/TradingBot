@@ -459,12 +459,7 @@ class PositionSynchronizer:
                 'exchange': exchange_name,
                 'side': side,
                 'quantity': abs(contracts),
-                'entry_price': entry_price,
-                'current_price': current_price,
-                'strategy': 'MANUAL',  # Mark as manual since not opened by bot
-                'timeframe': 'UNKNOWN',
-                'signal_id': None,
-                'exchange_order_id': str(exchange_order_id)  # ✅ CRITICAL FIX
+                'entry_price': entry_price
             }
 
             # Use open_position method

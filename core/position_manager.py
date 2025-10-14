@@ -619,10 +619,7 @@ class PositionManager:
                         'exchange': exchange_name,
                         'side': side,
                         'quantity': quantity,
-                        'entry_price': entry_price,
-                        'current_price': entry_price,
-                        'strategy': 'manual',
-                        'status': 'open'
+                        'entry_price': entry_price
                     })
 
                     # Create position state
@@ -1005,9 +1002,8 @@ class PositionManager:
                 logger.info(f"📌 Position already created atomically with ID={position.id}, skipping DB creation")
             else:
                 # 8. Save to database (NON-ATOMIC path only!)
-                logger.info(f"🔍 DEBUG: NON-ATOMIC path - creating trade for {symbol}, signal_id={request.signal_id}")
+                logger.info(f"🔍 DEBUG: NON-ATOMIC path - creating trade for {symbol}")
                 trade_id = await self.repository.create_trade({
-                    'signal_id': request.signal_id,
                     'symbol': symbol,
                     'exchange': exchange_name,
                     'side': order_side,
@@ -1020,9 +1016,8 @@ class PositionManager:
                 })
                 logger.info(f"🔍 DEBUG: Trade created with ID={trade_id} for {symbol}")
 
-                logger.info(f"🔍 DEBUG: About to create position for {symbol}, signal_id={request.signal_id}, quantity={position.quantity}")
+                logger.info(f"🔍 DEBUG: About to create position for {symbol}, quantity={position.quantity}")
                 position_id = await self.repository.create_position({
-                    'signal_id': request.signal_id,
                     'symbol': symbol,
                     'exchange': exchange_name,
                     'side': position.side,

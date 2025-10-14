@@ -147,14 +147,11 @@ class AtomicPositionManager:
                 # Step 1: Создание записи позиции в состоянии PENDING_ENTRY
                 logger.info(f"📝 Creating position record for {symbol}")
                 position_data = {
-                    'signal_id': signal_id,
                     'symbol': symbol,
                     'exchange': exchange,
                     'side': 'long' if side.lower() == 'buy' else 'short',
                     'quantity': quantity,
-                    'entry_price': entry_price,
-                    'status': state.value,
-                    'operation_id': operation_id
+                    'entry_price': entry_price
                 }
 
                 position_id = await self.repository.create_position(position_data)
