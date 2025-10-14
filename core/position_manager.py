@@ -34,6 +34,7 @@ from database.repository import Repository as TradingRepository
 from protection.trailing_stop import SmartTrailingStopManager
 from websocket.event_router import EventRouter
 from core.exchange_manager import ExchangeManager
+from core.event_logger import get_event_logger, EventType
 from utils.decimal_utils import to_decimal, calculate_stop_loss, calculate_pnl, calculate_quantity
 
 # CRITICAL FIX: Import normalize_symbol for correct position verification
@@ -1866,6 +1867,20 @@ class PositionManager:
                         zombies_found = True
                         logger.warning(f"👻 Found {len(phantom_symbols)} PHANTOM positions on {exchange_name}")
 
+                        # Log phantom positions detection
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.PHANTOM_POSITION_DETECTED,
+                                {
+                                    'exchange': exchange_name,
+                                    'count': len(phantom_symbols),
+                                    'symbols': list(phantom_symbols)
+                                },
+                                exchange=exchange_name,
+                                severity='WARNING'
+                            )
+
                         for symbol in phantom_symbols:
                             position = local_positions[symbol]
                             logger.warning(f"Phantom position detected: {symbol} (in DB but not on {exchange_name})")
@@ -1884,8 +1899,43 @@ class PositionManager:
 
                                 logger.info(f"✅ Cleaned phantom position: {symbol}")
 
+                                # Log successful cleanup
+                                event_logger = get_event_logger()
+                                if event_logger:
+                                    await event_logger.log_event(
+                                        EventType.PHANTOM_POSITION_CLOSED,
+                                        {
+                                            'symbol': symbol,
+                                            'position_id': position.id,
+                                            'reason': 'not_on_exchange',
+                                            'cleanup_action': 'marked_closed'
+                                        },
+                                        position_id=position.id,
+                                        symbol=symbol,
+                                        exchange=exchange_name,
+                                        severity='WARNING'
+                                    )
+
                             except Exception as cleanup_error:
                                 logger.error(f"Failed to clean phantom position {symbol}: {cleanup_error}")
+
+                                # Log cleanup failure
+                                event_logger = get_event_logger()
+                                if event_logger:
+                                    await event_logger.log_event(
+                                        EventType.POSITION_ERROR,
+                                        {
+                                            'symbol': symbol,
+                                            'position_id': position.id,
+                                            'error': str(cleanup_error),
+                                            'context': 'phantom_cleanup_failed'
+                                        },
+                                        position_id=position.id,
+                                        symbol=symbol,
+                                        exchange=exchange_name,
+                                        severity='ERROR',
+                                        error=cleanup_error
+                                    )
 
                     # 2. UNTRACKED POSITIONS (on exchange but not in DB)
                     untracked_positions = []
