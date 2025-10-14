@@ -48,6 +48,11 @@ class TradingConfig:
     trailing_activation_percent: Decimal = Decimal('1.5')
     trailing_callback_percent: Decimal = Decimal('0.5')
 
+    # Trailing Stop SL Update settings (Freqtrade-inspired)
+    trailing_min_update_interval_seconds: int = 60  # Min 60s between SL updates
+    trailing_min_improvement_percent: Decimal = Decimal('0.1')  # Update only if >= 0.1% improvement
+    trailing_alert_if_unprotected_window_ms: int = 500  # Alert if unprotected window > 500ms
+
     # Aged positions
     max_position_age_hours: int = 3
     aged_grace_period_hours: int = 8
@@ -172,6 +177,14 @@ class Config:
             config.trailing_activation_percent = Decimal(val)
         if val := os.getenv('TRAILING_CALLBACK_PERCENT'):
             config.trailing_callback_percent = Decimal(val)
+
+        # Trailing Stop SL Update settings
+        if val := os.getenv('TRAILING_MIN_UPDATE_INTERVAL_SECONDS'):
+            config.trailing_min_update_interval_seconds = int(val)
+        if val := os.getenv('TRAILING_MIN_IMPROVEMENT_PERCENT'):
+            config.trailing_min_improvement_percent = Decimal(val)
+        if val := os.getenv('TRAILING_ALERT_IF_UNPROTECTED_WINDOW_MS'):
+            config.trailing_alert_if_unprotected_window_ms = int(val)
 
         # Aged positions
         if val := os.getenv('MAX_POSITION_AGE_HOURS'):

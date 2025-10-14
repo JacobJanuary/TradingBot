@@ -599,6 +599,241 @@ class ExchangeManager:
             logger.error(f"Trailing stop order failed for {symbol}: {e}")
             raise
 
+    # ============== TRAILING STOP ATOMIC UPDATE ==============
+
+    async def update_stop_loss_atomic(self, symbol: str, new_sl_price: float,
+                                       position_side: str = 'long') -> dict:
+        """
+        Update stop loss atomically (exchange-specific implementation)
+
+        Bybit: Uses trading-stop endpoint (ATOMIC - no race condition)
+        Binance: Uses optimized cancel+create (minimal race window)
+
+        Args:
+            symbol: Trading symbol
+            new_sl_price: New stop loss price
+            position_side: 'long' or 'short'
+
+        Returns:
+            dict with success, execution_time_ms, method_used
+        """
+        start_time = datetime.now()
+
+        result = {
+            'success': False,
+            'method': None,
+            'execution_time_ms': 0,
+            'error': None,
+            'old_sl_price': None,
+            'new_sl_price': new_sl_price
+        }
+
+        try:
+            if self.name == 'bybit':
+                # BYBIT: ATOMIC update via trading-stop
+                result['method'] = 'bybit_trading_stop_atomic'
+                update_result = await self._bybit_update_sl_atomic(symbol, new_sl_price, position_side)
+                result['success'] = update_result['success']
+                result['error'] = update_result.get('error')
+
+            elif self.name == 'binance':
+                # BINANCE: Optimized cancel+create
+                result['method'] = 'binance_cancel_create_optimized'
+                update_result = await self._binance_update_sl_optimized(symbol, new_sl_price, position_side)
+                result['success'] = update_result['success']
+                result['error'] = update_result.get('error')
+                result['unprotected_window_ms'] = update_result.get('unprotected_window_ms', 0)
+
+            else:
+                raise NotImplementedError(f"Atomic SL update not implemented for {self.name}")
+
+            execution_time = (datetime.now() - start_time).total_seconds() * 1000
+            result['execution_time_ms'] = execution_time
+
+            if result['success']:
+                logger.info(
+                    f"✅ SL update complete: {symbol} @ {new_sl_price} "
+                    f"({result['method']}, {execution_time:.2f}ms)"
+                )
+            else:
+                logger.error(f"❌ SL update failed: {symbol} - {result['error']}")
+
+            return result
+
+        except Exception as e:
+            execution_time = (datetime.now() - start_time).total_seconds() * 1000
+            result['execution_time_ms'] = execution_time
+            result['error'] = str(e)
+            logger.error(f"❌ SL update failed: {e}", exc_info=True)
+            return result
+
+    async def _bybit_update_sl_atomic(self, symbol: str, new_sl_price: float,
+                                       position_side: str) -> dict:
+        """
+        Bybit-specific ATOMIC SL update using trading-stop endpoint
+
+        CRITICAL: This is ATOMIC - no cancel+create race condition!
+        """
+        result = {'success': False, 'error': None}
+
+        try:
+            # Get position to determine positionIdx
+            positions = await self.fetch_positions(
+                symbols=[symbol],
+                params={'category': 'linear'}
+            )
+
+            position_idx = 0  # Default: One-Way mode
+            for pos in positions:
+                if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                    position_idx = int(pos.get('info', {}).get('positionIdx', 0))
+                    break
+
+            # Format symbol for Bybit API (remove / and :USDT)
+            bybit_symbol = symbol.replace('/', '').replace(':USDT', '')
+
+            # Format price with proper precision
+            sl_price_formatted = self.exchange.price_to_precision(symbol, new_sl_price)
+
+            # ATOMIC update via trading-stop endpoint
+            params = {
+                'category': 'linear',
+                'symbol': bybit_symbol,
+                'stopLoss': sl_price_formatted,
+                'positionIdx': position_idx,
+                'slTriggerBy': 'LastPrice',
+                'tpslMode': 'Full'
+            }
+
+            logger.info(f"🔄 Bybit ATOMIC SL update: {bybit_symbol} @ {sl_price_formatted}")
+
+            response = await self.rate_limiter.execute_request(
+                self.exchange.private_post_v5_position_trading_stop,
+                params
+            )
+
+            # Check response - CRITICAL: retCode is STRING "0", not int 0
+            ret_code = str(response.get('retCode', -1))
+            ret_msg = response.get('retMsg', 'unknown')
+
+            if ret_code == '0' or ret_code == 0:
+                result['success'] = True
+                logger.info(f"✅ Bybit SL updated atomically to {sl_price_formatted}")
+
+            elif ret_code == '34040' and 'not modified' in ret_msg.lower():
+                # Special case: SL already at this price (not an error)
+                result['success'] = True
+                logger.info(f"✅ Bybit SL already at {sl_price_formatted} (not modified)")
+
+            else:
+                result['error'] = f"retCode={ret_code}, retMsg={ret_msg}"
+                logger.error(f"❌ Bybit SL update failed: {result['error']}")
+
+            return result
+
+        except Exception as e:
+            result['error'] = str(e)
+            logger.error(f"❌ Bybit atomic SL update failed: {e}", exc_info=True)
+            return result
+
+    async def _binance_update_sl_optimized(self, symbol: str, new_sl_price: float,
+                                            position_side: str) -> dict:
+        """
+        Binance-specific OPTIMIZED cancel+create for SL update
+
+        CRITICAL: Minimizes race condition window but cannot eliminate it
+        Binance does NOT support atomic SL updates for STOP_MARKET orders
+        """
+        result = {
+            'success': False,
+            'error': None,
+            'cancel_time_ms': 0,
+            'create_time_ms': 0,
+            'unprotected_window_ms': 0
+        }
+
+        try:
+            # Find existing SL order
+            orders = await self.rate_limiter.execute_request(
+                self.exchange.fetch_open_orders, symbol
+            )
+
+            sl_order = None
+            expected_side = 'sell' if position_side == 'long' else 'buy'
+
+            for order in orders:
+                order_type = order.get('type', '').upper()
+                order_side = order.get('side', '').lower()
+                reduce_only = order.get('reduceOnly', False)
+
+                if (order_type == 'STOP_MARKET' and
+                    order_side == expected_side and
+                    reduce_only):
+                    sl_order = order
+                    break
+
+            unprotected_start = datetime.now()
+
+            # Step 1: Cancel old SL (if exists)
+            if sl_order:
+                cancel_start = datetime.now()
+
+                await self.rate_limiter.execute_request(
+                    self.exchange.cancel_order,
+                    sl_order['id'], symbol
+                )
+
+                result['cancel_time_ms'] = (datetime.now() - cancel_start).total_seconds() * 1000
+                logger.info(f"🗑️  Cancelled old SL in {result['cancel_time_ms']:.2f}ms")
+
+            # Step 2: Create new SL IMMEDIATELY (NO SLEEP!)
+            create_start = datetime.now()
+
+            # Get position size
+            positions = await self.fetch_positions([symbol])
+            amount = 0
+            for pos in positions:
+                if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                    amount = pos['contracts']
+                    break
+
+            if amount == 0:
+                raise ValueError(f"No open position found for {symbol}")
+
+            close_side = 'SELL' if position_side == 'long' else 'BUY'
+
+            new_order = await self.rate_limiter.execute_request(
+                self.exchange.create_order,
+                symbol=symbol,
+                type='STOP_MARKET',
+                side=close_side,
+                amount=amount,
+                price=None,
+                params={
+                    'stopPrice': new_sl_price,
+                    'reduceOnly': True,
+                    'workingType': 'CONTRACT_PRICE'
+                }
+            )
+
+            result['create_time_ms'] = (datetime.now() - create_start).total_seconds() * 1000
+            result['unprotected_window_ms'] = (datetime.now() - unprotected_start).total_seconds() * 1000
+
+            result['success'] = True
+
+            logger.info(
+                f"✅ Binance SL updated: cancel={result['cancel_time_ms']:.2f}ms, "
+                f"create={result['create_time_ms']:.2f}ms, "
+                f"unprotected={result['unprotected_window_ms']:.2f}ms"
+            )
+
+            return result
+
+        except Exception as e:
+            result['error'] = str(e)
+            logger.error(f"❌ Binance optimized SL update failed: {e}", exc_info=True)
+            return result
+
     async def cancel_order(self, order_id: str, symbol: str) -> bool:
         """Cancel order"""
         try:

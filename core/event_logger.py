@@ -75,6 +75,8 @@ class EventType(Enum):
     TRAILING_STOP_REMOVED = "trailing_stop_removed"
     PROTECTION_SL_CANCELLED = "protection_sl_cancelled"
     PROTECTION_SL_CANCEL_FAILED = "protection_sl_cancel_failed"
+    TRAILING_STOP_SL_UPDATED = "trailing_stop_sl_updated"
+    TRAILING_STOP_SL_UPDATE_FAILED = "trailing_stop_sl_update_failed"
 
     # Synchronization events (Position Sync)
     SYNCHRONIZATION_STARTED = "synchronization_started"
