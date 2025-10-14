@@ -20,6 +20,9 @@ class Repository:
 
     async def initialize(self):
         """Create optimized connection pool with better settings"""
+        # DEBUG: Log connection params
+        logger.info(f"🔌 Creating connection pool: {self.db_config['host']}:{self.db_config['port']}/{self.db_config['database']} as {self.db_config['user']}")
+
         self.pool = await asyncpg.create_pool(
             host=self.db_config['host'],
             port=self.db_config['port'],
@@ -130,18 +133,17 @@ class Repository:
         """Create new trade record in monitoring.trades"""
         query = """
             INSERT INTO monitoring.trades (
-                signal_id, symbol, exchange, side, order_type,
+                symbol, exchange, side, order_type,
                 quantity, price, executed_qty, average_price,
                 order_id, client_order_id, status,
                 fee, fee_currency
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING id
         """
 
         async with self.pool.acquire() as conn:
             trade_id = await conn.fetchval(
                 query,
-                trade_data.get('signal_id'),
                 trade_data['symbol'],
                 trade_data['exchange'],
                 trade_data['side'],
@@ -165,7 +167,7 @@ class Repository:
         """Get positions by status list - for recovery mechanism"""
         async with self.pool.acquire() as conn:
             query = """
-                SELECT id, signal_id, symbol, exchange, side, quantity,
+                SELECT id, symbol, exchange, side, quantity,
                        entry_price, status, has_stop_loss, stop_loss_price
                 FROM monitoring.positions
                 WHERE status = ANY($1)
@@ -203,13 +205,13 @@ class Repository:
         import logging
         logger = logging.getLogger(__name__)
 
-        logger.info(f"🔍 REPO DEBUG: create_position() called for {position_data['symbol']}, signal_id={position_data.get('signal_id')}")
+        logger.info(f"🔍 REPO DEBUG: create_position() called for {position_data['symbol']}")
 
         query = """
             INSERT INTO monitoring.positions (
-                signal_id, symbol, exchange, side, quantity,
-                entry_price, exchange_order_id, status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+                symbol, exchange, side, quantity,
+                entry_price, status
+            ) VALUES ($1, $2, $3, $4, $5, 'active')
             RETURNING id
         """
 
@@ -219,13 +221,11 @@ class Repository:
 
             position_id = await conn.fetchval(
                 query,
-                position_data.get('signal_id'),
                 position_data['symbol'],
                 position_data['exchange'],
                 position_data['side'],
                 position_data['quantity'],
-                position_data['entry_price'],
-                position_data.get('exchange_order_id')  # ✅ Save exchange_order_id
+                position_data['entry_price']
             )
 
             logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {position_data['symbol']}")
