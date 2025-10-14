@@ -1144,6 +1144,24 @@ class PositionManager:
                 )
                 position.has_trailing_stop = True
 
+                # Log trailing stop creation
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.TRAILING_STOP_CREATED,
+                        {
+                            'symbol': symbol,
+                            'position_id': position.id,
+                            'entry_price': float(position.entry_price),
+                            'initial_stop': float(stop_loss_price),
+                            'side': position.side
+                        },
+                        position_id=position.id,
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='INFO'
+                    )
+
                 # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
                 # Position was already saved in steps 8-9, now update TS flag
                 try:
@@ -1523,6 +1541,25 @@ class PositionManager:
                     if action == 'activated':
                         position.trailing_activated = True
                         logger.info(f"Trailing stop activated for {symbol}")
+
+                        # Log trailing stop activation
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.TRAILING_STOP_ACTIVATED,
+                                {
+                                    'symbol': symbol,
+                                    'position_id': position.id,
+                                    'current_price': float(position.current_price),
+                                    'entry_price': float(position.entry_price),
+                                    'stop_loss_price': float(position.stop_loss_price) if position.stop_loss_price else None
+                                },
+                                position_id=position.id,
+                                symbol=symbol,
+                                exchange=position.exchange,
+                                severity='INFO'
+                            )
+
                         # Save trailing activation to database
                         try:
                             await self.repository.update_position(position.id, trailing_activated=True)
@@ -1550,7 +1587,27 @@ class PositionManager:
                         # CRITICAL FIX: Save new trailing stop price to database
                         new_stop = update_result.get('new_stop')
                         if new_stop:
+                            old_stop = position.stop_loss_price
                             position.stop_loss_price = new_stop
+
+                            # Log trailing stop update
+                            event_logger = get_event_logger()
+                            if event_logger:
+                                await event_logger.log_event(
+                                    EventType.TRAILING_STOP_UPDATED,
+                                    {
+                                        'symbol': symbol,
+                                        'position_id': position.id,
+                                        'old_stop_price': float(old_stop) if old_stop else None,
+                                        'new_stop_price': float(new_stop),
+                                        'current_price': float(position.current_price)
+                                    },
+                                    position_id=position.id,
+                                    symbol=symbol,
+                                    exchange=position.exchange,
+                                    severity='INFO'
+                                )
+
                             try:
                                 await self.repository.update_position(
                                     position.id,
@@ -1744,6 +1801,24 @@ class PositionManager:
                 trailing_manager = self.trailing_managers.get(position.exchange)
                 if trailing_manager:
                     await trailing_manager.on_position_closed(symbol, realized_pnl)
+
+                    # Log trailing stop removal
+                    if position.has_trailing_stop:
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.TRAILING_STOP_REMOVED,
+                                {
+                                    'symbol': symbol,
+                                    'position_id': position.id,
+                                    'reason': 'position_closed',
+                                    'realized_pnl': float(realized_pnl)
+                                },
+                                position_id=position.id,
+                                symbol=symbol,
+                                exchange=position.exchange,
+                                severity='INFO'
+                            )
 
                 logger.info(
                     f"Position closed: {symbol} {reason} "
