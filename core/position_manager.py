@@ -205,6 +205,17 @@ class PositionManager:
 
             logger.info("🔄 Synchronizing positions with exchanges...")
 
+            # Log sync started
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.SYNC_STARTED,
+                    {
+                        'exchanges': list(self.exchanges.keys())
+                    },
+                    severity='INFO'
+                )
+
             synchronizer = PositionSynchronizer(
                 repository=self.repository,
                 exchanges=self.exchanges
@@ -225,6 +236,22 @@ class PositionManager:
                             f"➕ {exchange_name}: Added {len(result['added_missing'])} missing positions: "
                             f"{result['added_missing']}"
                         )
+
+            # Log sync completed
+            event_logger = get_event_logger()
+            if event_logger:
+                total_phantom = sum(len(r.get('closed_phantom', [])) for r in results.values() if 'error' not in r)
+                total_missing = sum(len(r.get('added_missing', [])) for r in results.values() if 'error' not in r)
+                await event_logger.log_event(
+                    EventType.SYNC_COMPLETED,
+                    {
+                        'exchanges': list(results.keys()),
+                        'phantom_closed': total_phantom,
+                        'missing_added': total_missing,
+                        'results': results
+                    },
+                    severity='INFO'
+                )
 
             return results
 
@@ -259,6 +286,22 @@ class PositionManager:
                         return True
 
             logger.warning(f"Position {symbol} not found on {exchange}")
+
+            # Log position not found on exchange
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.POSITION_NOT_FOUND_ON_EXCHANGE,
+                    {
+                        'symbol': symbol,
+                        'exchange': exchange,
+                        'normalized_symbol': normalized_symbol
+                    },
+                    symbol=symbol,
+                    exchange=exchange,
+                    severity='WARNING'
+                )
+
             return False
 
         except Exception as e:
@@ -1545,6 +1588,27 @@ class PositionManager:
                 'unrealized_pnl': position.unrealized_pnl,
                 'unrealized_pnl_percent': position.unrealized_pnl_percent
             })
+
+            # Log successful position update
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.POSITION_UPDATED,
+                    {
+                        'symbol': symbol,
+                        'position_id': position.id,
+                        'old_price': float(old_price),
+                        'new_price': float(position.current_price),
+                        'unrealized_pnl': float(position.unrealized_pnl),
+                        'unrealized_pnl_percent': float(position.unrealized_pnl_percent),
+                        'source': 'websocket'
+                    },
+                    position_id=position.id,
+                    symbol=symbol,
+                    exchange=position.exchange,
+                    severity='INFO'
+                )
+
         except Exception as db_error:
             logger.error(f"Failed to update position from websocket in database for {symbol}: {db_error}")
 
@@ -1571,6 +1635,24 @@ class PositionManager:
 
         order_type = data.get('type', '').lower()
         symbol = data.get('symbol')
+
+        # Log order filled event
+        event_logger = get_event_logger()
+        if event_logger and symbol in self.positions:
+            position = self.positions[symbol]
+            await event_logger.log_event(
+                EventType.ORDER_FILLED,
+                {
+                    'symbol': symbol,
+                    'position_id': position.id,
+                    'order_type': order_type,
+                    'order_data': data
+                },
+                position_id=position.id,
+                symbol=symbol,
+                exchange=position.exchange,
+                severity='INFO'
+            )
 
         # Check if it's a closing order
         if order_type in ['stop_market', 'stop', 'take_profit_market']:
