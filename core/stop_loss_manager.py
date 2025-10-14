@@ -715,6 +715,16 @@ class StopLossManager:
         - Wrong price (different entry price)
         - Wrong direction (opposite position type)
 
+        For LONG:
+            - SL should be BELOW entry (sell at lower price)
+            - existing_sl >= target_sl = BAD (too close to entry)
+            - existing_sl < target_sl = GOOD (further from entry)
+
+        For SHORT:
+            - SL should be ABOVE entry (buy at higher price)
+            - existing_sl <= target_sl = BAD (too close to entry)
+            - existing_sl > target_sl = GOOD (further from entry)
+
         Args:
             existing_sl_price: Price of existing SL on exchange
             target_sl_price: Desired SL price for new position
@@ -723,23 +733,58 @@ class StopLossManager:
 
         Returns:
             tuple: (is_valid: bool, reason: str)
-
-        Validation rules:
-        1. Price difference must be within tolerance
-        2. Price ratio should be reasonable (0.5x - 2.0x)
         """
-        # Rule 1: Check price difference
-        price_diff_percent = abs(existing_sl_price - target_sl_price) / target_sl_price * 100
+        # Calculate difference percentage
+        diff_pct = abs(existing_sl_price - target_sl_price) / target_sl_price * 100
 
-        if price_diff_percent > tolerance_percent:
-            return False, f"Price differs by {price_diff_percent:.2f}% (> {tolerance_percent}%)"
+        # Determine position side from order side
+        # side='sell' means closing LONG position
+        # side='buy' means closing SHORT position
+        position_is_long = (side.lower() == 'sell')
 
-        # Rule 2: Check price ratio (prevents reusing SL from vastly different price range)
-        ratio = existing_sl_price / target_sl_price
-        if ratio < 0.5 or ratio > 2.0:
-            return False, f"Price ratio {ratio:.2f} outside reasonable range (0.5-2.0)"
+        if position_is_long:
+            # LONG position: SL should be BELOW entry (lower price)
+            # Lower SL = better protection (further from entry)
+            # Higher SL = worse protection (closer to entry)
 
-        return True, "SL is valid and can be reused"
+            if existing_sl_price <= target_sl_price:
+                # Existing SL is equal or better (lower = more conservative)
+                if diff_pct <= tolerance_percent:
+                    return True, f"Existing SL acceptable (within {tolerance_percent}%)"
+                else:
+                    # Too far below - likely from old position at lower entry price
+                    return False, (
+                        f"Existing SL is from old position (too low): {existing_sl_price} vs "
+                        f"target {target_sl_price} (diff: {diff_pct:.2f}%)"
+                    )
+            else:
+                # Existing SL is higher than target = worse protection (closer to entry)
+                return False, (
+                    f"Existing SL too close to entry: {existing_sl_price} vs "
+                    f"target {target_sl_price} ({diff_pct:.2f}% difference)"
+                )
+
+        else:
+            # SHORT position: SL should be ABOVE entry (higher price)
+            # Higher SL = better protection (further from entry)
+            # Lower SL = worse protection (closer to entry)
+
+            if existing_sl_price >= target_sl_price:
+                # Existing SL is equal or better (higher = more conservative)
+                if diff_pct <= tolerance_percent:
+                    return True, f"Existing SL acceptable (within {tolerance_percent}%)"
+                else:
+                    # Too far above - likely from old position at higher entry price
+                    return False, (
+                        f"Existing SL is from old position (too high): {existing_sl_price} vs "
+                        f"target {target_sl_price} (diff: {diff_pct:.2f}%)"
+                    )
+            else:
+                # Existing SL is lower than target = worse protection (closer to entry)
+                return False, (
+                    f"Existing SL too close to entry: {existing_sl_price} vs "
+                    f"target {target_sl_price} ({diff_pct:.2f}% difference)"
+                )
 
     async def _cancel_existing_sl(self, symbol: str, sl_price: float):
         """
