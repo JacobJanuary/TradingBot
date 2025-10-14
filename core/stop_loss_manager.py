@@ -16,6 +16,7 @@ import logging
 from typing import Optional, Dict, Tuple, List
 from decimal import Decimal
 import ccxt
+from core.event_logger import get_event_logger, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,24 @@ class StopLossManager:
             if ret_code == 0:
                 # Успех
                 self.logger.info(f"✅ Stop Loss set successfully at {sl_price_formatted}")
+
+                # Log SL placement
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.STOP_LOSS_PLACED,
+                        {
+                            'symbol': symbol,
+                            'exchange': self.exchange_name,
+                            'stop_price': float(sl_price_formatted),
+                            'method': 'position_attached',
+                            'trigger_by': 'LastPrice'
+                        },
+                        symbol=symbol,
+                        exchange=self.exchange_name,
+                        severity='INFO'
+                    )
+
                 return {
                     'status': 'created',
                     'stopPrice': float(sl_price_formatted),
@@ -365,10 +384,46 @@ class StopLossManager:
                 }
             else:
                 # Ошибка
-                raise Exception(f"Bybit API error {ret_code}: {ret_msg}")
+                error_message = f"Bybit API error {ret_code}: {ret_msg}"
+
+                # Log SL error
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.STOP_LOSS_ERROR,
+                        {
+                            'symbol': symbol,
+                            'exchange': self.exchange_name,
+                            'stop_price': float(sl_price_formatted),
+                            'error': error_message,
+                            'ret_code': ret_code
+                        },
+                        symbol=symbol,
+                        exchange=self.exchange_name,
+                        severity='ERROR'
+                    )
+
+                raise Exception(error_message)
 
         except Exception as e:
             self.logger.error(f"Failed to set Bybit Stop Loss: {e}")
+
+            # Log SL error (if not already logged)
+            if 'Bybit API error' not in str(e):
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.STOP_LOSS_ERROR,
+                        {
+                            'symbol': symbol,
+                            'exchange': self.exchange_name,
+                            'error': str(e)
+                        },
+                        symbol=symbol,
+                        exchange=self.exchange_name,
+                        severity='ERROR'
+                    )
+
             raise
 
     async def _set_generic_stop_loss(
@@ -459,6 +514,24 @@ class StopLossManager:
 
                 self.logger.info(f"✅ Stop Loss order created: {order['id']}")
 
+                # Log SL placement
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.STOP_LOSS_PLACED,
+                        {
+                            'symbol': symbol,
+                            'exchange': self.exchange_name,
+                            'stop_price': float(final_stop_price),
+                            'order_id': order['id'],
+                            'method': 'stop_market',
+                            'side': side
+                        },
+                        symbol=symbol,
+                        exchange=self.exchange_name,
+                        severity='INFO'
+                    )
+
                 return {
                     'status': 'created',
                     'stopPrice': float(final_stop_price),
@@ -486,14 +559,68 @@ class StopLossManager:
                         self.logger.error(
                             f"❌ Failed to create SL after {max_retries} attempts: {e}"
                         )
+
+                        # Log SL error
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.STOP_LOSS_ERROR,
+                                {
+                                    'symbol': symbol,
+                                    'exchange': self.exchange_name,
+                                    'stop_price': stop_price,
+                                    'error': str(e),
+                                    'attempts': max_retries
+                                },
+                                symbol=symbol,
+                                exchange=self.exchange_name,
+                                severity='ERROR'
+                            )
+
                         raise
                 else:
                     # Other error - don't retry
                     self.logger.error(f"Failed to create stop order: {e}")
+
+                    # Log SL error
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.STOP_LOSS_ERROR,
+                            {
+                                'symbol': symbol,
+                                'exchange': self.exchange_name,
+                                'stop_price': stop_price,
+                                'error': str(e)
+                            },
+                            symbol=symbol,
+                            exchange=self.exchange_name,
+                            severity='ERROR'
+                        )
+
                     raise
 
         # Should not reach here
-        raise Exception(f"Failed to create SL after {max_retries} retries")
+        final_error = f"Failed to create SL after {max_retries} retries"
+
+        # Log SL error
+        event_logger = get_event_logger()
+        if event_logger:
+            await event_logger.log_event(
+                EventType.STOP_LOSS_ERROR,
+                {
+                    'symbol': symbol,
+                    'exchange': self.exchange_name,
+                    'stop_price': stop_price,
+                    'error': final_error,
+                    'attempts': max_retries
+                },
+                symbol=symbol,
+                exchange=self.exchange_name,
+                severity='ERROR'
+            )
+
+        raise Exception(final_error)
 
     def _is_stop_loss_order(self, order: Dict) -> bool:
         """
