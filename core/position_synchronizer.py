@@ -409,21 +409,31 @@ class PositionSynchronizer:
                     f"{symbol}_{info.get('positionIdx', 0)}"
                 )
 
-            # ✅ PHASE 3: VALIDATION - Reject if no exchange_order_id
+            # ✅ PHASE 3: VALIDATION - Generate synthetic ID if no exchange_order_id
             if not exchange_order_id:
+                import time
+                exchange_order_id = f"MANUAL_{exchange_name.upper()}_{symbol}_{int(time.time())}"
+
                 logger.warning(
-                    f"    ⚠️ REJECTED: {symbol} - No exchange_order_id found. "
-                    f"This may be stale CCXT data (info keys: {list(info.keys())})"
+                    f"    ⚠️  {symbol}: No exchange_order_id found. "
+                    f"Generated synthetic ID: {exchange_order_id}"
+                )
+                logger.warning(
+                    f"    This may be a manually opened position or API data issue."
+                )
+                logger.warning(
+                    f"    Position WILL BE ADDED to DB for safety (info keys: {list(info.keys())})"
                 )
 
-                # Log missing position rejection
+                # Log missing order_id but continue processing
                 event_logger = get_event_logger()
                 if event_logger:
                     await event_logger.log_event(
-                        EventType.MISSING_POSITION_REJECTED,
+                        EventType.MISSING_POSITION_ADDED_WITH_SYNTHETIC_ID,
                         {
                             'symbol': symbol,
                             'exchange': exchange_name,
+                            'synthetic_order_id': exchange_order_id,
                             'reason': 'no_exchange_order_id',
                             'contracts': abs(contracts),
                             'info_keys': list(info.keys())
@@ -432,8 +442,6 @@ class PositionSynchronizer:
                         exchange=exchange_name,
                         severity='WARNING'
                     )
-
-                return False
 
             # Determine side
             side = exchange_position.get('side', '').lower()

@@ -428,7 +428,7 @@ class PositionManager:
                     try:
                         exchange = self.exchanges.get(position.exchange)
                         if exchange:
-                            # Get current market price
+                            # Get initial market price
                             ticker = await exchange.fetch_ticker(position.symbol)
                             current_price = ticker.get('last') if ticker else position.current_price
 
@@ -439,24 +439,34 @@ class PositionManager:
                             )
 
                             logger.info(f"Setting stop loss for {position.symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
-                            logger.info(f"  Current price: ${current_price:.4f}")
+                            logger.info(f"  Initial price: ${current_price:.4f}")
+
+                            # Re-check price immediately before setting SL to avoid race condition
+                            ticker_latest = await exchange.fetch_ticker(position.symbol)
+                            current_price_latest = ticker_latest.get('last') if ticker_latest else current_price
+
+                            # Log if price changed significantly during calculation
+                            price_change_pct = abs((current_price_latest - current_price) / current_price * 100)
+                            if price_change_pct > 0.1:
+                                logger.info(f"  ⚠️  Price changed by {price_change_pct:.2f}% during calculation")
+                                logger.info(f"  Latest price: ${current_price_latest:.4f}")
 
                             # Check if stop would trigger immediately for short positions
-                            if position.side == 'short' and current_price >= stop_loss_price:
+                            if position.side == 'short' and current_price_latest >= stop_loss_price:
                                 logger.warning(f"⚠️ Stop loss would trigger immediately for {position.symbol}")
-                                logger.warning(f"  Current: ${current_price:.4f} >= Stop: ${stop_loss_price:.4f}")
+                                logger.warning(f"  Current: ${current_price_latest:.4f} >= Stop: ${stop_loss_price:.4f}")
                                 # Adjust stop loss to be slightly above current price
-                                stop_loss_price = current_price * 1.005  # 0.5% above current
+                                stop_loss_price = current_price_latest * 1.005  # 0.5% above current
                                 logger.info(f"  Adjusted stop to: ${stop_loss_price:.4f}")
                             # Check for long positions
-                            elif position.side == 'long' and current_price <= stop_loss_price:
+                            elif position.side == 'long' and current_price_latest <= stop_loss_price:
                                 logger.warning(f"⚠️ Stop loss would trigger immediately for {position.symbol}")
-                                logger.warning(f"  Current: ${current_price:.4f} <= Stop: ${stop_loss_price:.4f}")
+                                logger.warning(f"  Current: ${current_price_latest:.4f} <= Stop: ${stop_loss_price:.4f}")
                                 # Adjust stop loss to be slightly below current price
-                                stop_loss_price = current_price * 0.995  # 0.5% below current
+                                stop_loss_price = current_price_latest * 0.995  # 0.5% below current
                                 logger.info(f"  Adjusted stop to: ${stop_loss_price:.4f}")
 
-                            # Set stop loss on exchange
+                            # Set stop loss on exchange immediately after validation
                             if await self._set_stop_loss(exchange, position, stop_loss_price):
                                 position.has_stop_loss = True
                                 position.stop_loss_price = stop_loss_price

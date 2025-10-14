@@ -85,6 +85,7 @@ class EventType(Enum):
     PHANTOM_POSITION_DETECTED = "phantom_position_detected"
     MISSING_POSITION_ADDED = "missing_position_added"
     MISSING_POSITION_REJECTED = "missing_position_rejected"
+    MISSING_POSITION_ADDED_WITH_SYNTHETIC_ID = "missing_position_added_with_synthetic_id"
     QUANTITY_MISMATCH_DETECTED = "quantity_mismatch_detected"
     QUANTITY_UPDATED = "quantity_updated"
     POSITION_VERIFIED = "position_verified"
