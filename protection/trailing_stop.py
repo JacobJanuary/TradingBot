@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 import asyncio
 from decimal import Decimal
+from core.event_logger import get_event_logger, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,25 @@ class SmartTrailingStopManager:
                 f"initial_stop={initial_stop}"
             )
 
+            # Log trailing stop creation
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.TRAILING_STOP_CREATED,
+                    {
+                        'symbol': symbol,
+                        'side': side,
+                        'entry_price': float(entry_price),
+                        'activation_price': float(ts.activation_price),
+                        'initial_stop': float(initial_stop) if initial_stop else None,
+                        'activation_percent': float(self.config.activation_percent),
+                        'callback_percent': float(self.config.callback_percent)
+                    },
+                    symbol=symbol,
+                    exchange=self.exchange_name,
+                    severity='INFO'
+                )
+
             return ts
 
     async def update_price(self, symbol: str, price: float) -> Optional[Dict]:
@@ -286,6 +306,25 @@ class SmartTrailingStopManager:
             f"stop at {ts.current_stop_price:.4f}"
         )
 
+        # Log trailing stop activation
+        event_logger = get_event_logger()
+        if event_logger:
+            await event_logger.log_event(
+                EventType.TRAILING_STOP_ACTIVATED,
+                {
+                    'symbol': ts.symbol,
+                    'activation_price': float(ts.current_price),
+                    'stop_price': float(ts.current_stop_price),
+                    'distance_percent': float(distance),
+                    'side': ts.side,
+                    'entry_price': float(ts.entry_price),
+                    'profit_percent': float(self._calculate_profit_percent(ts))
+                },
+                symbol=ts.symbol,
+                exchange=self.exchange_name,
+                severity='INFO'
+            )
+
         # NEW: Mark SL ownership (logging only for now)
         # Note: sl_managed_by field already exists in PositionState
         # PositionManager will see trailing_activated=True and skip protection
@@ -333,6 +372,26 @@ class SmartTrailingStopManager:
                 f"📈 {ts.symbol}: Trailing stop updated from {old_stop:.4f} to {new_stop_price:.4f} "
                 f"(+{improvement:.2f}%)"
             )
+
+            # Log trailing stop update
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.TRAILING_STOP_UPDATED,
+                    {
+                        'symbol': ts.symbol,
+                        'old_stop': float(old_stop),
+                        'new_stop': float(new_stop_price),
+                        'improvement_percent': float(improvement),
+                        'current_price': float(ts.current_price),
+                        'highest_price': float(ts.highest_price) if ts.side == 'long' else None,
+                        'lowest_price': float(ts.lowest_price) if ts.side == 'short' else None,
+                        'update_count': ts.update_count
+                    },
+                    symbol=ts.symbol,
+                    exchange=self.exchange_name,
+                    severity='INFO'
+                )
 
             return {
                 'action': 'updated',
@@ -527,6 +586,25 @@ class SmartTrailingStopManager:
 
                     if profit_percent > self.stats['best_profit']:
                         self.stats['best_profit'] = profit_percent
+
+            # Log trailing stop removal
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.TRAILING_STOP_REMOVED,
+                    {
+                        'symbol': symbol,
+                        'reason': 'position_closed',
+                        'state': ts.state.value,
+                        'was_active': ts.state == TrailingStopState.ACTIVE,
+                        'realized_pnl': float(realized_pnl) if realized_pnl else None,
+                        'update_count': ts.update_count,
+                        'final_stop_price': float(ts.current_stop_price) if ts.current_stop_price else None
+                    },
+                    symbol=symbol,
+                    exchange=self.exchange_name,
+                    severity='INFO'
+                )
 
             # Remove from active stops
             del self.trailing_stops[symbol]
