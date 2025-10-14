@@ -348,18 +348,15 @@ class PositionSynchronizer:
             symbol = db_position['symbol']
             exchange = db_position.get('exchange', 'unknown')
 
-            # Update position status to closed
-            # Since position doesn't exist on exchange, just mark it as closed
-            # Use 'closed' (lowercase) to match the check constraint
-            query = """
-                UPDATE monitoring.positions
-                SET status = 'closed',
-                    updated_at = NOW()
-                WHERE id = $1
-            """
-
-            async with self.repository.pool.acquire() as conn:
-                await conn.execute(query, position_id)
+            # Close phantom position properly using repository method
+            # This ensures all fields (closed_at, exit_reason, pnl) are set correctly
+            await self.repository.close_position(
+                position_id=position_id,
+                close_price=db_position.get('current_price', 0),
+                pnl=0,
+                pnl_percentage=0,
+                reason='PHANTOM_ON_SYNC'
+            )
 
             logger.info(f"    Closed phantom position: {symbol} (ID: {position_id})")
 
