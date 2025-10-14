@@ -1957,6 +1957,26 @@ class PositionManager:
 
                             logger.warning(f"Untracked position: {symbol} {side} {size} @ {entry_price}")
 
+                            # Log untracked position requiring manual review
+                            event_logger = get_event_logger()
+                            if event_logger:
+                                await event_logger.log_event(
+                                    EventType.WARNING_RAISED,
+                                    {
+                                        'type': 'untracked_position_detected',
+                                        'symbol': symbol,
+                                        'exchange': exchange_name,
+                                        'side': side,
+                                        'size': size,
+                                        'entry_price': entry_price,
+                                        'message': f"Untracked position found on exchange: {symbol} {side} {size} @ {entry_price}",
+                                        'requires_manual_review': True
+                                    },
+                                    symbol=symbol,
+                                    exchange=exchange_name,
+                                    severity='CRITICAL'
+                                )
+
                             # Options for handling untracked positions:
                             # Option 1: Import into system (safer for positions we might have created)
                             # Option 2: Close immediately (safer for unknown positions)
