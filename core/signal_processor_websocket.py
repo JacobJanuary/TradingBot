@@ -14,6 +14,7 @@ from websocket.signal_adapter import SignalAdapter
 from core.wave_signal_processor import WaveSignalProcessor
 from core.symbol_filter import SymbolFilter
 from models.validation import validate_signal, OrderSide
+from core.event_logger import get_event_logger, EventType
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +221,20 @@ class WebSocketSignalProcessor:
                     # 4. Обрабатываем волну
                     logger.info(f"🌊 Wave detected! Processing {len(wave_signals)} signals for {expected_wave_timestamp}")
 
+                    # Log wave detection
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.WAVE_DETECTED,
+                            {
+                                'wave_timestamp': expected_wave_timestamp,
+                                'signal_count': len(wave_signals),
+                                'signal_ids': [s.get('id') for s in wave_signals],
+                                'detection_time': datetime.now(timezone.utc).isoformat()
+                            },
+                            severity='INFO'
+                        )
+
                     # Update wave metadata
                     self.processed_waves[expected_wave_timestamp].update({
                         'status': 'executing',
@@ -326,6 +341,23 @@ class WebSocketSignalProcessor:
                         f"{len(result.get('failed', []))} validation errors, "
                         f"{len(result.get('skipped', []))} duplicates"
                     )
+
+                    # Log wave completion
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.WAVE_COMPLETED,
+                            {
+                                'wave_timestamp': expected_wave_timestamp,
+                                'total_signals': len(wave_signals),
+                                'positions_opened': executed_count,
+                                'failed': failed_count,
+                                'validation_errors': len(result.get('failed', [])),
+                                'duplicates': len(result.get('skipped', [])),
+                                'completion_time': datetime.now(timezone.utc).isoformat()
+                            },
+                            severity='INFO'
+                        )
 
                     # Mark wave as completed
                     self.processed_waves[expected_wave_timestamp]['status'] = 'completed'
@@ -519,9 +551,37 @@ class WebSocketSignalProcessor:
                 validated_signal = validate_signal(signal)
                 if not validated_signal:
                     logger.warning(f"Signal #{signal_id} failed validation")
+
+                    # Log validation failure
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.SIGNAL_VALIDATION_FAILED,
+                            {
+                                'signal_id': signal_id,
+                                'reason': 'validation_returned_none',
+                                'signal_data': signal
+                            },
+                            severity='WARNING'
+                        )
+
                     return False
             except Exception as e:
                 logger.error(f"Error validating signal #{signal_id}: {e}")
+
+                # Log validation error
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.SIGNAL_VALIDATION_FAILED,
+                        {
+                            'signal_id': signal_id,
+                            'reason': 'validation_exception',
+                            'error': str(e)
+                        },
+                        severity='ERROR'
+                    )
+
                 return False
             
             symbol = validated_signal.symbol
@@ -533,6 +593,23 @@ class WebSocketSignalProcessor:
                 logger.info(
                     f"⏸️ Signal #{signal_id} skipped: {symbol} is blocked ({reason})"
                 )
+
+                # Log signal filtered
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.SIGNAL_FILTERED,
+                        {
+                            'signal_id': signal_id,
+                            'symbol': symbol,
+                            'exchange': exchange,
+                            'filter_reason': reason
+                        },
+                        symbol=symbol,
+                        exchange=exchange,
+                        severity='INFO'
+                    )
+
                 return False
             
             logger.info(
@@ -582,9 +659,49 @@ class WebSocketSignalProcessor:
 
             if position:
                 logger.info(f"✅ Signal #{signal_id} ({symbol}) executed successfully")
+
+                # Log signal execution success
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.SIGNAL_EXECUTED,
+                        {
+                            'signal_id': signal_id,
+                            'symbol': symbol,
+                            'exchange': exchange,
+                            'side': side,
+                            'entry_price': float(current_price),
+                            'position_id': position.id if hasattr(position, 'id') else None,
+                            'score_week': validated_signal.score_week,
+                            'score_month': validated_signal.score_month
+                        },
+                        symbol=symbol,
+                        exchange=exchange,
+                        severity='INFO'
+                    )
+
                 return True
             else:
                 logger.warning(f"❌ Signal #{signal_id} ({symbol}) - position_manager returned None")
+
+                # Log signal execution failure
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.SIGNAL_EXECUTION_FAILED,
+                        {
+                            'signal_id': signal_id,
+                            'symbol': symbol,
+                            'exchange': exchange,
+                            'side': side,
+                            'reason': 'position_manager_returned_none',
+                            'entry_price': float(current_price)
+                        },
+                        symbol=symbol,
+                        exchange=exchange,
+                        severity='WARNING'
+                    )
+
                 return False
 
         except Exception as e:
