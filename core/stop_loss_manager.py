@@ -40,12 +40,14 @@ class StopLossManager:
         self.exchange_name = exchange_name.lower()
         self.logger = logger
 
-    async def has_stop_loss(self, symbol: str) -> Tuple[bool, Optional[str]]:
+    async def has_stop_loss(self, symbol: str, position_side: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
         ЕДИНСТВЕННАЯ функция проверки наличия Stop Loss.
 
         Args:
             symbol: CCXT unified symbol (e.g., 'BTC/USDT:USDT')
+            position_side: Optional position side ('long' or 'short') for validation
+                          If None, accepts any side (backward compatibility)
 
         Returns:
             Tuple[bool, Optional[str]]: (has_sl, sl_price)
@@ -121,6 +123,18 @@ class StopLossManager:
                 # Проверить есть ли stop loss orders
                 for order in orders:
                     if self._is_stop_loss_order(order):
+                        # NEW: Validate order side matches position side
+                        if position_side:
+                            order_side = order.get('side', '').lower()
+                            expected_side = 'sell' if position_side == 'long' else 'buy'
+
+                            if order_side != expected_side:
+                                self.logger.debug(
+                                    f"Skip SL order {order.get('id')}: wrong side "
+                                    f"({order_side} for {position_side} position)"
+                                )
+                                continue  # Skip this order - wrong side
+
                         sl_price = self._extract_stop_price(order)
                         self.logger.info(
                             f"✅ Position {symbol} has Stop Loss order: {order.get('id')} "
