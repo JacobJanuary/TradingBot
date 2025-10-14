@@ -1582,7 +1582,28 @@ class PositionManager:
 
         symbol = data.get('symbol')
         if symbol in self.positions:
+            position = self.positions[symbol]
             logger.warning(f"⚠️ Stop loss triggered for {symbol}")
+
+            # Log stop loss triggered event
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.STOP_LOSS_TRIGGERED,
+                    {
+                        'symbol': symbol,
+                        'position_id': position.id,
+                        'entry_price': float(position.entry_price),
+                        'current_price': float(position.current_price),
+                        'stop_loss_price': float(position.stop_loss_price) if position.stop_loss_price else None,
+                        'side': position.side
+                    },
+                    position_id=position.id,
+                    symbol=symbol,
+                    exchange=position.exchange,
+                    severity='WARNING'
+                )
+
             await self.close_position(symbol, 'stop_loss')
 
     async def close_position(self, symbol: str, reason: str = 'manual'):
@@ -1709,6 +1730,24 @@ class PositionManager:
         except Exception as e:
             logger.error(f"Error closing position {symbol}: {e}", exc_info=True)
 
+            # Log exchange error for position close
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.EXCHANGE_ERROR,
+                    {
+                        'symbol': symbol,
+                        'position_id': position.id if symbol in self.positions else None,
+                        'operation': 'close_position',
+                        'error': str(e),
+                        'reason': reason
+                    },
+                    position_id=position.id if symbol in self.positions else None,
+                    symbol=symbol,
+                    exchange=position.exchange,
+                    severity='ERROR'
+                )
+
     async def _cancel_pending_close_order(self, position: PositionState):
         """Cancel pending close order for position"""
         if not position.pending_close_order:
@@ -1725,6 +1764,24 @@ class PositionManager:
             position.pending_close_order = None
         except Exception as e:
             logger.error(f"Error cancelling order: {e}")
+
+            # Log exchange error for order cancellation
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.EXCHANGE_ERROR,
+                    {
+                        'symbol': position.symbol,
+                        'position_id': position.id,
+                        'operation': 'cancel_pending_close_order',
+                        'error': str(e),
+                        'order_id': order_id
+                    },
+                    position_id=position.id,
+                    symbol=position.symbol,
+                    exchange=position.exchange,
+                    severity='ERROR'
+                )
     
     async def _place_limit_close_order(self, symbol: str, position: PositionState,
                                        target_price: float, reason: str):
@@ -1831,6 +1888,26 @@ class PositionManager:
                 
         except Exception as e:
             logger.error(f"Error placing limit close order for {symbol}: {e}", exc_info=True)
+
+            # Log exchange error for limit order placement
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.EXCHANGE_ERROR,
+                    {
+                        'symbol': symbol,
+                        'position_id': position.id,
+                        'operation': 'place_limit_close_order',
+                        'error': str(e),
+                        'target_price': float(target_price),
+                        'reason': reason
+                    },
+                    position_id=position.id,
+                    symbol=symbol,
+                    exchange=position.exchange,
+                    severity='ERROR'
+                )
+
             # Fallback to market close if limit order fails
             logger.warning(f"Falling back to market close for {symbol}")
             await self.close_position(symbol, f"{reason}_fallback")
@@ -1858,6 +1935,26 @@ class PositionManager:
                         f"⏰ Position {symbol} exceeded max age: {position.age_hours:.1f} hours (max: {max_age_hours}h)"
                     )
 
+                    # Log aged position detected event
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.AGED_POSITION_DETECTED,
+                            {
+                                'symbol': symbol,
+                                'position_id': position.id,
+                                'age_hours': float(position.age_hours),
+                                'max_age_hours': float(max_age_hours),
+                                'entry_price': float(position.entry_price),
+                                'current_price': float(position.current_price),
+                                'side': position.side
+                            },
+                            position_id=position.id,
+                            symbol=symbol,
+                            exchange=position.exchange,
+                            severity='WARNING'
+                        )
+
                     # CRITICAL FIX: Fetch real-time price before making decision
                     exchange = self.exchanges.get(position.exchange)
                     if not exchange:
@@ -1884,6 +1981,24 @@ class PositionManager:
                     except Exception as e:
                         logger.error(f"Failed to fetch current price for {symbol}: {e}")
                         logger.warning(f"Using cached price ${position.current_price:.2f} (may be outdated)")
+
+                        # Log exchange error for price fetch
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.EXCHANGE_ERROR,
+                                {
+                                    'symbol': symbol,
+                                    'position_id': position.id,
+                                    'operation': 'fetch_ticker',
+                                    'error': str(e),
+                                    'cached_price': float(position.current_price)
+                                },
+                                position_id=position.id,
+                                symbol=symbol,
+                                exchange=position.exchange,
+                                severity='ERROR'
+                            )
 
                     # Рассчитываем цену безубытка с учетом комиссий
                     if position.side == 'long':
