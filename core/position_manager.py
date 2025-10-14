@@ -419,12 +419,45 @@ class PositionManager:
                                 position.stop_loss_price = stop_loss_price
                                 logger.info(f"✅ Stop loss set for {position.symbol}")
 
+                                # Log stop loss set on load
+                                event_logger = get_event_logger()
+                                if event_logger:
+                                    await event_logger.log_event(
+                                        EventType.STOP_LOSS_SET_ON_LOAD,
+                                        {
+                                            'symbol': position.symbol,
+                                            'position_id': position.id,
+                                            'stop_loss_price': float(stop_loss_price),
+                                            'entry_price': float(position.entry_price)
+                                        },
+                                        position_id=position.id,
+                                        symbol=position.symbol,
+                                        exchange=position.exchange,
+                                        severity='INFO'
+                                    )
+
                                 # Update database
                                 await self.repository.update_position_stop_loss(
                                     position.id, stop_loss_price, ""
                                 )
                             else:
                                 logger.error(f"❌ Failed to set stop loss for {position.symbol}")
+
+                                # Log stop loss set failed
+                                event_logger = get_event_logger()
+                                if event_logger:
+                                    await event_logger.log_event(
+                                        EventType.STOP_LOSS_SET_FAILED,
+                                        {
+                                            'symbol': position.symbol,
+                                            'position_id': position.id,
+                                            'reason': 'set_stop_loss_returned_false'
+                                        },
+                                        position_id=position.id,
+                                        symbol=position.symbol,
+                                        exchange=position.exchange,
+                                        severity='ERROR'
+                                    )
                         else:
                             logger.error(f"Exchange {position.exchange} not found for {position.symbol}")
 
@@ -826,10 +859,44 @@ class PositionManager:
             except SymbolUnavailableError as e:
                 # Symbol is unavailable for trading (delisted, reduce-only, etc.)
                 logger.warning(f"⚠️ Symbol {symbol} unavailable for trading: {e}")
+
+                # Log symbol unavailable event
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.SYMBOL_UNAVAILABLE,
+                        {
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'reason': str(e),
+                            'signal_id': request.signal_id if hasattr(request, 'signal_id') else None
+                        },
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='WARNING'
+                    )
+
                 return None
             except MinimumOrderLimitError as e:
                 # Order size doesn't meet minimum requirements
                 logger.warning(f"⚠️ Order size for {symbol} below minimum limit: {e}")
+
+                # Log order below minimum event
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.ORDER_BELOW_MINIMUM,
+                        {
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'reason': str(e),
+                            'signal_id': request.signal_id if hasattr(request, 'signal_id') else None
+                        },
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='WARNING'
+                    )
+
                 return None
             except ImportError:
                 # Fallback to non-atomic creation (old logic)
@@ -1424,6 +1491,23 @@ class PositionManager:
                         if is_stop:
                             logger.info(f"🧹 Cleaning up SL order {order['id']} for closed position {symbol}")
                             await exchange.exchange.cancel_order(order['id'], symbol)
+
+                            # Log orphaned SL cleaned
+                            event_logger = get_event_logger()
+                            if event_logger:
+                                await event_logger.log_event(
+                                    EventType.ORPHANED_SL_CLEANED,
+                                    {
+                                        'symbol': symbol,
+                                        'order_id': order['id'],
+                                        'order_type': order.get('type'),
+                                        'reason': 'position_closed'
+                                    },
+                                    symbol=symbol,
+                                    order_id=order['id'],
+                                    exchange=position.exchange,
+                                    severity='INFO'
+                                )
 
                 except Exception as cleanup_error:
                     # Don't fail position close if SL cleanup fails
