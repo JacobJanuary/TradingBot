@@ -66,6 +66,10 @@ class TrailingStopInstance:
     current_stop_price: Optional[Decimal] = None
     last_stop_update: Optional[datetime] = None
 
+    # SL Update tracking (for rate limiting)
+    last_sl_update_time: Optional[datetime] = None  # Last SUCCESSFUL SL update on exchange
+    last_updated_sl_price: Optional[Decimal] = None  # Last SUCCESSFULLY updated SL price on exchange
+
     # Order tracking
     stop_order_id: Optional[str] = None
 
@@ -364,6 +368,41 @@ class SmartTrailingStopManager:
             ts.last_stop_update = datetime.now()
             ts.update_count += 1
 
+            # NEW: Check rate limiting and conditional update rules
+            should_update, skip_reason = self._should_update_stop_loss(ts, new_stop_price, old_stop)
+
+            if not should_update:
+                # Skip update - log reason
+                logger.debug(
+                    f"⏭️  {ts.symbol}: SL update SKIPPED - {skip_reason} "
+                    f"(new_stop={new_stop_price:.4f})"
+                )
+
+                # Log skip event (optional - для статистики)
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.TRAILING_STOP_UPDATED,  # Same event type but with skip_reason
+                        {
+                            'symbol': ts.symbol,
+                            'action': 'skipped',
+                            'skip_reason': skip_reason,
+                            'proposed_new_stop': float(new_stop_price),
+                            'current_stop': float(old_stop),
+                            'update_count': ts.update_count
+                        },
+                        symbol=ts.symbol,
+                        exchange=self.exchange_name,
+                        severity='DEBUG'
+                    )
+
+                # IMPORTANT: Revert changes since we're not updating
+                ts.current_stop_price = old_stop  # Restore old price
+                ts.last_stop_update = None  # Clear update timestamp
+                ts.update_count -= 1  # Revert counter
+
+                return None  # Return None to indicate no action taken
+
             # Update stop order on exchange
             await self._update_stop_order(ts)
 
@@ -546,19 +585,167 @@ class SmartTrailingStopManager:
             # Protection SL will remain → duplication (acceptable vs NO SL)
             return False
 
-    async def _update_stop_order(self, ts: TrailingStopInstance) -> bool:
-        """Update stop order on exchange"""
-        try:
-            # Cancel old order
-            if ts.stop_order_id:
-                await self.exchange.cancel_order(ts.stop_order_id, ts.symbol)
-                await asyncio.sleep(0.1)  # Small delay
+    def _should_update_stop_loss(self, ts: TrailingStopInstance,
+                                  new_stop_price: Decimal,
+                                  old_stop_price: Decimal) -> tuple[bool, Optional[str]]:
+        """
+        Check if SL should be updated based on rate limiting and conditional update rules
 
-            # Place new order
-            return await self._place_stop_order(ts)
+        Implements Freqtrade-inspired rate limiting with emergency override:
+        Rule 0: Emergency override - ALWAYS update if improvement >= 1.0% (bypass all limits)
+        Rule 1: Rate limiting - Min 60s interval between updates
+        Rule 2: Conditional update - Min 0.1% improvement
+
+        Args:
+            ts: TrailingStopInstance
+            new_stop_price: Proposed new SL price
+            old_stop_price: Current SL price
+
+        Returns:
+            (should_update: bool, skip_reason: Optional[str])
+            - (True, None) if update should proceed
+            - (False, "reason") if update should be skipped
+        """
+        from config.settings import config
+
+        # Calculate improvement first (needed for all rules)
+        improvement_percent = abs(
+            (new_stop_price - old_stop_price) / old_stop_price * 100
+        )
+
+        # Rule 0: EMERGENCY OVERRIDE - Always update if improvement is very large
+        # This prevents losing profit during fast price movements
+        EMERGENCY_THRESHOLD = 1.0  # 1.0% = 10x normal min_improvement
+
+        if improvement_percent >= EMERGENCY_THRESHOLD:
+            logger.info(
+                f"⚡ {ts.symbol}: Emergency SL update due to large movement "
+                f"({improvement_percent:.2f}% >= {EMERGENCY_THRESHOLD}%) - bypassing rate limit"
+            )
+            return (True, None)  # Skip all other checks - update immediately!
+
+        # Rule 1: Rate limiting - check time since last SUCCESSFUL update
+        if ts.last_sl_update_time:
+            elapsed_seconds = (datetime.now() - ts.last_sl_update_time).total_seconds()
+            min_interval = config.trading.trailing_min_update_interval_seconds
+
+            if elapsed_seconds < min_interval:
+                remaining = min_interval - elapsed_seconds
+                return (False, f"rate_limit: {elapsed_seconds:.1f}s elapsed, need {min_interval}s (wait {remaining:.1f}s)")
+
+        # Rule 2: Conditional update - check minimum improvement
+        if ts.last_updated_sl_price:
+            min_improvement = float(config.trading.trailing_min_improvement_percent)
+
+            if improvement_percent < min_improvement:
+                return (False, f"improvement_too_small: {improvement_percent:.3f}% < {min_improvement}%")
+
+        # All checks passed
+        return (True, None)
+
+    async def _update_stop_order(self, ts: TrailingStopInstance) -> bool:
+        """
+        Update stop order using atomic method when available
+
+        NEW IMPLEMENTATION:
+        - Bybit: Uses trading-stop endpoint (ATOMIC - no race condition)
+        - Binance: Uses optimized cancel+create (minimal race window)
+        """
+        try:
+            # Check if atomic update is available
+            if not hasattr(self.exchange, 'update_stop_loss_atomic'):
+                logger.error(f"{ts.symbol}: Exchange does not support atomic SL update")
+                return False
+
+            # Call atomic update
+            result = await self.exchange.update_stop_loss_atomic(
+                symbol=ts.symbol,
+                new_sl_price=float(ts.current_stop_price),
+                position_side=ts.side
+            )
+
+            if result['success']:
+                # Log success with metrics
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.TRAILING_STOP_SL_UPDATED,
+                        {
+                            'symbol': ts.symbol,
+                            'method': result['method'],
+                            'execution_time_ms': result['execution_time_ms'],
+                            'new_sl_price': float(ts.current_stop_price),
+                            'old_sl_price': result.get('old_sl_price'),
+                            'unprotected_window_ms': result.get('unprotected_window_ms', 0),
+                            'side': ts.side,
+                            'update_count': ts.update_count
+                        },
+                        symbol=ts.symbol,
+                        exchange=self.exchange.name,
+                        severity='INFO'
+                    )
+
+                # NEW: Update tracking fields after SUCCESSFUL update
+                ts.last_sl_update_time = datetime.now()  # Record time of successful update
+                ts.last_updated_sl_price = ts.current_stop_price  # Record successfully updated price
+
+                # NEW: Alert if unprotected window is too large (Binance)
+                from config.settings import config
+                unprotected_window_ms = result.get('unprotected_window_ms', 0)
+                alert_threshold = config.trading.trailing_alert_if_unprotected_window_ms
+
+                if unprotected_window_ms > alert_threshold:
+                    logger.warning(
+                        f"⚠️  {ts.symbol}: Large unprotected window detected! "
+                        f"{unprotected_window_ms:.1f}ms > {alert_threshold}ms threshold "
+                        f"(exchange: {self.exchange.name}, method: {result['method']})"
+                    )
+
+                    # Log high-severity alert
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.WARNING_RAISED,
+                            {
+                                'symbol': ts.symbol,
+                                'warning_type': 'large_unprotected_window',
+                                'unprotected_window_ms': unprotected_window_ms,
+                                'threshold_ms': alert_threshold,
+                                'exchange': self.exchange.name,
+                                'method': result['method']
+                            },
+                            symbol=ts.symbol,
+                            exchange=self.exchange.name,
+                            severity='WARNING'
+                        )
+
+                logger.info(
+                    f"✅ {ts.symbol}: SL updated via {result['method']} "
+                    f"in {result['execution_time_ms']:.2f}ms"
+                )
+                return True
+
+            else:
+                # Log failure
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.TRAILING_STOP_SL_UPDATE_FAILED,
+                        {
+                            'symbol': ts.symbol,
+                            'error': result['error'],
+                            'execution_time_ms': result['execution_time_ms'],
+                            'method_attempted': result.get('method')
+                        },
+                        symbol=ts.symbol,
+                        exchange=self.exchange.name,
+                        severity='ERROR'
+                    )
+
+                logger.error(f"❌ {ts.symbol}: SL update failed - {result['error']}")
+                return False
 
         except Exception as e:
-            logger.error(f"Failed to update stop order for {ts.symbol}: {e}")
+            logger.error(f"❌ Failed to update stop order for {ts.symbol}: {e}", exc_info=True)
             return False
 
     async def on_position_closed(self, symbol: str, realized_pnl: float = None):
