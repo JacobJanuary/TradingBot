@@ -750,6 +750,23 @@ class PositionManager:
 
             if not quantity:
                 logger.error(f"Failed to calculate position size for {symbol}")
+
+                # Log position creation failed
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.POSITION_CREATION_FAILED,
+                        {
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'reason': 'failed_to_calculate_quantity',
+                            'position_size_usd': float(position_size_usd)
+                        },
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='ERROR'
+                    )
+
                 return None
 
             # 5. Validate spread (временно только логирование)
@@ -854,6 +871,23 @@ class PositionManager:
 
                 else:
                     logger.error(f"Failed to create atomic position for {symbol}")
+
+                    # Log atomic position creation failed
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.POSITION_CREATION_FAILED,
+                            {
+                                'symbol': symbol,
+                                'exchange': exchange_name,
+                                'reason': 'atomic_creation_returned_none',
+                                'creation_path': 'atomic'
+                            },
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            severity='ERROR'
+                        )
+
                     return None
 
             except SymbolUnavailableError as e:
@@ -954,6 +988,26 @@ class PositionManager:
                 })
                 logger.info(f"🔍 DEBUG: Position created with ID={position_id} for {symbol}")
 
+                # Log position created event (legacy path)
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.POSITION_CREATED,
+                        {
+                            'symbol': symbol,
+                            'position_id': position_id,
+                            'side': position.side,
+                            'quantity': float(position.quantity),
+                            'entry_price': float(position.entry_price),
+                            'exchange': exchange_name,
+                            'creation_path': 'legacy'
+                        },
+                        position_id=position_id,
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='INFO'
+                    )
+
                 position.id = position_id
                 logger.info(f"🔍 DEBUG: position.id set to {position_id} for {symbol}")
 
@@ -973,11 +1027,46 @@ class PositionManager:
                     position.stop_loss_price = stop_loss_price
                     logger.info(f"✅ Stop loss confirmed for {symbol}")
 
+                    # Log stop loss placed
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.STOP_LOSS_PLACED,
+                            {
+                                'symbol': symbol,
+                                'position_id': position.id,
+                                'stop_loss_price': float(stop_loss_price),
+                                'entry_price': float(position.entry_price),
+                                'stop_loss_percent': float(stop_loss_percent)
+                            },
+                            position_id=position.id,
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            severity='INFO'
+                        )
+
                     await self.repository.update_position_stop_loss(
                         position.id, stop_loss_price, ""
                     )
                 else:
                     logger.warning(f"⚠️ Failed to set stop loss for {symbol}")
+
+                    # Log stop loss placement failed
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.STOP_LOSS_ERROR,
+                            {
+                                'symbol': symbol,
+                                'position_id': position.id,
+                                'reason': 'set_stop_loss_returned_false',
+                                'attempted_price': float(stop_loss_price)
+                            },
+                            position_id=position.id,
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            severity='ERROR'
+                        )
 
             # 10. Initialize trailing stop
             trailing_manager = self.trailing_managers.get(exchange_name)
