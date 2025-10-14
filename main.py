@@ -545,6 +545,23 @@ class TradingBot:
                         for issue in issues[:5]:  # Log first 5 issues
                             logger.warning(f"  - {issue}")
 
+                        # Log health check failure
+                        try:
+                            from core.event_logger import get_event_logger, EventType
+                            event_logger = get_event_logger()
+                            if event_logger:
+                                await event_logger.log_event(
+                                    EventType.HEALTH_CHECK_FAILED,
+                                    {
+                                        'status': health_status.status.value,
+                                        'issues': issues[:5],
+                                        'issue_count': len(issues)
+                                    },
+                                    severity='WARNING'
+                                )
+                        except Exception as log_err:
+                            logger.debug(f"Could not log health check failure: {log_err}")
+
                 await asyncio.sleep(300)  # Every 5 minutes (optimized to reduce API calls)
 
             except asyncio.CancelledError:
@@ -594,6 +611,22 @@ class TradingBot:
     async def _emergency_close_all(self):
         """Emergency close all positions"""
         logger.critical("🚨 EMERGENCY: Closing all positions")
+
+        # Log emergency close trigger
+        try:
+            from core.event_logger import get_event_logger, EventType
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.EMERGENCY_CLOSE_ALL_TRIGGERED,
+                    {
+                        'reason': 'emergency_shutdown',
+                        'exchanges': list(self.exchanges.keys())
+                    },
+                    severity='CRITICAL'
+                )
+        except Exception as log_err:
+            logger.debug(f"Could not log emergency close: {log_err}")
 
         for name, exchange in self.exchanges.items():
             try:
