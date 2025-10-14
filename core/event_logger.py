@@ -129,6 +129,12 @@ class EventType(Enum):
     # Database events (Data Persistence)
     DATABASE_ERROR = "database_error"
 
+    # Exchange API events (External Communication)
+    EXCHANGE_ERROR = "exchange_error"
+
+    # Position Age Management events
+    AGED_POSITION_DETECTED = "aged_position_detected"
+
     # WebSocket events (Connectivity)
     WEBSOCKET_CONNECTED = "websocket_connected"
     WEBSOCKET_DISCONNECTED = "websocket_disconnected"
