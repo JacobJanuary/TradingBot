@@ -167,75 +167,46 @@ class EventLogger:
         self._shutdown = False
 
     async def initialize(self):
-        """Initialize event logger and create tables if needed"""
+        """Initialize event logger and verify tables exist"""
         try:
-            await self._create_tables()
+            await self._verify_tables()
             self._worker_task = asyncio.create_task(self._event_worker())
             logger.info("EventLogger initialized")
         except Exception as e:
             logger.error(f"EventLogger initialization failed: {e}", exc_info=True)
             raise
 
-    async def _create_tables(self):
-        """Create event logging tables if not exists"""
+    async def _verify_tables(self):
+        """Verify that required event logging tables exist"""
         async with self.pool.acquire() as conn:
-            # Events table
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS monitoring.events (
-                    id SERIAL PRIMARY KEY,
-                    event_type VARCHAR(50) NOT NULL,
-                    event_data JSONB,
-                    correlation_id VARCHAR(100),
-                    position_id INTEGER,
-                    order_id VARCHAR(100),
-                    symbol VARCHAR(50),
-                    exchange VARCHAR(50),
-                    severity VARCHAR(20) DEFAULT 'INFO',
-                    error_message TEXT,
-                    stack_trace TEXT,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            # Check if required tables exist
+            missing_tables = []
+
+            required_tables = [
+                'events',
+                'transaction_log',
+                'event_performance_metrics'
+            ]
+
+            for table_name in required_tables:
+                exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = 'monitoring'
+                        AND table_name = $1
+                    )
+                """, table_name)
+
+                if not exists:
+                    missing_tables.append(table_name)
+
+            if missing_tables:
+                error_msg = (
+                    f"EventLogger tables missing: {', '.join(missing_tables)}. "
+                    f"Please apply database migration 004_create_event_logger_tables.sql first. "
+                    f"Run: PGPASSWORD='your_password' psql -h localhost -U postgres -d fox_crypto -f database/migrations/004_create_event_logger_tables.sql"
                 )
-            """)
-
-            # Create indexes separately
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON monitoring.events (event_type)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_correlation ON monitoring.events (correlation_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_position ON monitoring.events (position_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_created ON monitoring.events (created_at DESC)")
-
-            # Transaction log table
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS monitoring.transaction_log (
-                    id SERIAL PRIMARY KEY,
-                    transaction_id VARCHAR(100) UNIQUE,
-                    operation VARCHAR(100),
-                    status VARCHAR(20),
-                    started_at TIMESTAMP WITH TIME ZONE,
-                    completed_at TIMESTAMP WITH TIME ZONE,
-                    duration_ms INTEGER,
-                    affected_rows INTEGER,
-                    error_message TEXT
-                )
-            """)
-
-            # Create indexes separately
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_id ON monitoring.transaction_log (transaction_id)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tx_log_status ON monitoring.transaction_log (status)")
-
-            # Performance metrics table
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS monitoring.event_performance_metrics (
-                    id SERIAL PRIMARY KEY,
-                    metric_name VARCHAR(100),
-                    metric_value DECIMAL(20, 8),
-                    tags JSONB,
-                    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            # Create indexes separately
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_event_metrics_name ON monitoring.event_performance_metrics (metric_name)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_event_metrics_time ON monitoring.event_performance_metrics (recorded_at DESC)")
+                raise RuntimeError(error_msg)
 
     async def log_event(
         self,
