@@ -340,6 +340,19 @@ class PositionManager:
             logger.info(f"📊 Loaded {len(self.positions)} positions from database")
             logger.info(f"💰 Total exposure: ${self.total_exposure:.2f}")
 
+            # Log positions loaded event
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.POSITIONS_LOADED,
+                    {
+                        'count': len(self.positions),
+                        'total_exposure': float(self.total_exposure),
+                        'exchanges': list(set(p.exchange for p in self.positions.values()))
+                    },
+                    severity='INFO'
+                )
+
             # CRITICAL FIX: Check actual stop loss status on exchange BEFORE setting new ones
             # This prevents creating duplicate stop losses when they already exist
             logger.info("🔍 Checking actual stop loss status on exchanges...")
@@ -354,7 +367,20 @@ class PositionManager:
             if positions_without_sl:
                 logger.warning(f"⚠️ Found {len(positions_without_sl)} positions without stop losses")
                 logger.info("Setting stop losses for unprotected positions...")
-                
+
+                # Log positions without SL detected
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.POSITIONS_WITHOUT_SL_DETECTED,
+                        {
+                            'count': len(positions_without_sl),
+                            'symbols': [p.symbol for p in positions_without_sl],
+                            'action': 'setting_sl'
+                        },
+                        severity='WARNING'
+                    )
+
                 for position in positions_without_sl:
                     try:
                         exchange = self.exchanges.get(position.exchange)
@@ -642,11 +668,45 @@ class PositionManager:
             # 2. Check if position already exists
             if await self._position_exists(symbol, exchange_name):
                 logger.warning(f"Position already exists for {symbol} on {exchange_name}")
+
+                # Log duplicate position prevented
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.POSITION_DUPLICATE_PREVENTED,
+                        {
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'signal_id': request.signal_id if hasattr(request, 'signal_id') else None
+                        },
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='WARNING'
+                    )
+
                 return None
 
             # 3. Validate risk limits
             if not await self._validate_risk_limits(request):
                 logger.warning(f"Risk limits exceeded for {symbol}")
+
+                # Log risk limits exceeded
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.RISK_LIMITS_EXCEEDED,
+                        {
+                            'symbol': symbol,
+                            'current_exposure': float(self.total_exposure),
+                            'position_count': self.position_count,
+                            'max_positions': self.config.max_positions,
+                            'max_exposure': float(self.config.max_exposure_usd)
+                        },
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='WARNING'
+                    )
+
                 return None
 
             # 4. Calculate position size
@@ -1327,6 +1387,28 @@ class PositionManager:
                     f"Position closed: {symbol} {reason} "
                     f"PnL: ${realized_pnl:.2f} ({realized_pnl_percent:.2f}%)"
                 )
+
+                # Log position closed event
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.POSITION_CLOSED,
+                        {
+                            'symbol': symbol,
+                            'reason': reason,
+                            'realized_pnl': float(realized_pnl),
+                            'realized_pnl_percent': float(realized_pnl_percent),
+                            'entry_price': float(position.entry_price),
+                            'exit_price': float(exit_price),
+                            'quantity': float(position.quantity),
+                            'side': position.side,
+                            'exchange': position.exchange
+                        },
+                        position_id=position.id,
+                        symbol=symbol,
+                        exchange=position.exchange,
+                        severity='INFO'
+                    )
 
                 # PREVENTIVE FIX: Cancel any remaining SL orders for this symbol
                 # This prevents old SL orders from being reused by future positions
