@@ -1530,20 +1530,32 @@ class PositionManager:
 
         # Update position state
         old_price = position.current_price
-        position.current_price = data.get('mark_price', position.current_price)
+        position.current_price = float(data.get('mark_price', position.current_price))
         logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
+
         position.unrealized_pnl = data.get('unrealized_pnl', 0)
 
         # Calculate PnL percent
         if position.entry_price > 0:
             if position.side == 'long':
                 position.unrealized_pnl_percent = (
-                        (position.current_price - position.entry_price) / position.entry_price * 100
+                        (float(position.current_price) - float(position.entry_price)) / float(position.entry_price) * 100
                 )
             else:
                 position.unrealized_pnl_percent = (
-                        (position.entry_price - position.current_price) / position.entry_price * 100
+                        (float(position.entry_price) - float(position.current_price)) / float(position.entry_price) * 100
                 )
+
+            # Persist price and PnL to database
+            logger.info(f"[DB_UPDATE] {symbol}: id={position.id}, price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}")
+            try:
+                await self.repository.update_position(
+                    position.id,
+                    current_price=position.current_price,
+                    pnl_percentage=position.unrealized_pnl_percent
+                )
+            except Exception as e:
+                logger.error(f"[DB_UPDATE] Failed for {symbol}: {e}")
 
         # Update trailing stop
         # LOCK: Acquire lock for trailing stop update
@@ -1553,6 +1565,7 @@ class PositionManager:
 
         async with self.position_locks[trailing_lock_key]:
             trailing_manager = self.trailing_managers.get(position.exchange)
+
             if trailing_manager and position.has_trailing_stop:
                 # NEW: Update TS health timestamp before calling TS Manager
                 position.ts_last_update_time = datetime.now()

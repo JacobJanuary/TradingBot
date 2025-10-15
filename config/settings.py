@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 # Load .env file IMMEDIATELY
-load_dotenv()
+load_dotenv(override=True)
 
 
 @dataclass
@@ -96,7 +96,7 @@ class Config:
     def __init__(self):
         """Initialize configuration from .env ONLY"""
         # Load .env if not already loaded
-        load_dotenv()
+        load_dotenv(override=True)
 
         # Initialize configs
         self.exchanges = self._init_exchanges()

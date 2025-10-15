@@ -224,9 +224,9 @@ class SmartTrailingStopManager:
             ts = TrailingStopInstance(
                 symbol=state_data['symbol'],
                 entry_price=Decimal(str(state_data['entry_price'])),
-                current_price=Decimal(str(state_data.get('current_stop_price', state_data['entry_price']))),
-                highest_price=Decimal(str(state_data.get('highest_price', state_data['entry_price']))) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH,
-                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else Decimal(str(state_data.get('lowest_price', state_data['entry_price']))),
+                current_price=Decimal(str(state_data['current_stop_price'] or state_data['entry_price'])) if state_data.get('current_stop_price') else Decimal(str(state_data['entry_price'])),
+                highest_price=Decimal(str(state_data['highest_price'] or state_data['entry_price'])) if state_data.get('highest_price') else (Decimal(str(state_data['entry_price'])) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH),
+                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else (Decimal(str(state_data['lowest_price'] or state_data['entry_price'])) if state_data.get('lowest_price') else Decimal(str(state_data['entry_price']))),
                 state=TrailingStopState(state_data['state']),
                 activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
                 current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
@@ -374,8 +374,8 @@ class SmartTrailingStopManager:
         Returns:
             Dict with action if stop needs update, None otherwise
         """
-        # DEBUG: Log entry point
-        logger.debug(f"[TS] update_price called: {symbol} @ {price}")
+        # TEMP: Log to verify calls
+        logger.info(f"[TS] update_price called: {symbol} @ {price}")
 
         if symbol not in self.trailing_stops:
             logger.error(f"[TS] Trailing stop not found for {symbol}! This should not happen. Available TS: {list(self.trailing_stops.keys())}")

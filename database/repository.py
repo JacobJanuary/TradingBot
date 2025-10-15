@@ -178,6 +178,9 @@ class Repository:
 
     async def update_position(self, position_id: int, updates: Dict) -> bool:
         """Update position with given data"""
+        import logging
+        logger = logging.getLogger(__name__)
+
         if not updates:
             return False
 
@@ -196,8 +199,10 @@ class Repository:
             WHERE id = ${len(values)}
         """
 
+        logger.info(f"[REPO] update_position(id={position_id}, updates={updates})")
         async with self.pool.acquire() as conn:
-            await conn.execute(query, *values)
+            result = await conn.execute(query, *values)
+            logger.info(f"[REPO] Query result: {result}")
             return True
 
     async def create_position(self, position_data: Dict) -> int:
