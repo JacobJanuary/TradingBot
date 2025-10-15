@@ -90,9 +90,10 @@ class SmartTrailingStopManager:
     Handles all trailing stop logic independently of exchange implementation
     """
 
-    def __init__(self, exchange_manager, config: TrailingStopConfig = None):
+    def __init__(self, exchange_manager, config: TrailingStopConfig = None, exchange_name: str = None):
         """Initialize trailing stop manager"""
         self.exchange = exchange_manager
+        self.exchange_name = exchange_name or getattr(exchange_manager, 'name', 'unknown')
         self.config = config or TrailingStopConfig()
 
         # Active trailing stops
@@ -521,7 +522,8 @@ class SmartTrailingStopManager:
         """
         try:
             # Only for Binance
-            if self.exchange.id.lower() != 'binance':
+            exchange_name = getattr(self.exchange, 'name', self.exchange_name)
+            if exchange_name.lower() != 'binance':
                 logger.debug(f"{ts.symbol} Not Binance, skipping Protection SL cancellation")
                 return True
 
