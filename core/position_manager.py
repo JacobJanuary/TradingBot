@@ -153,7 +153,7 @@ class PositionManager:
         )
         
         self.trailing_managers = {
-            name: SmartTrailingStopManager(exchange, trailing_config)
+            name: SmartTrailingStopManager(exchange, trailing_config, exchange_name=name)
             for name, exchange in exchanges.items()
         }
 
@@ -896,6 +896,8 @@ class PositionManager:
                     logger.info(f"✅ Added {symbol} to tracked positions (total: {len(self.positions)})")
 
                     # 10. Initialize trailing stop (ATOMIC path)
+                    # NOTE: initial_stop НЕ передается - Protection SL уже создан StopLossManager
+                    # Trailing создаст свой SL только при активации (когда позиция в прибыли)
                     trailing_manager = self.trailing_managers.get(exchange_name)
                     if trailing_manager:
                         await trailing_manager.create_trailing_stop(
@@ -903,7 +905,7 @@ class PositionManager:
                             side=position.side,
                             entry_price=position.entry_price,
                             quantity=position.quantity,
-                            initial_stop=stop_loss_price
+                            initial_stop=None  # Не создавать SL сразу - ждать активации
                         )
                         position.has_trailing_stop = True
 
@@ -1138,6 +1140,8 @@ class PositionManager:
                         )
 
             # 10. Initialize trailing stop
+            # NOTE: initial_stop НЕ передается - Protection SL уже создан StopLossManager
+            # Trailing создаст свой SL только при активации (когда позиция в прибыли)
             trailing_manager = self.trailing_managers.get(exchange_name)
             if trailing_manager:
                 await trailing_manager.create_trailing_stop(
@@ -1145,7 +1149,7 @@ class PositionManager:
                     side=position.side,
                     entry_price=position.entry_price,
                     quantity=position.quantity,
-                    initial_stop=stop_loss_price
+                    initial_stop=None  # Не создавать SL сразу - ждать активации
                 )
                 position.has_trailing_stop = True
 
