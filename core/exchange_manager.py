@@ -753,12 +753,12 @@ class ExchangeManager:
         }
 
         try:
-            # Find existing SL order
+            # Find ALL existing SL orders (handle orphans)
             orders = await self.rate_limiter.execute_request(
                 self.exchange.fetch_open_orders, symbol
             )
 
-            sl_order = None
+            sl_orders = []  # Changed from sl_order to sl_orders
             expected_side = 'sell' if position_side == 'long' else 'buy'
 
             for order in orders:
@@ -769,22 +769,47 @@ class ExchangeManager:
                 if (order_type == 'STOP_MARKET' and
                     order_side == expected_side and
                     reduce_only):
-                    sl_order = order
-                    break
+                    sl_orders.append(order)  # Collect ALL SL orders
 
             unprotected_start = datetime.now()
+            total_cancel_time = 0
 
-            # Step 1: Cancel old SL (if exists)
-            if sl_order:
-                cancel_start = datetime.now()
+            # Step 1: Cancel ALL old SL orders (handle orphans)
+            if sl_orders:
+                if len(sl_orders) > 1:
+                    logger.warning(
+                        f"⚠️  Found {len(sl_orders)} SL orders for {symbol} - "
+                        f"possible orphan orders! Canceling all..."
+                    )
 
-                await self.rate_limiter.execute_request(
-                    self.exchange.cancel_order,
-                    sl_order['id'], symbol
+                for sl_order in sl_orders:
+                    cancel_start = datetime.now()
+
+                    try:
+                        await self.rate_limiter.execute_request(
+                            self.exchange.cancel_order,
+                            sl_order['id'], symbol
+                        )
+
+                        cancel_duration = (datetime.now() - cancel_start).total_seconds() * 1000
+                        total_cancel_time += cancel_duration
+
+                        logger.info(
+                            f"🗑️  Cancelled SL order {sl_order['id'][:8]}... "
+                            f"(stopPrice={sl_order.get('stopPrice', 'N/A')}) "
+                            f"in {cancel_duration:.2f}ms"
+                        )
+
+                    except Exception as e:
+                        logger.error(f"Failed to cancel SL order {sl_order['id']}: {e}")
+                        # Continue canceling other orders even if one fails
+
+                result['cancel_time_ms'] = total_cancel_time
+                result['orders_cancelled'] = len(sl_orders)
+
+                logger.info(
+                    f"🗑️  Cancelled {len(sl_orders)} SL order(s) in {total_cancel_time:.2f}ms total"
                 )
-
-                result['cancel_time_ms'] = (datetime.now() - cancel_start).total_seconds() * 1000
-                logger.info(f"🗑️  Cancelled old SL in {result['cancel_time_ms']:.2f}ms")
 
             # Step 2: Create new SL IMMEDIATELY (NO SLEEP!)
             create_start = datetime.now()
