@@ -121,8 +121,52 @@ class BinanceZombieManager:
             -4131: 'The counterparty\'s best price does not meet the PERCENT_PRICE filter limit',
         }
 
+        # FIX #1: Add position cache for protective order checking
+        self._position_cache = {}
+        self._position_cache_timestamp = None
+        self._position_cache_ttl = 5  # seconds
+
         logger.info("BinanceZombieManager initialized")
         logger.info(f"Weight limit: {self.WEIGHT_LIMIT}, Cache TTL: {self.CACHE_TTL}s")
+
+    async def _get_active_positions_cached(self) -> Dict[Tuple[str, int], Dict]:
+        """
+        FIX #1: Get active positions with caching
+        Returns: Dict with (symbol, positionIdx) as key
+        """
+        now = time.time()
+
+        # Check cache validity
+        if self._position_cache_timestamp and (now - self._position_cache_timestamp) < self._position_cache_ttl:
+            return self._position_cache
+
+        # Fetch fresh positions
+        try:
+            await self.check_and_wait_rate_limit('fetch_positions')
+            positions = await self.exchange.fetch_positions()
+            self._position_cache = {}
+
+            for pos in positions:
+                contracts = pos.get('contracts', 0)
+                if contracts and contracts > 0:
+                    symbol = pos.get('symbol')
+                    position_idx = 0  # Binance doesn't use positionIdx like Bybit
+                    key = (symbol, position_idx)
+                    self._position_cache[key] = {
+                        'symbol': symbol,
+                        'side': pos.get('side'),
+                        'quantity': contracts,
+                        'contracts': contracts,
+                        'entry_price': pos.get('entryPrice') or pos.get('markPrice'),
+                    }
+
+            self._position_cache_timestamp = now
+            return self._position_cache
+
+        except Exception as e:
+            logger.error(f"Failed to fetch positions: {e}")
+            # Return old cache or empty dict
+            return self._position_cache if self._position_cache else {}
 
     def get_metrics(self) -> Dict:
         """Get current metrics for monitoring"""
@@ -271,6 +315,7 @@ class BinanceZombieManager:
             'stuck': [],         # Orders older than 24 hours
             'async_lost': [],    # Recently created but not appearing
             'oco_orphans': [],   # Unpaired OCO orders
+            'protective_for_closed_position': [],  # FIX #1: SL/TP for closed positions
         }
 
         try:
@@ -372,31 +417,63 @@ class BinanceZombieManager:
             timestamp = order.get('timestamp', 0)
             order_list_id = order.get('info', {}).get('orderListId', -1) if order.get('info') else -1
 
-            # CRITICAL FIX: Skip protective orders - exchange manages their lifecycle
-            # On futures, exchange auto-cancels these when position closes
-            # If they exist → position is ACTIVE → NOT orphaned
+            # CRITICAL FIX: Protective orders need position check
+            # NOTE: Binance Futures does NOT auto-cancel protective orders when position closes!
+            # Must check if position exists before deciding to skip or delete
             PROTECTIVE_ORDER_TYPES = [
                 'STOP_LOSS', 'STOP_LOSS_LIMIT', 'STOP_MARKET',
                 'TAKE_PROFIT', 'TAKE_PROFIT_LIMIT', 'TAKE_PROFIT_MARKET',
                 'TRAILING_STOP_MARKET', 'STOP', 'TAKE_PROFIT'
             ]
-            # CCXT returns lowercase types, so convert to uppercase for comparison
-            if order_type.upper() in PROTECTIVE_ORDER_TYPES:
-                logger.debug(f"Skipping protective order {order_id} ({order_type}) - managed by exchange")
-                return None
-
-            # CRITICAL FIX: Additional protection - check for protective keywords
-            # Protects against format mismatches (e.g. 'StopMarket' vs 'STOP_MARKET')
             PROTECTIVE_KEYWORDS = ['STOP', 'TAKE_PROFIT', 'TRAILING']
             order_type_upper = order_type.upper()
-            if any(keyword in order_type_upper for keyword in PROTECTIVE_KEYWORDS):
-                logger.debug(f"Skipping protective order {order_id} ({order_type}) - contains protective keyword")
-                return None
 
-            # CRITICAL FIX: reduceOnly orders are always protective (SL/TP)
-            if order.get('reduceOnly') == True:
-                logger.debug(f"Skipping reduceOnly order {order_id} - likely SL/TP")
-                return None
+            # Check if this is a protective order
+            is_protective = (
+                order_type_upper in PROTECTIVE_ORDER_TYPES or
+                any(keyword in order_type_upper for keyword in PROTECTIVE_KEYWORDS) or
+                order.get('reduceOnly') == True
+            )
+
+            # FIX #1: For protective orders, check if position exists
+            if is_protective:
+                # Get active positions
+                active_positions = await self._get_active_positions_cached()
+
+                # Check if position exists for this symbol
+                symbol_clean = symbol.replace(':', '')
+                has_position = False
+                for (pos_symbol, pos_idx), pos_data in active_positions.items():
+                    if pos_symbol == symbol or pos_symbol == symbol_clean:
+                        quantity = pos_data.get('quantity', 0) or pos_data.get('contracts', 0)
+                        if quantity != 0:
+                            has_position = True
+                            break
+
+                if has_position:
+                    # Position exists - keep protective order
+                    logger.debug(f"Keeping protective order {order_id} ({order_type}) - position is OPEN")
+                    return None
+                else:
+                    # Position closed - protective order is zombie
+                    logger.warning(
+                        f"Found zombie protective order {order_id} ({order_type}) - "
+                        f"position is CLOSED for {symbol}"
+                    )
+                    return BinanceZombieOrder(
+                        order_id=order_id,
+                        client_order_id=client_order_id,
+                        symbol=symbol,
+                        side=side,
+                        order_type=order_type,
+                        amount=amount,
+                        price=price,
+                        status=status,
+                        timestamp=timestamp,
+                        zombie_type='protective_for_closed_position',
+                        reason=f'Protective order ({order_type}) for closed position',
+                        order_list_id=order_list_id if order_list_id != -1 else None
+                    )
 
             # CRITICAL FIX: Check whitelist of protected order IDs
             if order_id in self.protected_order_ids:
@@ -617,6 +694,7 @@ class BinanceZombieManager:
                 zombies['orphaned'] +
                 zombies['phantom'] +
                 zombies['stuck'] +
+                zombies['protective_for_closed_position'] +  # FIX #1: Add new zombie type
                 ([] if aggressive else zombies['async_lost'])  # Skip async_lost in aggressive mode
             )
 

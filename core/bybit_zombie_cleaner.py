@@ -68,39 +68,63 @@ class BybitZombieOrderCleaner:
 
         logger.info("BybitZombieOrderCleaner initialized")
 
-    async def get_active_positions_map(self, category: str = "linear") -> Dict[Tuple[str, int], dict]:
+    async def get_active_positions_map(self, category: str = "linear", max_retries: int = 3) -> Dict[Tuple[str, int], dict]:
         """
-        Get map of active positions
+        Get map of active positions with retry logic
         Key: (symbol, positionIdx) for proper hedge mode support
 
+        FIX #2: Added retry logic to handle API failures safely
         Source: Bybit API v5 - https://bybit-exchange.github.io/docs/v5/position/list
         """
-        try:
-            # Fetch positions using CCXT
-            positions = await self.exchange.fetch_positions()
-            active_positions = {}
+        import asyncio
 
-            for pos in positions:
-                # Check for active position (size > 0)
-                position_size = float(pos.get('contracts', 0) or pos.get('size', 0))
-                if position_size > 0:
-                    symbol = pos['symbol']
-                    # Extract positionIdx from info (Bybit-specific)
-                    position_idx = int(pos.get('info', {}).get('positionIdx', 0))
-                    key = (symbol, position_idx)
-                    active_positions[key] = pos
+        for attempt in range(max_retries):
+            try:
+                # Fetch positions using CCXT
+                positions = await self.exchange.fetch_positions()
+                active_positions = {}
 
-            logger.info(f"Active positions map: {len(active_positions)} positions")
-            for (symbol, idx), pos in active_positions.items():
-                size = pos.get('contracts', pos.get('size', 0))
-                side = pos.get('side', 'unknown')
-                logger.debug(f"  {symbol} idx={idx}: {side} {size}")
+                for pos in positions:
+                    # Check for active position (size > 0)
+                    position_size = float(pos.get('contracts', 0) or pos.get('size', 0))
+                    if position_size > 0:
+                        symbol = pos['symbol']
+                        # Extract positionIdx from info (Bybit-specific)
+                        position_idx = int(pos.get('info', {}).get('positionIdx', 0))
+                        key = (symbol, position_idx)
+                        active_positions[key] = pos
 
-            return active_positions
+                # FIX #2: Check for suspiciously empty result
+                if not active_positions and attempt < max_retries - 1:
+                    logger.warning(
+                        f"⚠️ Empty positions on attempt {attempt+1}/{max_retries}. "
+                        f"This is suspicious - retrying..."
+                    )
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    continue
 
-        except Exception as e:
-            logger.error(f"Failed to get active positions: {e}")
-            raise
+                logger.info(f"Active positions map: {len(active_positions)} positions")
+                for (symbol, idx), pos in active_positions.items():
+                    size = pos.get('contracts', pos.get('size', 0))
+                    side = pos.get('side', 'unknown')
+                    logger.debug(f"  {symbol} idx={idx}: {side} {size}")
+
+                return active_positions
+
+            except Exception as e:
+                logger.error(f"Failed to get positions (attempt {attempt+1}/{max_retries}): {e}")
+
+                if attempt == max_retries - 1:
+                    # FIX #2: Return empty dict as safe fallback (don't delete anything)
+                    logger.error(
+                        "❌ All retries failed. Returning empty dict - "
+                        "ORDERS WILL NOT BE DELETED (safe fallback)"
+                    )
+                    return {}
+
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+        return {}
 
     def analyze_order_for_zombie(self, order: dict, active_positions: Dict[Tuple[str, int], dict]) -> ZombieOrderAnalysis:
         """
