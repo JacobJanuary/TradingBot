@@ -187,42 +187,70 @@ class TradingBot:
                         logger.info(f"✅ {name.capitalize()} WebSocket ready (mainnet)")
 
                 elif name == 'bybit':
-                    # Import Bybit streams
-                    from websocket.bybit_stream import BybitPrivateStream, BybitMarketStream
+                    # Check if we're on testnet
+                    is_testnet = config.testnet
 
-                    # Market data stream (always available, works on testnet and mainnet)
-                    market_symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']  # Top symbols for market data
-                    market_stream = BybitMarketStream(
-                        config.__dict__,
-                        symbols=market_symbols,
-                        event_handler=self._handle_stream_event
-                    )
-                    await market_stream.start()
-                    self.websockets[f'{name}_market'] = market_stream
-                    logger.info(f"✅ {name.capitalize()} Market WebSocket ready ({'testnet' if config.testnet else 'mainnet'})")
+                    if is_testnet:
+                        # Use adaptive stream for testnet (REST polling like Binance)
+                        logger.info("🔧 Using AdaptiveStream for Bybit testnet")
+                        from websocket.adaptive_stream import AdaptiveBybitStream
 
-                    # Private stream (only for mainnet with API keys)
-                    api_key = os.getenv('BYBIT_API_KEY')
-                    api_secret = os.getenv('BYBIT_API_SECRET')
+                        # Get exchange client
+                        exchange = self.exchanges.get(name)
+                        if exchange:
+                            stream = AdaptiveBybitStream(exchange, is_testnet=True)
 
-                    if not config.testnet and api_key and api_secret:
-                        try:
-                            private_stream = BybitPrivateStream(
-                                config.__dict__,
-                                api_key=api_key,
-                                api_secret=api_secret,
-                                event_handler=self._handle_stream_event
-                            )
-                            await private_stream.start()
-                            self.websockets[f'{name}_private'] = private_stream
-                            logger.info(f"✅ {name.capitalize()} Private WebSocket ready (mainnet)")
-                        except Exception as e:
-                            logger.warning(f"Failed to start Bybit private stream: {e}")
-                            logger.info("Continuing with public stream only")
-                    elif config.testnet:
-                        logger.info(f"ℹ️ Bybit private stream skipped (testnet mode)")
+                            # Set up callbacks to integrate with existing event system
+                            async def on_position_update(positions):
+                                # CRITICAL FIX: Event name must match subscription in position_manager (position.update)
+                                # positions is dict {symbol: position_data}, emit event for each position
+                                if positions:
+                                    logger.info(f"📊 REST polling (Bybit): received {len(positions)} position updates with mark prices")
+                                for symbol, pos_data in positions.items():
+                                    await self._handle_stream_event('position.update', pos_data)
+
+                            stream.set_callback('position_update', on_position_update)
+
+                            # Start in background
+                            asyncio.create_task(stream.start())
+                            self.websockets[name] = stream
+                            logger.info(f"✅ {name.capitalize()} AdaptiveStream ready (testnet)")
                     else:
-                        logger.info(f"ℹ️ Bybit private stream skipped (no API credentials)")
+                        # Use normal streams for mainnet
+                        # Import Bybit streams
+                        from websocket.bybit_stream import BybitPrivateStream, BybitMarketStream
+
+                        # Market data stream (always available, works on testnet and mainnet)
+                        market_symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']  # Top symbols for market data
+                        market_stream = BybitMarketStream(
+                            config.__dict__,
+                            symbols=market_symbols,
+                            event_handler=self._handle_stream_event
+                        )
+                        await market_stream.start()
+                        self.websockets[f'{name}_market'] = market_stream
+                        logger.info(f"✅ {name.capitalize()} Market WebSocket ready (mainnet)")
+
+                        # Private stream (only for mainnet with API keys)
+                        api_key = os.getenv('BYBIT_API_KEY')
+                        api_secret = os.getenv('BYBIT_API_SECRET')
+
+                        if api_key and api_secret:
+                            try:
+                                private_stream = BybitPrivateStream(
+                                    config.__dict__,
+                                    api_key=api_key,
+                                    api_secret=api_secret,
+                                    event_handler=self._handle_stream_event
+                                )
+                                await private_stream.start()
+                                self.websockets[f'{name}_private'] = private_stream
+                                logger.info(f"✅ {name.capitalize()} Private WebSocket ready (mainnet)")
+                            except Exception as e:
+                                logger.warning(f"Failed to start Bybit private stream: {e}")
+                                logger.info("Continuing with public stream only")
+                        else:
+                            logger.info(f"ℹ️ Bybit private stream skipped (no API credentials)")
 
             # Initialize position manager
             logger.info("Initializing position manager...")

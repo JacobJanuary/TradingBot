@@ -419,7 +419,7 @@ class AdaptiveBinanceStream:
             # For testnet, check if we have recent price updates
             if not self.prices:
                 return False
-            
+
             # Check if any price is recent (within last 10 seconds)
             now = datetime.now()
             for price_data in self.prices.values():
@@ -429,3 +429,124 @@ class AdaptiveBinanceStream:
         else:
             # For mainnet, check WebSocket connections
             return bool(self.public_ws and self.private_ws)
+
+
+class AdaptiveBybitStream:
+    """
+    Adaptive stream handler for Bybit that works with both
+    testnet (REST polling) and mainnet (WebSocket)
+    """
+
+    def __init__(self, client: Any, is_testnet: bool = True):
+        self.client = client
+        self.is_testnet = is_testnet
+        self.mode = StreamMode.TESTNET if is_testnet else StreamMode.MAINNET
+
+        # State tracking
+        self.positions = {}
+        self.orders = {}
+        self.running = False
+        self.connected = False
+        self.active_symbols = set()
+
+        # Callbacks
+        self.callbacks = {
+            'position_update': None,
+            'order_update': None
+        }
+
+        logger.info(f"🔧 AdaptiveBybitStream configured for {'TESTNET' if is_testnet else 'MAINNET'} mode")
+
+    def set_callback(self, event_type: str, callback: Callable):
+        """Set callback for specific event type"""
+        if event_type in self.callbacks:
+            self.callbacks[event_type] = callback
+
+    async def start(self):
+        """Start appropriate streams based on mode"""
+        self.running = True
+
+        if self.mode == StreamMode.TESTNET:
+            await self._start_testnet_mode()
+        else:
+            await self._start_mainnet_mode()
+
+    async def _start_testnet_mode(self):
+        """Testnet mode: REST polling only"""
+        logger.info("Starting Bybit TESTNET mode with REST polling")
+        await self._poll_private_data()
+
+    async def _start_mainnet_mode(self):
+        """Mainnet mode: Will use WebSocket (handled by BybitPrivateStream)"""
+        logger.info("Bybit MAINNET mode: WebSocket handled by BybitPrivateStream")
+        # This won't be used in mainnet - BybitPrivateStream handles it
+        pass
+
+    async def _poll_private_data(self):
+        """Poll REST API for private data (testnet)"""
+        logger.info("Starting REST API polling for Bybit private data (testnet mode)")
+
+        while self.running:
+            try:
+                # Fetch positions using ccxt methods
+                positions_raw = await self.client.fetch_positions()
+                logger.debug(f"📊 Fetched {len(positions_raw)} positions from Bybit")
+
+                positions = []
+                self.active_symbols.clear()
+
+                for pos in positions_raw:
+                    # Bybit returns positions with 'contracts' field
+                    if pos.get('contracts', 0) > 0:
+                        symbol = pos['symbol']
+                        self.active_symbols.add(symbol)
+
+                        positions.append({
+                            'symbol': symbol,
+                            'side': pos['side'],
+                            'size': pos['contracts'],
+                            'entry_price': pos['entryPrice'] or 0,
+                            'mark_price': pos['markPrice'] or 0,
+                            'unrealized_pnl': pos.get('unrealizedPnl', 0)
+                        })
+
+                if positions:
+                    logger.debug(f"📊 Processing {len(positions)} active Bybit positions")
+                    await self._process_positions_update(positions)
+
+                # Wait before next poll
+                await asyncio.sleep(10)  # Poll every 10 seconds (same as Binance)
+
+            except Exception as e:
+                logger.error(f"Bybit REST polling error: {e}")
+                await asyncio.sleep(10)
+
+    async def _process_positions_update(self, positions: list):
+        """Process positions update from REST"""
+        position_dict = {}
+
+        for pos in positions:
+            symbol = pos['symbol']
+            position_dict[symbol] = {
+                'symbol': symbol,
+                'side': pos['side'],
+                'quantity': pos['size'],
+                'entry_price': pos['entry_price'],
+                'mark_price': pos['mark_price'],
+                'unrealized_pnl': pos['unrealized_pnl']
+            }
+
+        self.positions = position_dict
+
+        # Trigger callback
+        if self.callbacks['position_update']:
+            await self.callbacks['position_update'](self.positions)
+
+    async def stop(self):
+        """Stop polling"""
+        self.running = False
+        logger.info("AdaptiveBybitStream stopped")
+
+    def is_healthy(self) -> bool:
+        """Check if stream is healthy"""
+        return self.running
