@@ -2023,10 +2023,13 @@ class PositionManager:
                 
                 # Update database with pending close order
                 try:
+                    # Import truncate helper from atomic_position_manager
+                    from core.atomic_position_manager import truncate_exit_reason
+
                     await self.repository.update_position(position.id, {
                         'pending_close_order_id': order['id'],
                         'pending_close_price': to_decimal(target_price),
-                        'exit_reason': reason
+                        'exit_reason': truncate_exit_reason(reason)
                     })
                 except Exception as db_error:
                     logger.error(f"Failed to update pending close order in database for {symbol}: {db_error}")

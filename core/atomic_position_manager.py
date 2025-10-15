@@ -21,6 +21,26 @@ from core.exchange_response_adapter import ExchangeResponseAdapter
 logger = logging.getLogger(__name__)
 
 
+def truncate_exit_reason(reason: str, max_length: int = 450) -> str:
+    """
+    Безопасное усечение exit_reason до максимальной длины
+
+    Args:
+        reason: Причина выхода/ошибки
+        max_length: Максимальная длина (default: 450 для varchar(500) с запасом)
+
+    Returns:
+        Усечённая строка с индикатором усечения если необходимо
+    """
+    if len(reason) <= max_length:
+        return reason
+
+    # Усекаем с добавлением индикатора
+    truncate_marker = "...[truncated]"
+    available_length = max_length - len(truncate_marker)
+    return reason[:available_length] + truncate_marker
+
+
 class PositionState(Enum):
     """
     Состояния позиции для обеспечения атомарности
@@ -269,7 +289,7 @@ class AtomicPositionManager:
                         try:
                             await self.repository.update_position(position_id, **{
                                 'status': 'canceled',
-                                'exit_reason': 'Symbol unavailable for trading'
+                                'exit_reason': truncate_exit_reason('Symbol unavailable for trading')
                             })
                         except:
                             pass  # Ignore cleanup errors
@@ -286,7 +306,7 @@ class AtomicPositionManager:
                         try:
                             await self.repository.update_position(position_id, **{
                                 'status': 'canceled',
-                                'exit_reason': 'Order size below minimum limit'
+                                'exit_reason': truncate_exit_reason('Order size below minimum limit')
                             })
                         except:
                             pass  # Ignore cleanup errors
@@ -378,10 +398,11 @@ class AtomicPositionManager:
             # Обновляем статус в БД
             if position_id:
                 # FIX: update_position expects **kwargs, not dict as second argument
+                # FIX: Truncate error to fit varchar(500) limit
                 await self.repository.update_position(position_id, **{
                     'status': PositionState.ROLLED_BACK.value,
                     'closed_at': datetime.utcnow(),  # FIX: Use offset-naive datetime for database compatibility
-                    'exit_reason': f'rollback: {error}'
+                    'exit_reason': truncate_exit_reason(f'rollback: {error}')
                 })
 
         except Exception as rollback_error:
@@ -423,7 +444,7 @@ class AtomicPositionManager:
                     # FIX: update_position expects **kwargs, not dict as second argument
                     await self.repository.update_position(pos['id'], **{
                         'status': PositionState.FAILED.value,
-                        'exit_reason': 'incomplete: entry not placed'
+                        'exit_reason': truncate_exit_reason('incomplete: entry not placed')
                     })
 
                 elif state == PositionState.ENTRY_PLACED.value:
@@ -503,7 +524,7 @@ class AtomicPositionManager:
                 await self.repository.update_position(position['id'], **{
                     'status': 'closed',
                     'closed_at': datetime.utcnow(),  # FIX: Use offset-naive datetime for database compatibility
-                    'exit_reason': 'emergency: no stop loss',
+                    'exit_reason': truncate_exit_reason('emergency: no stop loss'),
                     'current_price': close_order.price if close_order else None  # Use current_price instead of exit_price
                 })
 
