@@ -64,6 +64,23 @@ class EnhancedZombieOrderManager:
 
         logger.info(f"EnhancedZombieOrderManager initialized for {exchange_manager.name}")
 
+    async def _log_event_safe(self, event_type: EventType, data: Dict, **kwargs):
+        """
+        FIX #3: Safe wrapper for EventLogger that never throws exceptions
+
+        Prevents cleanup from stopping due to logging failures
+        """
+        event_logger = get_event_logger()
+        if event_logger:
+            try:
+                await event_logger.log_event(event_type, data, **kwargs)
+            except Exception as e:
+                # Log to standard logger but don't raise
+                logger.error(
+                    f"Failed to log event {event_type.value}: {e}. "
+                    f"Continuing cleanup anyway."
+                )
+
     async def _get_active_positions_cached(self) -> Dict[Tuple[str, int], Dict]:
         """
         Get active positions with caching to reduce API calls
@@ -152,21 +169,19 @@ class EnhancedZombieOrderManager:
                 for z in zombies[:5]:  # Log first 5
                     logger.debug(f"  - {z.symbol} {z.order_type} {z.side}: {z.reason}")
 
-                # Log zombie orders detection
-                event_logger = get_event_logger()
-                if event_logger:
-                    await event_logger.log_event(
-                        EventType.ZOMBIE_ORDERS_DETECTED,
-                        {
-                            'exchange': self.exchange.name,
-                            'zombie_count': len(zombies),
-                            'total_orders': len(all_orders),
-                            'active_positions': len(active_symbols),
-                            'sample_reasons': [z.reason for z in zombies[:5]]
-                        },
-                        exchange=self.exchange.name,
-                        severity='WARNING'
-                    )
+                # Log zombie orders detection (FIX #3: using safe wrapper)
+                await self._log_event_safe(
+                    EventType.ZOMBIE_ORDERS_DETECTED,
+                    {
+                        'exchange': self.exchange.name,
+                        'zombie_count': len(zombies),
+                        'total_orders': len(all_orders),
+                        'active_positions': len(active_symbols),
+                        'sample_reasons': [z.reason for z in zombies[:5]]
+                    },
+                    exchange=self.exchange.name,
+                    severity='WARNING'
+                )
             else:
                 logger.info("✨ No zombie orders detected")
 
@@ -438,20 +453,18 @@ class EnhancedZombieOrderManager:
             if aggressive and symbols_for_aggressive:
                 logger.warning(f"🔥 Aggressive cleanup for symbols: {symbols_for_aggressive}")
 
-                # Log aggressive cleanup trigger
-                event_logger = get_event_logger()
-                if event_logger:
-                    await event_logger.log_event(
-                        EventType.AGGRESSIVE_CLEANUP_TRIGGERED,
-                        {
-                            'exchange': self.exchange.name,
-                            'symbols': list(symbols_for_aggressive),
-                            'symbol_count': len(symbols_for_aggressive),
-                            'zombie_count': len(zombies)
-                        },
-                        exchange=self.exchange.name,
-                        severity='WARNING'
-                    )
+                # Log aggressive cleanup trigger (FIX #3: using safe wrapper)
+                await self._log_event_safe(
+                    EventType.AGGRESSIVE_CLEANUP_TRIGGERED,
+                    {
+                        'exchange': self.exchange.name,
+                        'symbols': list(symbols_for_aggressive),
+                        'symbol_count': len(symbols_for_aggressive),
+                        'zombie_count': len(zombies)
+                    },
+                    exchange=self.exchange.name,
+                    severity='WARNING'
+                )
 
                 for symbol in symbols_for_aggressive:
                     await self._cancel_all_orders_for_symbol(symbol)
@@ -463,22 +476,20 @@ class EnhancedZombieOrderManager:
                 f"{results['failed']} failed"
             )
 
-            # Log zombie cleanup completion
-            event_logger = get_event_logger()
-            if event_logger:
-                await event_logger.log_event(
-                    EventType.ZOMBIE_CLEANUP_COMPLETED,
-                    {
-                        'exchange': self.exchange.name,
-                        'detected': results['detected'],
-                        'cancelled': results['cancelled'],
-                        'failed': results['failed'],
-                        'dry_run': dry_run,
-                        'aggressive': aggressive
-                    },
-                    exchange=self.exchange.name,
-                    severity='INFO'
-                )
+            # Log zombie cleanup completion (FIX #3: using safe wrapper)
+            await self._log_event_safe(
+                EventType.ZOMBIE_CLEANUP_COMPLETED,
+                {
+                    'exchange': self.exchange.name,
+                    'detected': results['detected'],
+                    'cancelled': results['cancelled'],
+                    'failed': results['failed'],
+                    'dry_run': dry_run,
+                    'aggressive': aggressive
+                },
+                exchange=self.exchange.name,
+                severity='INFO'
+            )
 
         except Exception as e:
             logger.error(f"Error in zombie cleanup: {e}")
@@ -498,22 +509,21 @@ class EnhancedZombieOrderManager:
                 logger.info(f"✅ Cancelled zombie order {zombie.order_id} for {zombie.symbol}")
 
                 # Log zombie order cancellation
-                event_logger = get_event_logger()
-                if event_logger:
-                    await event_logger.log_event(
-                        EventType.ZOMBIE_ORDER_CANCELLED,
-                        {
-                            'order_id': zombie.order_id,
-                            'symbol': zombie.symbol,
-                            'exchange': zombie.exchange,
-                            'order_type': zombie.order_type,
-                            'side': zombie.side,
-                            'reason': zombie.reason
-                        },
-                        symbol=zombie.symbol,
-                        exchange=zombie.exchange,
-                        severity='INFO'
-                    )
+                # FIX #3: using safe wrapper
+                await self._log_event_safe(
+                    EventType.ZOMBIE_ORDER_CANCELLED,
+                    {
+                        'order_id': zombie.order_id,
+                        'symbol': zombie.symbol,
+                        'exchange': zombie.exchange,
+                        'order_type': zombie.order_type,
+                        'side': zombie.side,
+                        'reason': zombie.reason
+                    },
+                    symbol=zombie.symbol,
+                    exchange=zombie.exchange,
+                    severity='INFO'
+                )
 
                 return True
 
@@ -590,21 +600,19 @@ class EnhancedZombieOrderManager:
                     if int(response.get('retCode', 1)) == 0:
                         logger.info(f"✅ Cleared TP/SL for {symbol} positionIdx={position_idx}")
 
-                        # Log TP/SL clearing
-                        event_logger = get_event_logger()
-                        if event_logger:
-                            await event_logger.log_event(
-                                EventType.TPSL_ORDERS_CLEARED,
-                                {
-                                    'symbol': symbol,
-                                    'exchange': self.exchange.name,
-                                    'position_idx': position_idx,
-                                    'orders_cleared': len(orders)
-                                },
-                                symbol=symbol,
-                                exchange=self.exchange.name,
-                                severity='INFO'
-                            )
+                        # Log TP/SL clearing (FIX #3: using safe wrapper)
+                        await self._log_event_safe(
+                            EventType.TPSL_ORDERS_CLEARED,
+                            {
+                                'symbol': symbol,
+                                'exchange': self.exchange.name,
+                                'position_idx': position_idx,
+                                'orders_cleared': len(orders)
+                            },
+                            symbol=symbol,
+                            exchange=self.exchange.name,
+                            severity='INFO'
+                        )
 
                 except Exception as e:
                     logger.error(f"Failed to clear TP/SL for {symbol}: {e}")
@@ -702,18 +710,16 @@ class ZombieOrderMonitor:
             f"Threshold: {self.alert_threshold}"
         )
 
-        # Log zombie alert
-        event_logger = get_event_logger()
-        if event_logger:
-            await event_logger.log_event(
-                EventType.ZOMBIE_ALERT_TRIGGERED,
-                {
-                    'zombie_count': zombie_count,
-                    'alert_threshold': self.alert_threshold,
-                    'exchange': self.manager.exchange.name
-                },
-                exchange=self.manager.exchange.name,
-                severity='CRITICAL'
-            )
+        # Log zombie alert (FIX #3: using safe wrapper from manager)
+        await self.manager._log_event_safe(
+            EventType.ZOMBIE_ALERT_TRIGGERED,
+            {
+                'zombie_count': zombie_count,
+                'alert_threshold': self.alert_threshold,
+                'exchange': self.manager.exchange.name
+            },
+            exchange=self.manager.exchange.name,
+            severity='CRITICAL'
+        )
 
         self.last_alert = now
