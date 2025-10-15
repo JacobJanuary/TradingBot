@@ -10,11 +10,12 @@ LOGIC:
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
 import asyncio
 import os
+import ccxt
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,31 @@ class AgedPositionManager:
 
             # Update or create limit exit order
             await self._update_single_exit_order(position, target_price, phase)
+
+        except ccxt.ExchangeError as e:
+            error_msg = str(e)
+            # Handle geographic restrictions
+            if '170209' in error_msg or 'China region' in error_msg:
+                logger.error(
+                    f"⛔ {position.symbol} not available in this region - "
+                    f"skipping aged position management for 24h"
+                )
+                # Mark to skip for 24h
+                position_id = f"{position.symbol}_{position.exchange}"
+                self.managed_positions[position_id] = {
+                    'last_update': datetime.now(),
+                    'order_id': None,
+                    'phase': 'SKIPPED_GEO_RESTRICTED',
+                    'skip_until': datetime.now() + timedelta(days=1)
+                }
+            # Handle invalid price errors
+            elif '170193' in error_msg or 'price cannot be' in error_msg.lower():
+                logger.warning(
+                    f"⚠️ Invalid price for {position.symbol}: {error_msg[:100]}"
+                )
+            else:
+                # Re-raise other exchange errors
+                raise
 
         except Exception as e:
             logger.error(f"Error processing aged position {position.symbol}: {e}", exc_info=True)
