@@ -443,8 +443,15 @@ class AgedPositionManager:
             if not exchange:
                 return None
 
-            ticker = await exchange.fetch_ticker(symbol)
-            return float(ticker['last'])
+            ticker = await exchange.fetch_ticker(symbol, use_cache=False)
+            price = float(ticker['last'])
+
+            # Check for invalid price
+            if price == 0:
+                logger.warning(f"Price for {symbol} is 0, skipping aged position update")
+                return None
+
+            return price
 
         except Exception as e:
             logger.error(f"Error fetching price for {symbol}: {e}")
