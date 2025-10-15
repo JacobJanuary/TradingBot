@@ -410,12 +410,12 @@ class Repository:
             SELECT id, symbol, exchange, side, entry_price, current_price,
                    quantity, leverage, stop_loss, take_profit,
                    status, pnl, pnl_percentage, trailing_activated,
-                   created_at, updated_at
+                   has_trailing_stop, created_at, updated_at
             FROM monitoring.positions
             WHERE status = 'active'
             ORDER BY created_at DESC
         """
-        
+
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(query)
             return [dict(row) for row in rows]

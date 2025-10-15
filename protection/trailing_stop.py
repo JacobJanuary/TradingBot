@@ -202,7 +202,7 @@ class SmartTrailingStopManager:
         logger.debug(f"[TS] update_price called: {symbol} @ {price}")
 
         if symbol not in self.trailing_stops:
-            logger.debug(f"[TS] Symbol {symbol} NOT in trailing_stops dict (available: {list(self.trailing_stops.keys())[:5]}...)")
+            logger.error(f"[TS] Trailing stop not found for {symbol}! This should not happen. Available TS: {list(self.trailing_stops.keys())}")
             return None
 
         async with self.lock:
