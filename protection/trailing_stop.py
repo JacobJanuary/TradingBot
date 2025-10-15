@@ -15,6 +15,11 @@ from core.event_logger import get_event_logger, EventType
 
 logger = logging.getLogger(__name__)
 
+# ============== CONSTANTS ==============
+
+# Price sentinel values for uninitialized tracking
+UNINITIALIZED_PRICE_HIGH = Decimal('999999')  # For highest_price in short positions, lowest_price in long
+
 
 class TrailingStopState(Enum):
     """Trailing stop states"""
@@ -220,8 +225,8 @@ class SmartTrailingStopManager:
                 symbol=state_data['symbol'],
                 entry_price=Decimal(str(state_data['entry_price'])),
                 current_price=Decimal(str(state_data.get('current_stop_price', state_data['entry_price']))),
-                highest_price=Decimal(str(state_data.get('highest_price', state_data['entry_price']))) if state_data['side'] == 'long' else Decimal('999999'),
-                lowest_price=Decimal('999999') if state_data['side'] == 'long' else Decimal(str(state_data.get('lowest_price', state_data['entry_price']))),
+                highest_price=Decimal(str(state_data.get('highest_price', state_data['entry_price']))) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH,
+                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else Decimal(str(state_data.get('lowest_price', state_data['entry_price']))),
                 state=TrailingStopState(state_data['state']),
                 activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
                 current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
@@ -308,8 +313,8 @@ class SmartTrailingStopManager:
                 symbol=symbol,
                 entry_price=Decimal(str(entry_price)),
                 current_price=Decimal(str(entry_price)),
-                highest_price=Decimal(str(entry_price)) if side == 'long' else Decimal('999999'),
-                lowest_price=Decimal('999999') if side == 'long' else Decimal(str(entry_price)),
+                highest_price=Decimal(str(entry_price)) if side == 'long' else UNINITIALIZED_PRICE_HIGH,
+                lowest_price=UNINITIALIZED_PRICE_HIGH if side == 'long' else Decimal(str(entry_price)),
                 side=side.lower(),
                 quantity=Decimal(str(quantity))
             )
@@ -539,25 +544,22 @@ class SmartTrailingStopManager:
 
         if new_stop_price:
             old_stop = ts.current_stop_price
-            ts.current_stop_price = new_stop_price
-            ts.last_stop_update = datetime.now()
-            ts.update_count += 1
 
-            # NEW: Check rate limiting and conditional update rules
+            # NEW APPROACH: Check FIRST, modify AFTER (no rollback needed)
             should_update, skip_reason = self._should_update_stop_loss(ts, new_stop_price, old_stop)
 
             if not should_update:
                 # Skip update - log reason
                 logger.debug(
                     f"⏭️  {ts.symbol}: SL update SKIPPED - {skip_reason} "
-                    f"(new_stop={new_stop_price:.4f})"
+                    f"(proposed_stop={new_stop_price:.4f})"
                 )
 
                 # Log skip event (optional - для статистики)
                 event_logger = get_event_logger()
                 if event_logger:
                     await event_logger.log_event(
-                        EventType.TRAILING_STOP_UPDATED,  # Same event type but with skip_reason
+                        EventType.TRAILING_STOP_UPDATED,
                         {
                             'symbol': ts.symbol,
                             'action': 'skipped',
@@ -571,12 +573,12 @@ class SmartTrailingStopManager:
                         severity='DEBUG'
                     )
 
-                # IMPORTANT: Revert changes since we're not updating
-                ts.current_stop_price = old_stop  # Restore old price
-                ts.last_stop_update = None  # Clear update timestamp
-                ts.update_count -= 1  # Revert counter
+                return None  # Don't proceed with update
 
-                return None  # Return None to indicate no action taken
+            # All checks passed - NOW modify state
+            ts.current_stop_price = new_stop_price
+            ts.last_stop_update = datetime.now()
+            ts.update_count += 1
 
             # Update stop order on exchange
             await self._update_stop_order(ts)
