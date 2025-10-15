@@ -409,7 +409,7 @@ class SmartTrailingStopManager:
 
             improvement = abs((new_stop_price - old_stop) / old_stop * 100)
             logger.info(
-                f"📈 {ts.symbol}: Trailing stop updated from {old_stop:.4f} to {new_stop_price:.4f} "
+                f"📈 {ts.symbol}: SL moved - Trailing stop updated from {old_stop:.4f} to {new_stop_price:.4f} "
                 f"(+{improvement:.2f}%)"
             )
 

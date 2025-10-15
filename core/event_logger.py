@@ -10,10 +10,19 @@ import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from enum import Enum
+from decimal import Decimal
 import asyncpg
 import traceback
 
 logger = logging.getLogger(__name__)
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """JSON encoder that handles Decimal types"""
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
 
 
 class EventType(Enum):
@@ -239,7 +248,7 @@ class EventLogger:
         """
         event = {
             'event_type': event_type.value,
-            'event_data': json.dumps(data),
+            'event_data': json.dumps(data, cls=DecimalEncoder),
             'correlation_id': correlation_id,
             'position_id': position_id,
             'order_id': order_id,
