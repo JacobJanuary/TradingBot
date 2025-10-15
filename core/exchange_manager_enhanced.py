@@ -375,8 +375,11 @@ class EnhancedExchangeManager:
             logger.info(f"🔄 Cancelling order {order_id} for {symbol}")
             await self.exchange.cancel_order(order_id, symbol)
 
-            # Step 2: CRITICAL delay for exchange processing
-            await asyncio.sleep(0.2)
+            # ADDED: Invalidate cache immediately after cancel
+            await self._invalidate_order_cache(symbol)
+
+            # Step 2: CRITICAL delay for exchange processing (increased for reliability)
+            await asyncio.sleep(0.5)
 
             # Step 3: Verify cancellation
             try:
@@ -407,10 +410,12 @@ class EnhancedExchangeManager:
 
         except ccxt.OrderNotFound:
             logger.info(f"Order {order_id} not found (already cancelled/filled)")
+            await self._invalidate_order_cache(symbol)  # ADDED: invalidate on not found
             return {'status': 'not_found', 'order': None}
 
         except Exception as e:
             logger.error(f"Error cancelling order {order_id}: {e}")
+            await self._invalidate_order_cache(symbol)  # ADDED: invalidate on error (safe)
             return {'status': 'error', 'order': None, 'error': str(e)}
 
         finally:
