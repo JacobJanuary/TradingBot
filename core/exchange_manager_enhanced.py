@@ -179,6 +179,80 @@ class EnhancedExchangeManager:
             logger.error(f"❌ Unexpected error creating exit order: {e}", exc_info=True)
             raise
 
+    async def create_or_update_exit_order(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: float,
+        min_price_diff_pct: float = 0.5
+    ) -> Optional[Dict]:
+        """
+        Unified method: create exit order or update if exists
+
+        Handles:
+        - Checking for existing order
+        - Deciding if price update needed
+        - Cancelling old + creating new if needed
+        - All duplicate prevention logic
+
+        Args:
+            symbol: Trading pair
+            side: Order side ('buy' or 'sell')
+            amount: Order amount
+            price: Target price
+            min_price_diff_pct: Minimum price difference to trigger update (default 0.5%)
+
+        Returns:
+            Order dict with '_was_updated' flag
+        """
+        try:
+            # Check for existing order
+            existing = await self._check_existing_exit_order(symbol, side, price)
+
+            if existing:
+                existing_price = float(existing.get('price', 0))
+                price_diff_pct = abs(price - existing_price) / existing_price * 100
+
+                if price_diff_pct > min_price_diff_pct:
+                    # Need to update
+                    logger.info(
+                        f"📊 Updating exit order {existing['id']} for {symbol}: "
+                        f"${existing_price:.4f} → ${price:.4f} ({price_diff_pct:.1f}% diff)"
+                    )
+
+                    # Cancel old order
+                    await self.safe_cancel_with_verification(existing['id'], symbol)
+                    await asyncio.sleep(0.5)  # Wait for cancellation to propagate
+
+                    # Create new order
+                    order = await self.create_limit_exit_order(
+                        symbol, side, amount, price, check_duplicates=False
+                    )
+                    if order:
+                        order['_was_updated'] = True
+                    return order
+                else:
+                    # Price acceptable, keep existing
+                    logger.debug(
+                        f"Exit order price OK for {symbol} "
+                        f"(diff {price_diff_pct:.1f}% < {min_price_diff_pct}%), keeping existing"
+                    )
+                    existing['_was_updated'] = False
+                    return existing
+            else:
+                # No existing order, create new
+                order = await self.create_limit_exit_order(
+                    symbol, side, amount, price, check_duplicates=True
+                )
+                if order:
+                    order['_was_updated'] = False
+                return order
+
+        except Exception as e:
+            logger.error(f"Error in create_or_update_exit_order: {e}", exc_info=True)
+            raise
+
     async def _check_existing_exit_order(
         self,
         symbol: str,
