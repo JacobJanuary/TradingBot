@@ -31,6 +31,7 @@ class ComponentType(Enum):
     RISK_MANAGER = "risk_manager"
     POSITION_MANAGER = "position_manager"
     PROTECTION_SYSTEM = "protection_system"
+    TRAILING_STOP = "trailing_stop"
 
 
 @dataclass
@@ -93,7 +94,8 @@ class HealthChecker:
             ComponentType.SIGNAL_PROCESSOR: self._check_signal_processor,
             ComponentType.RISK_MANAGER: self._check_risk_manager,
             ComponentType.POSITION_MANAGER: self._check_position_manager,
-            ComponentType.PROTECTION_SYSTEM: self._check_protection_system
+            ComponentType.PROTECTION_SYSTEM: self._check_protection_system,
+            ComponentType.TRAILING_STOP: self._check_trailing_stop
         }
         
         # Component dependencies
@@ -440,7 +442,82 @@ class HealthChecker:
                 'trailing_stops': 2
             }
         )
-    
+
+    async def _check_trailing_stop(self) -> ComponentHealth:
+        """
+        Check Trailing Stop system health
+
+        Metrics:
+        - Number of active trailing stops
+        - Number of activated trailing stops
+        - Recent activation count (last hour)
+        - Recent update count (last hour)
+        - Error count
+        """
+        try:
+            # Query TS state from database
+            query = """
+                SELECT
+                    COUNT(*) as total_ts,
+                    COUNT(*) FILTER (WHERE is_activated = TRUE) as activated_ts,
+                    COUNT(*) FILTER (WHERE activated_at > NOW() - INTERVAL '1 hour') as activations_last_hour,
+                    COUNT(*) FILTER (WHERE last_update_time > NOW() - INTERVAL '1 hour') as updates_last_hour,
+                    AVG(update_count) as avg_updates_per_ts
+                FROM monitoring.trailing_stop_state
+            """
+
+            row = await self.repository.pool.fetchrow(query)
+
+            total_ts = row['total_ts'] or 0
+            activated_ts = row['activated_ts'] or 0
+            activations_last_hour = row['activations_last_hour'] or 0
+            updates_last_hour = row['updates_last_hour'] or 0
+            avg_updates = float(row['avg_updates_per_ts'] or 0)
+
+            # Determine health status
+            status = HealthStatus.HEALTHY
+            error_message = None
+
+            # Check if TS count matches open positions
+            positions_count = len(await self.repository.get_open_positions())
+
+            if total_ts == 0 and positions_count > 0:
+                status = HealthStatus.UNHEALTHY
+                error_message = f"{positions_count} positions but 0 trailing stops!"
+            elif total_ts < positions_count * 0.95:  # Less than 95% coverage
+                status = HealthStatus.DEGRADED
+                coverage = (total_ts / positions_count * 100) if positions_count > 0 else 0
+                error_message = f"Low TS coverage: {coverage:.1f}% ({total_ts}/{positions_count})"
+
+            return ComponentHealth(
+                name="Trailing Stop System",
+                type=ComponentType.TRAILING_STOP,
+                status=status,
+                last_check=datetime.now(timezone.utc),
+                response_time_ms=0,
+                error_message=error_message,
+                metadata={
+                    'total_trailing_stops': total_ts,
+                    'activated_trailing_stops': activated_ts,
+                    'activations_last_hour': activations_last_hour,
+                    'updates_last_hour': updates_last_hour,
+                    'avg_updates_per_ts': round(avg_updates, 2),
+                    'open_positions': positions_count,
+                    'coverage_percent': round((total_ts / positions_count * 100) if positions_count > 0 else 0, 1)
+                }
+            )
+
+        except Exception as e:
+            return ComponentHealth(
+                name="Trailing Stop System",
+                type=ComponentType.TRAILING_STOP,
+                status=HealthStatus.CRITICAL,
+                last_check=datetime.now(timezone.utc),
+                response_time_ms=0,
+                error_count=1,
+                error_message=str(e)
+            )
+
     def _generate_alerts(self, components: List[ComponentHealth]) -> List[str]:
         """Generate alerts based on component health"""
         
