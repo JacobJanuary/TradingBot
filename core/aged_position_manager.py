@@ -284,86 +284,32 @@ class AgedPositionManager:
             # Determine order side (opposite of position)
             order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
 
-            # Try to use enhanced manager for better order management
+            # FIXED: Use unified method to prevent order proliferation
             try:
                 from core.exchange_manager_enhanced import EnhancedExchangeManager
 
                 # Create enhanced manager
                 enhanced_manager = EnhancedExchangeManager(exchange.exchange)
 
-                # Check for existing exit order
-                existing = await enhanced_manager._check_existing_exit_order(
-                    position.symbol, order_side
+                # Use unified method - handles all duplicate logic internally
+                order = await enhanced_manager.create_or_update_exit_order(
+                    symbol=position.symbol,
+                    side=order_side,
+                    amount=abs(float(position.quantity)),
+                    price=float(target_price),
+                    min_price_diff_pct=0.5
                 )
 
-                if existing:
-                    # Check if price needs update (convert to Decimal for consistency)
-                    existing_price = Decimal(str(existing.get('price', 0)))
-                    price_diff_pct = abs(target_price - existing_price) / existing_price * 100
-
-                    if price_diff_pct > 0.5:  # Update if > 0.5% difference
-                        logger.info(
-                            f"📊 Updating exit order for {position.symbol}:\n"
-                            f"  Old price: ${existing_price:.4f}\n"
-                            f"  New price: ${target_price:.4f}\n"
-                            f"  Difference: {price_diff_pct:.1f}%\n"
-                            f"  Phase: {phase}"
-                        )
-
-                        # Cancel old order
-                        try:
-                            await enhanced_manager.safe_cancel_with_verification(
-                                existing['id'], position.symbol
-                            )
-                        except Exception as e:
-                            logger.warning(f"Could not cancel old order: {e}")
-
-                        # Wait for cancellation to process
-                        await asyncio.sleep(0.2)
-
-                        # Create new order with updated price
-                        order = await enhanced_manager.create_limit_exit_order(
-                            symbol=position.symbol,
-                            side=order_side,
-                            amount=abs(float(position.quantity)),
-                            price=target_price,
-                            check_duplicates=True
-                        )
-
-                        if order:
-                            self.managed_positions[position_id] = {
-                                'last_update': datetime.now(),
-                                'order_id': order['id'],
-                                'phase': phase
-                            }
-                            self.stats['orders_updated'] += 1
+                if order:
+                    self.managed_positions[position_id] = {
+                        'last_update': datetime.now(),
+                        'order_id': order['id'],
+                        'phase': phase
+                    }
+                    # Update statistics based on whether order was updated or created
+                    if order.get('_was_updated'):
+                        self.stats['orders_updated'] += 1
                     else:
-                        logger.debug(
-                            f"Exit order price acceptable (diff {price_diff_pct:.1f}% < 0.5%), "
-                            f"keeping existing order at ${existing_price:.4f}"
-                        )
-                else:
-                    # No existing order, create new one
-                    logger.info(
-                        f"📝 Creating initial exit order for {position.symbol}:\n"
-                        f"  Price: ${target_price:.4f}\n"
-                        f"  Phase: {phase}"
-                    )
-
-                    order = await enhanced_manager.create_limit_exit_order(
-                        symbol=position.symbol,
-                        side=order_side,
-                        amount=abs(float(position.quantity)),
-                        price=target_price,
-                        check_duplicates=True
-                    )
-
-                    if order:
-                        self.managed_positions[position_id] = {
-                            'last_update': datetime.now(),
-                            'order_id': order['id'],
-                            'phase': phase
-                        }
                         self.stats['orders_created'] += 1
 
             except ImportError:
