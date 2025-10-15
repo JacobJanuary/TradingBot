@@ -74,6 +74,30 @@ class AgedPositionManager:
             f"  • Commission: {self.commission_percent*100:.2f}%"
         )
 
+    def _apply_price_precision(self, price: float, symbol: str, exchange_name: str) -> float:
+        """Apply exchange price precision to avoid rounding errors"""
+        try:
+            exchange = self.exchanges.get(exchange_name)
+            if not exchange:
+                return price
+
+            markets = exchange.exchange.markets
+            if symbol not in markets:
+                return price
+
+            market = markets[symbol]
+            precision = market.get('precision', {}).get('price')
+
+            if precision and precision > 0:
+                from math import log10
+                decimals = int(-log10(precision))
+                return round(price, decimals)
+
+            return price
+        except Exception as e:
+            logger.warning(f"Could not apply price precision for {symbol}: {e}")
+            return price
+
     async def check_and_process_aged_positions(self) -> int:
         """
         Main method to check and process aged positions
@@ -310,6 +334,13 @@ class AgedPositionManager:
             # Determine order side (opposite of position)
             order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
 
+            # Apply price precision to avoid rounding errors
+            precise_price = self._apply_price_precision(
+                float(target_price),
+                position.symbol,
+                position.exchange
+            )
+
             # FIXED: Use unified method to prevent order proliferation
             try:
                 from core.exchange_manager_enhanced import EnhancedExchangeManager
@@ -322,7 +353,7 @@ class AgedPositionManager:
                     symbol=position.symbol,
                     side=order_side,
                     amount=abs(float(position.quantity)),
-                    price=float(target_price),
+                    price=precise_price,
                     min_price_diff_pct=0.5
                 )
 
@@ -385,7 +416,7 @@ class AgedPositionManager:
                     type='limit',
                     side=order_side,
                     amount=abs(float(position.quantity)),
-                    price=target_price,
+                    price=precise_price,
                     params=params
                 )
 
