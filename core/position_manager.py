@@ -153,7 +153,12 @@ class PositionManager:
         )
         
         self.trailing_managers = {
-            name: SmartTrailingStopManager(exchange, trailing_config, exchange_name=name)
+            name: SmartTrailingStopManager(
+                exchange,
+                trailing_config,
+                exchange_name=name,
+                repository=repository  # NEW: Pass repository for persistence
+            )
             for name, exchange in exchanges.items()
         }
 
@@ -520,27 +525,37 @@ class PositionManager:
                 logger.info("✅ All loaded positions have stop losses")
             
             # Initialize trailing stops for loaded positions
+            # NEW: Try to restore from DB first, otherwise create new
             logger.info("🎯 Initializing trailing stops for loaded positions...")
             for symbol, position in self.positions.items():
                 try:
                     trailing_manager = self.trailing_managers.get(position.exchange)
                     if trailing_manager:
-                        # Create trailing stop for the position
-                        await trailing_manager.create_trailing_stop(
-                            symbol=symbol,
-                            side=position.side,
-                            entry_price=to_decimal(position.entry_price),
-                            quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0))
-                        )
-                        position.has_trailing_stop = True
+                        # NEW: Try to restore state from database first
+                        restored_ts = await trailing_manager._restore_state(symbol)
 
-                        # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
-                        await self.repository.update_position(
-                            position.id,
-                            has_trailing_stop=True
-                        )
+                        if restored_ts:
+                            # State restored from DB - add to manager
+                            trailing_manager.trailing_stops[symbol] = restored_ts
+                            position.has_trailing_stop = True
+                            logger.info(f"✅ {symbol}: TS state restored from DB")
+                        else:
+                            # No state in DB - create new trailing stop
+                            await trailing_manager.create_trailing_stop(
+                                symbol=symbol,
+                                side=position.side,
+                                entry_price=to_decimal(position.entry_price),
+                                quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0))
+                            )
+                            position.has_trailing_stop = True
 
-                        logger.info(f"✅ Trailing stop initialized for {symbol}")
+                            # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
+                            await self.repository.update_position(
+                                position.id,
+                                has_trailing_stop=True
+                            )
+
+                            logger.info(f"✅ {symbol}: New TS created (no state in DB)")
                     else:
                         logger.warning(f"⚠️ No trailing manager for exchange {position.exchange}")
                 except Exception as e:

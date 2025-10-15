@@ -736,6 +736,169 @@ class Repository:
             logger.error(f"Failed to retrieve cached orders for {symbol}: {e}")
             return []
 
+    # ============== TRAILING STOP STATE PERSISTENCE ==============
+
+    async def save_trailing_stop_state(self, state_data: Dict) -> bool:
+        """
+        Save or update trailing stop state in database
+
+        Args:
+            state_data: Dictionary with TS state fields
+
+        Returns:
+            bool: True if saved successfully
+        """
+        query = """
+            INSERT INTO monitoring.trailing_stop_state (
+                symbol, exchange, position_id, state, is_activated,
+                highest_price, lowest_price, current_stop_price,
+                stop_order_id, activation_price, activation_percent, callback_percent,
+                entry_price, side, quantity, update_count, highest_profit_percent,
+                activated_at, last_update_time, last_sl_update_time, last_updated_sl_price,
+                created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8,
+                $9, $10, $11, $12,
+                $13, $14, $15, $16, $17,
+                $18, $19, $20, $21,
+                COALESCE($22, NOW())
+            )
+            ON CONFLICT (symbol, exchange)
+            DO UPDATE SET
+                position_id = EXCLUDED.position_id,
+                state = EXCLUDED.state,
+                is_activated = EXCLUDED.is_activated,
+                highest_price = EXCLUDED.highest_price,
+                lowest_price = EXCLUDED.lowest_price,
+                current_stop_price = EXCLUDED.current_stop_price,
+                stop_order_id = EXCLUDED.stop_order_id,
+                activation_price = EXCLUDED.activation_price,
+                update_count = EXCLUDED.update_count,
+                highest_profit_percent = EXCLUDED.highest_profit_percent,
+                activated_at = COALESCE(monitoring.trailing_stop_state.activated_at, EXCLUDED.activated_at),
+                last_update_time = EXCLUDED.last_update_time,
+                last_sl_update_time = EXCLUDED.last_sl_update_time,
+                last_updated_sl_price = EXCLUDED.last_updated_sl_price
+        """
+
+        try:
+            await self.pool.execute(
+                query,
+                state_data['symbol'],
+                state_data['exchange'],
+                state_data['position_id'],
+                state_data['state'],
+                state_data['is_activated'],
+                state_data.get('highest_price'),
+                state_data.get('lowest_price'),
+                state_data.get('current_stop_price'),
+                state_data.get('stop_order_id'),
+                state_data.get('activation_price'),
+                state_data.get('activation_percent'),
+                state_data.get('callback_percent'),
+                state_data['entry_price'],
+                state_data['side'],
+                state_data['quantity'],
+                state_data.get('update_count', 0),
+                state_data.get('highest_profit_percent', 0),
+                state_data.get('activated_at'),
+                state_data.get('last_update_time'),
+                state_data.get('last_sl_update_time'),
+                state_data.get('last_updated_sl_price'),
+                state_data.get('created_at')
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save TS state for {state_data['symbol']}: {e}")
+            return False
+
+    async def get_trailing_stop_state(self, symbol: str, exchange: str) -> Optional[Dict]:
+        """
+        Get trailing stop state from database
+
+        Args:
+            symbol: Trading symbol
+            exchange: Exchange name
+
+        Returns:
+            Dict with TS state or None if not found
+        """
+        query = """
+            SELECT
+                symbol, exchange, position_id, state, is_activated,
+                highest_price, lowest_price, current_stop_price,
+                stop_order_id, activation_price, activation_percent, callback_percent,
+                entry_price, side, quantity, update_count, highest_profit_percent,
+                created_at, activated_at, last_update_time, last_sl_update_time, last_updated_sl_price
+            FROM monitoring.trailing_stop_state
+            WHERE symbol = $1 AND exchange = $2
+        """
+
+        try:
+            row = await self.pool.fetchrow(query, symbol, exchange)
+            if row:
+                return dict(row)
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to get TS state for {symbol}: {e}")
+            return None
+
+    async def delete_trailing_stop_state(self, symbol: str, exchange: str) -> bool:
+        """
+        Delete trailing stop state from database
+
+        Args:
+            symbol: Trading symbol
+            exchange: Exchange name
+
+        Returns:
+            bool: True if deleted successfully
+        """
+        query = """
+            DELETE FROM monitoring.trailing_stop_state
+            WHERE symbol = $1 AND exchange = $2
+        """
+
+        try:
+            await self.pool.execute(query, symbol, exchange)
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete TS state for {symbol}: {e}")
+            return False
+
+    async def cleanup_orphan_ts_states(self) -> int:
+        """
+        Clean up trailing stop states for positions that no longer exist
+
+        Returns:
+            int: Number of orphan states deleted
+        """
+        query = """
+            DELETE FROM monitoring.trailing_stop_state ts
+            WHERE NOT EXISTS (
+                SELECT 1 FROM monitoring.positions p
+                WHERE p.id = ts.position_id
+                AND p.status = 'active'
+            )
+            RETURNING symbol
+        """
+
+        try:
+            rows = await self.pool.fetch(query)
+            count = len(rows)
+            if count > 0:
+                symbols = [row['symbol'] for row in rows]
+                logger.info(f"Cleaned up {count} orphan TS states: {symbols}")
+            return count
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup orphan TS states: {e}")
+            return 0
+
 
 # Add alias for compatibility
 TradingRepository = Repository

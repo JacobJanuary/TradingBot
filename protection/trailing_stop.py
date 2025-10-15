@@ -90,11 +90,20 @@ class SmartTrailingStopManager:
     Handles all trailing stop logic independently of exchange implementation
     """
 
-    def __init__(self, exchange_manager, config: TrailingStopConfig = None, exchange_name: str = None):
-        """Initialize trailing stop manager"""
+    def __init__(self, exchange_manager, config: TrailingStopConfig = None, exchange_name: str = None, repository=None):
+        """
+        Initialize trailing stop manager
+
+        Args:
+            exchange_manager: ExchangeManager instance
+            config: TrailingStopConfig (optional)
+            exchange_name: Exchange name (optional)
+            repository: Repository instance for state persistence (optional)
+        """
         self.exchange = exchange_manager
         self.exchange_name = exchange_name or getattr(exchange_manager, 'name', 'unknown')
         self.config = config or TrailingStopConfig()
+        self.repository = repository  # NEW: For database persistence
 
         # Active trailing stops
         self.trailing_stops: Dict[str, TrailingStopInstance] = {}
@@ -112,6 +121,165 @@ class SmartTrailingStopManager:
         }
 
         logger.info(f"SmartTrailingStopManager initialized with config: {self.config}")
+
+    # ============== DATABASE PERSISTENCE ==============
+
+    async def _save_state(self, ts: TrailingStopInstance) -> bool:
+        """
+        Save trailing stop state to database
+
+        Called after:
+        - create_trailing_stop() - initial state
+        - _activate_trailing_stop() - activation
+        - _update_trailing_stop() - SL updates
+
+        Args:
+            ts: TrailingStopInstance to save
+
+        Returns:
+            bool: True if saved successfully, False otherwise
+        """
+        if not self.repository:
+            logger.warning(f"{ts.symbol}: No repository configured, cannot save TS state")
+            return False
+
+        try:
+            # Get position_id from database
+            positions = await self.repository.get_open_positions()
+            position_id = None
+            for pos in positions:
+                if pos['symbol'] == ts.symbol and pos['exchange'] == self.exchange_name:
+                    position_id = pos['id']
+                    break
+
+            if not position_id:
+                logger.error(f"{ts.symbol}: Position not found in DB, cannot save TS state")
+                return False
+
+            # Prepare state data
+            state_data = {
+                'symbol': ts.symbol,
+                'exchange': self.exchange_name,
+                'position_id': position_id,
+                'state': ts.state.value,
+                'is_activated': ts.state == TrailingStopState.ACTIVE,
+                'highest_price': float(ts.highest_price) if ts.highest_price else None,
+                'lowest_price': float(ts.lowest_price) if ts.lowest_price else None,
+                'current_stop_price': float(ts.current_stop_price) if ts.current_stop_price else None,
+                'stop_order_id': ts.stop_order_id,
+                'activation_price': float(ts.activation_price) if ts.activation_price else None,
+                'activation_percent': float(self.config.activation_percent),
+                'callback_percent': float(self.config.callback_percent),
+                'entry_price': float(ts.entry_price),
+                'side': ts.side,
+                'quantity': float(ts.quantity),
+                'update_count': ts.update_count,
+                'highest_profit_percent': float(ts.highest_profit_percent),
+                'activated_at': ts.activated_at,
+                'last_update_time': ts.last_stop_update,
+                'last_sl_update_time': ts.last_sl_update_time,
+                'last_updated_sl_price': float(ts.last_updated_sl_price) if ts.last_updated_sl_price else None
+            }
+
+            # Upsert (INSERT ... ON CONFLICT UPDATE)
+            await self.repository.save_trailing_stop_state(state_data)
+
+            logger.debug(f"✅ {ts.symbol}: TS state saved to DB (state={ts.state.value}, update_count={ts.update_count})")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ {ts.symbol}: Failed to save TS state: {e}", exc_info=True)
+            return False
+
+    async def _restore_state(self, symbol: str) -> Optional[TrailingStopInstance]:
+        """
+        Restore trailing stop state from database
+
+        Called from position_manager.py during bot startup when loading positions
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            TrailingStopInstance if state exists in DB, None otherwise
+        """
+        if not self.repository:
+            logger.warning(f"{symbol}: No repository configured, cannot restore TS state")
+            return None
+
+        try:
+            # Fetch state from database
+            state_data = await self.repository.get_trailing_stop_state(symbol, self.exchange_name)
+
+            if not state_data:
+                logger.debug(f"{symbol}: No TS state in DB, will create new")
+                return None
+
+            # Reconstruct TrailingStopInstance
+            ts = TrailingStopInstance(
+                symbol=state_data['symbol'],
+                entry_price=Decimal(str(state_data['entry_price'])),
+                current_price=Decimal(str(state_data.get('current_stop_price', state_data['entry_price']))),
+                highest_price=Decimal(str(state_data.get('highest_price', state_data['entry_price']))) if state_data['side'] == 'long' else Decimal('999999'),
+                lowest_price=Decimal('999999') if state_data['side'] == 'long' else Decimal(str(state_data.get('lowest_price', state_data['entry_price']))),
+                state=TrailingStopState(state_data['state']),
+                activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
+                current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
+                stop_order_id=state_data.get('stop_order_id'),
+                created_at=state_data.get('created_at', datetime.now()),
+                activated_at=state_data.get('activated_at'),
+                highest_profit_percent=Decimal(str(state_data.get('highest_profit_percent', 0))),
+                update_count=state_data.get('update_count', 0),
+                side=state_data['side'],
+                quantity=Decimal(str(state_data['quantity']))
+            )
+
+            # Restore rate limiting fields
+            if state_data.get('last_sl_update_time'):
+                ts.last_sl_update_time = state_data['last_sl_update_time']
+            if state_data.get('last_updated_sl_price'):
+                ts.last_updated_sl_price = Decimal(str(state_data['last_updated_sl_price']))
+            if state_data.get('last_update_time'):
+                ts.last_stop_update = state_data['last_update_time']
+
+            logger.info(
+                f"✅ {symbol}: TS state RESTORED from DB - "
+                f"state={ts.state.value}, "
+                f"activated={ts.state == TrailingStopState.ACTIVE}, "
+                f"highest_price={ts.highest_price if ts.side == 'long' else 'N/A'}, "
+                f"lowest_price={ts.lowest_price if ts.side == 'short' else 'N/A'}, "
+                f"current_stop={ts.current_stop_price}, "
+                f"update_count={ts.update_count}"
+            )
+
+            return ts
+
+        except Exception as e:
+            logger.error(f"❌ {symbol}: Failed to restore TS state: {e}", exc_info=True)
+            return None
+
+    async def _delete_state(self, symbol: str) -> bool:
+        """
+        Delete trailing stop state from database
+
+        Called when position is closed
+
+        Args:
+            symbol: Trading symbol
+
+        Returns:
+            bool: True if deleted successfully, False otherwise
+        """
+        if not self.repository:
+            return False
+
+        try:
+            await self.repository.delete_trailing_stop_state(symbol, self.exchange_name)
+            logger.debug(f"✅ {symbol}: TS state deleted from DB")
+            return True
+        except Exception as e:
+            logger.error(f"❌ {symbol}: Failed to delete TS state: {e}", exc_info=True)
+            return False
 
     async def create_trailing_stop(self,
                                    symbol: str,
@@ -187,6 +355,9 @@ class SmartTrailingStopManager:
                     exchange=self.exchange_name,
                     severity='INFO'
                 )
+
+            # NEW: Save initial state to database
+            await self._save_state(ts)
 
             return ts
 
@@ -335,6 +506,9 @@ class SmartTrailingStopManager:
         # PositionManager will see trailing_activated=True and skip protection
         logger.debug(f"{ts.symbol} SL ownership: trailing_stop (via trailing_activated=True)")
 
+        # NEW: Save activated state to database
+        await self._save_state(ts)
+
         return {
             'action': 'activated',
             'symbol': ts.symbol,
@@ -432,6 +606,9 @@ class SmartTrailingStopManager:
                     exchange=self.exchange_name,
                     severity='INFO'
                 )
+
+            # NEW: Save updated state to database
+            await self._save_state(ts)
 
             return {
                 'action': 'updated',
@@ -797,6 +974,9 @@ class SmartTrailingStopManager:
 
             # Remove from active stops
             del self.trailing_stops[symbol]
+
+            # NEW: Delete state from database
+            await self._delete_state(symbol)
 
             logger.info(f"Position {symbol} closed, trailing stop removed")
 
