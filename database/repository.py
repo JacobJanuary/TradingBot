@@ -507,9 +507,37 @@ class Repository:
             result = await conn.execute(query, *values)
             return True
     
-    async def create_order(self, order: Any) -> bool:
-        """Create order"""
-        return True
+    async def create_order(self, order_data: Dict) -> int:
+        """Create new order record in monitoring.orders"""
+        query = """
+            INSERT INTO monitoring.orders (
+                position_id, exchange, symbol, order_id, client_order_id,
+                type, side, size, price, status,
+                filled, remaining, fee, fee_currency
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            RETURNING id
+        """
+
+        async with self.pool.acquire() as conn:
+            order_id = await conn.fetchval(
+                query,
+                order_data.get('position_id'),
+                order_data['exchange'],
+                order_data['symbol'],
+                order_data.get('order_id'),
+                order_data.get('client_order_id'),
+                order_data['type'],
+                order_data['side'],
+                order_data.get('size', 0),
+                order_data.get('price', 0),
+                order_data['status'],
+                order_data.get('filled', 0),
+                order_data.get('remaining', 0),
+                order_data.get('fee', 0),
+                order_data.get('fee_currency', 'USDT')
+            )
+
+            return order_id
     
     async def get_daily_pnl(self) -> Decimal:
         """Get daily PnL"""
