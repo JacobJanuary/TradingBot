@@ -139,7 +139,7 @@ class AgedPositionManager:
                         logger.warning(
                             f"⏰ Found aged position {position.symbol}: "
                             f"age={age_hours:.1f}h (max={self.max_position_age_hours}h), "
-                            f"pnl={position.unrealized_pnl:.2f} USD"
+                            f"pnl={position.unrealized_pnl:.2f if position.unrealized_pnl is not None else 0.0} USD"
                         )
 
             if aged_positions:
