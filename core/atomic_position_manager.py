@@ -283,6 +283,30 @@ class AtomicPositionManager:
                             sl_placed = True
                             sl_order = sl_result
                             logger.info(f"✅ Stop-loss placed successfully")
+
+                            # Log SL order to database (but not trade - only when executed)
+                            try:
+                                sl_side = 'sell' if side.lower() == 'buy' else 'buy'
+                                await self.repository.create_order({
+                                    'position_id': str(position_id),
+                                    'exchange': exchange,
+                                    'symbol': symbol,
+                                    'order_id': sl_result.get('orderId'),
+                                    'client_order_id': sl_result.get('clientOrderId'),
+                                    'type': sl_result.get('orderType', 'STOP_MARKET'),
+                                    'side': sl_side,
+                                    'size': quantity,
+                                    'price': stop_loss_price,
+                                    'status': 'NEW',
+                                    'filled': 0,
+                                    'remaining': quantity,
+                                    'fee': 0,
+                                    'fee_currency': 'USDT'
+                                })
+                                logger.debug(f"📝 Stop-loss order logged to database")
+                            except Exception as e:
+                                logger.warning(f"Failed to log SL order to DB: {e}")
+
                             break
 
                     except Exception as e:
