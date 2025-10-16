@@ -240,6 +240,28 @@ class AtomicPositionManager:
                 except Exception as e:
                     logger.warning(f"Failed to log entry order to DB: {e}")
 
+                # Log entry trade to database (executed trade)
+                try:
+                    await self.repository.create_trade({
+                        'signal_id': signal_id,
+                        'symbol': symbol,
+                        'exchange': exchange,
+                        'side': side,
+                        'order_type': 'MARKET',
+                        'quantity': quantity,
+                        'price': exec_price or entry_price,
+                        'executed_qty': quantity,
+                        'average_price': exec_price or entry_price,
+                        'order_id': entry_order.id,
+                        'client_order_id': getattr(entry_order, 'clientOrderId', None),
+                        'status': 'FILLED',
+                        'fee': getattr(entry_order, 'fee', 0),
+                        'fee_currency': getattr(entry_order, 'feeCurrency', 'USDT')
+                    })
+                    logger.debug(f"📝 Entry trade logged to database")
+                except Exception as e:
+                    logger.warning(f"Failed to log entry trade to DB: {e}")
+
                 # Step 3: Размещение stop-loss с retry
                 logger.info(f"🛡️ Placing stop-loss for {symbol} at {stop_loss_price}")
                 state = PositionState.PENDING_SL
