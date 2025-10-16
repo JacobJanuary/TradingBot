@@ -104,3 +104,5 @@ top_30_pairs.txt
 # Лог-файлы
 logs/
 *.log
+# Monitoring error files
+monitoring_errors/
