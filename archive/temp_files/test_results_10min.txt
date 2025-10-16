@@ -1,0 +1,40 @@
+=== Age Detector 10-Minute Test ===
+Start: 2025-10-15 05:06:23
+Interval: 2 minutes between Age Detector cycles
+
+===================================================
+MINUTE 2 - 05:07:07
+===================================================
+Waiting 2.5 minutes for first Age Detector cycle...
+
+📊 METRICS (cumulative since test start):
+  Creating initial: 10
+  Order exists (from create_limit_exit_order): 0
+  Updating order (from create_or_update): 0
+  Keeping existing (debug): 0
+
+📝 Last 5 Age Detector events:
+
+🔄 Age Detector cycles completed: 2
+✅ Multiple cycles detected - checking for duplicate prevention...
+
+===================================================
+MINUTE 4 - 05:09:37
+===================================================
+Waiting 2 minutes...
+
+📊 METRICS (cumulative since test start):
+  Creating initial: 10
+  Order exists (from create_limit_exit_order): 0
+  Updating order (from create_or_update): 0
+  Keeping existing (debug): 0
+
+📝 Last 5 Age Detector events:
+
+🔄 Age Detector cycles completed: 2
+✅ Multiple cycles detected - checking for duplicate prevention...
+
+===================================================
+MINUTE 6 - 05:11:37
+===================================================
+Waiting 2 minutes...

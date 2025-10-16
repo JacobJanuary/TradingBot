@@ -1,0 +1,420 @@
+{
+  "metadata": {
+    "monitoring_duration_minutes": 15,
+    "start_time": "2025-10-15T19:21:03.958998",
+    "end_time": "2025-10-15T19:36:03.958998",
+    "actual_duration_seconds": 960,
+    "generated_at": "2025-10-15T19:37:04.760353"
+  },
+  "summary": {
+    "ts_instances_tracked": 0,
+    "activations": 0,
+    "sl_updates": 0,
+    "db_snapshots": 0,
+    "exchange_snapshots": 26,
+    "issues_found": 0,
+    "errors": 34
+  },
+  "detailed_stats": {
+    "ts_instances": {},
+    "price_updates": {},
+    "activations": [],
+    "sl_updates": [],
+    "db_snapshots": [],
+    "exchange_snapshots": [
+      {
+        "timestamp": "2025-10-15T19:21:05.206411",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:21:09.618176",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:22:16.279060",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:22:21.277107",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:23:28.255321",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:23:33.609968",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:24:40.597782",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:24:45.540701",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:25:52.582942",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:25:57.924471",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:27:05.238816",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:27:11.098708",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:28:18.216464",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:28:23.163907",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:29:30.795725",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:29:35.692841",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:30:43.535315",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:30:48.511131",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:31:55.543901",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:32:00.528522",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:33:08.102143",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:33:14.030901",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:34:22.307270",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:34:28.140276",
+        "exchange": "bybit",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:35:35.674592",
+        "exchange": "binance",
+        "positions": []
+      },
+      {
+        "timestamp": "2025-10-15T19:35:41.171207",
+        "exchange": "bybit",
+        "positions": []
+      }
+    ],
+    "errors": [
+      {
+        "timestamp": "2025-10-15T19:21:04.315821",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:21:34.494480",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:22:04.666137",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:22:34.841791",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:23:04.207545",
+        "source": "consistency_check",
+        "error": "'dict' object has no attribute 'exchange'"
+      },
+      {
+        "timestamp": "2025-10-15T19:23:05.002253",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:23:35.164031",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:24:05.347156",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:24:35.514501",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:25:05.782824",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:25:35.964404",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:26:06.305512",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:26:36.475888",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:27:04.399498",
+        "source": "consistency_check",
+        "error": "'dict' object has no attribute 'exchange'"
+      },
+      {
+        "timestamp": "2025-10-15T19:27:06.652706",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:27:36.824113",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:28:07.006616",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:28:37.219883",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:29:07.405854",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:29:37.579182",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:30:07.746344",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:30:37.936167",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:31:04.582037",
+        "source": "consistency_check",
+        "error": "'dict' object has no attribute 'exchange'"
+      },
+      {
+        "timestamp": "2025-10-15T19:31:08.294463",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:31:38.530268",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:32:08.698222",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:32:38.872449",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:33:09.044500",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:33:39.247522",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:34:09.586795",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:34:39.764628",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:35:04.753858",
+        "source": "consistency_check",
+        "error": "'dict' object has no attribute 'exchange'"
+      },
+      {
+        "timestamp": "2025-10-15T19:35:09.928568",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      },
+      {
+        "timestamp": "2025-10-15T19:35:40.125724",
+        "source": "db_monitor",
+        "error": "'dict' object has no attribute 'id'"
+      }
+    ],
+    "websocket_events": {},
+    "performance": {
+      "update_price_calls": 0,
+      "update_price_duration_ms": [],
+      "db_queries": 30,
+      "db_query_duration_ms": [
+        356.5177917480469,
+        174.84807968139648,
+        169.33584213256836,
+        170.6240177154541,
+        159.74092483520508,
+        161.10801696777344,
+        165.48824310302734,
+        161.40484809875488,
+        266.4351463317871,
+        179.31199073791504,
+        339.3728733062744,
+        168.47515106201172,
+        176.17321014404297,
+        170.05610466003418,
+        181.18715286254883,
+        209.68294143676758,
+        179.49914932250977,
+        171.25606536865234,
+        165.48991203308105,
+        186.7530345916748,
+        355.23104667663574,
+        233.66308212280273,
+        166.43285751342773,
+        170.64905166625977,
+        171.50187492370605,
+        200.92320442199707,
+        337.06212043762207,
+        174.2532253265381,
+        161.76676750183105,
+        195.62220573425293
+      ],
+      "exchange_calls": 26,
+      "exchange_call_duration_ms": [
+        866.2071228027344,
+        275.6388187408447,
+        596.1837768554688,
+        647.4399566650391,
+        604.0668487548828,
+        580.5859565734863,
+        620.995044708252,
+        605.9367656707764,
+        615.7848834991455,
+        572.4921226501465,
+        625.4150867462158,
+        611.6883754730225,
+        644.6988582611084,
+        596.4059829711914,
+        773.5309600830078,
+        582.1037292480469,
+        619.1511154174805,
+        628.5052299499512,
+        627.5022029876709,
+        626.6958713531494,
+        630.9082508087158,
+        677.0339012145996,
+        769.1609859466553,
+        608.7889671325684,
+        639.862060546875,
+        608.3121299743652
+      ]
+    }
+  },
+  "issues": [],
+  "analysis": {
+    "ts_functionality": {
+      "instances_created": 0,
+      "activations": 0,
+      "activation_rate": 0,
+      "symbols_with_ts": []
+    },
+    "performance": {
+      "total_db_queries": 30,
+      "avg_db_query_ms": 202.66219774881998,
+      "total_exchange_calls": 26,
+      "avg_exchange_call_ms": 625.1959617321307
+    },
+    "consistency": {
+      "orphan_ts_instances": 0,
+      "missing_ts_instances": 0,
+      "state_mismatches": 0,
+      "sl_price_mismatches": 0
+    }
+  },
+  "recommendations": [
+    "High error rate detected (34 errors) - investigate error causes"
+  ]
+}

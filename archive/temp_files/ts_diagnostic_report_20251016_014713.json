@@ -1,0 +1,165 @@
+{
+  "timestamp": "2025-10-16T01:47:13.168303",
+  "total_positions": 26,
+  "positions_with_profit": 0,
+  "issues_count": 26,
+  "positions": [],
+  "issues": [
+    {
+      "symbol": "1000BONKUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "IDOLUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "IPUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "MYXUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "SAFEUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "SKLUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "SOLVUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "1000000PEIPEIUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "10000WENUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "1000NEIROCTOUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "AGIUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "BOBAUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "CLOUDUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "DOGUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "ETHBTCUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "HNTUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "IDEXUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "NODEUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "OKBUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "ORBSUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "OSMOUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "PYRUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "RADUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "SAROSUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "SCAUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    },
+    {
+      "symbol": "XDCUSDT",
+      "issue": "Position not found on exchange",
+      "db_value": "exists",
+      "exchange_value": "not found"
+    }
+  ]
+}

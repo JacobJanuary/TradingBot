@@ -1,0 +1,2565 @@
+{
+  "config": {
+    "duration_minutes": 10,
+    "mode": "dry-run",
+    "binance_enabled": true,
+    "bybit_enabled": true,
+    "bot_log_path": "logs/trading_bot.log"
+  },
+  "snapshots": {
+    "before": {
+      "timestamp": "2025-10-14T22:39:30.001201+00:00",
+      "orders": {
+        "binance": [],
+        "bybit": [
+          {
+            "order_id": "b901a6db-d6f1-4b19-baf4-525ffcc4bd26",
+            "symbol": "1000000PEIPEI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 6896.0,
+            "price": 0.02894,
+            "timestamp": 1760461245209,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.776990+00:00"
+          },
+          {
+            "order_id": "81e5d2b5-fbec-4a90-aa38-151d5cfe664a",
+            "symbol": "OSMO/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 1398.0,
+            "price": 0.1427,
+            "timestamp": 1760471214509,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.776997+00:00"
+          },
+          {
+            "order_id": "262acece-b5a2-4b2a-b4b5-7d0e48b5ba0e",
+            "symbol": "SCA/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 2036.0,
+            "price": 0.0,
+            "timestamp": 1760474455990,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777001+00:00"
+          },
+          {
+            "order_id": "89f8b731-f769-4359-ae38-92d8aafeb103",
+            "symbol": "AGI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 3160.0,
+            "price": 0.0,
+            "timestamp": 1760474458261,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777003+00:00"
+          },
+          {
+            "order_id": "2e918561-4513-4798-85da-3a98eda0ca0f",
+            "symbol": "10000WEN/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 769.0,
+            "price": 0.0,
+            "timestamp": 1760474460552,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777005+00:00"
+          },
+          {
+            "order_id": "61de6168-6362-4e51-9b16-20c5b76f4520",
+            "symbol": "XDC/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 200.0,
+            "price": 0.0,
+            "timestamp": 1760474467163,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777007+00:00"
+          },
+          {
+            "order_id": "2742bb0b-65ba-4b6a-ad29-c9e1f65bc4dd",
+            "symbol": "NODE/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 2409.0,
+            "price": 0.0,
+            "timestamp": 1760474470103,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777008+00:00"
+          },
+          {
+            "order_id": "acaba974-9f90-43b9-9456-b624519829fb",
+            "symbol": "1000000PEIPEI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 6896.0,
+            "price": 0.0,
+            "timestamp": 1760474475345,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777010+00:00"
+          },
+          {
+            "order_id": "b20e6e58-5f3b-4069-9e85-3abbb6bdc853",
+            "symbol": "RAD/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 74.6,
+            "price": 0.0,
+            "timestamp": 1760476684562,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777011+00:00"
+          },
+          {
+            "order_id": "0eed7d83-fb49-4cd0-888b-65e915c2fb8d",
+            "symbol": "OSMO/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 1398.0,
+            "price": 0.0,
+            "timestamp": 1760476688825,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777013+00:00"
+          },
+          {
+            "order_id": "eb731b81-7e66-4c11-9171-ae97adf89eb4",
+            "symbol": "DOG/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 276200.0,
+            "price": 0.0,
+            "timestamp": 1760476691031,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777014+00:00"
+          },
+          {
+            "order_id": "c419687d-f7f6-4aba-89dc-06493cdabda6",
+            "symbol": "SCA/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 2036.0,
+            "price": 0.09033,
+            "timestamp": 1760480022172,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777016+00:00"
+          },
+          {
+            "order_id": "d5001e88-4600-4516-aeac-a46679a69f5e",
+            "symbol": "AGI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 3160.0,
+            "price": 0.04639,
+            "timestamp": 1760480025709,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777018+00:00"
+          },
+          {
+            "order_id": "f3bc4ab6-7fe7-430a-ab0e-5f4b99b67001",
+            "symbol": "NODE/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "sell",
+            "status": "open",
+            "amount": 2409.0,
+            "price": 0.08256,
+            "timestamp": 1760480028336,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777019+00:00"
+          },
+          {
+            "order_id": "003530f8-7b4f-422a-934b-c5a2c86a6de6",
+            "symbol": "10000WEN/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "sell",
+            "status": "open",
+            "amount": 769.0,
+            "price": 0.2584,
+            "timestamp": 1760480354004,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777021+00:00"
+          },
+          {
+            "order_id": "d8af3592-fc7f-4799-9c86-707f862b7ea9",
+            "symbol": "DOG/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "sell",
+            "status": "open",
+            "amount": 276200.0,
+            "price": 0.001443,
+            "timestamp": 1760481013835,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777022+00:00"
+          },
+          {
+            "order_id": "fd7316ae-a3c6-4e66-8a2c-58bc3a208e18",
+            "symbol": "1000NEIROCTO/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 991.0,
+            "price": 0.0,
+            "timestamp": 1760481573643,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777024+00:00"
+          },
+          {
+            "order_id": "c8eee6b8-86b2-4d5c-b0f5-8cbda7317bb3",
+            "symbol": "OKB/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 1.0,
+            "price": 0.0,
+            "timestamp": 1760481573643,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777025+00:00"
+          },
+          {
+            "order_id": "593ef560-2744-4add-a4c5-7b08e415a9ce",
+            "symbol": "CLOUD/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 1380.0,
+            "price": 0.0,
+            "timestamp": 1760481573644,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:39:33.777026+00:00"
+          }
+        ]
+      },
+      "positions": {
+        "binance": [],
+        "bybit": [
+          {
+            "symbol": "DOG/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 276200.0,
+            "entry_price": 0.001448,
+            "mark_price": 0.001451,
+            "unrealized_pnl": 0.8286,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113516+00:00"
+          },
+          {
+            "symbol": "OSMO/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 1398.0,
+            "entry_price": 0.1373,
+            "mark_price": 0.1373,
+            "unrealized_pnl": 0.0,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113522+00:00"
+          },
+          {
+            "symbol": "RAD/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 74.6,
+            "entry_price": 2.4,
+            "mark_price": 2.5,
+            "unrealized_pnl": -7.46,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113524+00:00"
+          },
+          {
+            "symbol": "1000000PEIPEI/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 6896.0,
+            "entry_price": 0.03045,
+            "mark_price": 0.03039,
+            "unrealized_pnl": 0.41376,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113526+00:00"
+          },
+          {
+            "symbol": "NODE/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 2409.0,
+            "entry_price": 0.08301,
+            "mark_price": 0.08294,
+            "unrealized_pnl": -0.16863,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113527+00:00"
+          },
+          {
+            "symbol": "XDC/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 200.0,
+            "entry_price": 0.06,
+            "mark_price": 0.06014,
+            "unrealized_pnl": -0.028,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113528+00:00"
+          },
+          {
+            "symbol": "10000WEN/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 769.0,
+            "entry_price": 0.2599,
+            "mark_price": 0.2599,
+            "unrealized_pnl": 0.0,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113529+00:00"
+          },
+          {
+            "symbol": "AGI/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 3160.0,
+            "entry_price": 0.04614,
+            "mark_price": 0.04677,
+            "unrealized_pnl": -1.9908,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113531+00:00"
+          },
+          {
+            "symbol": "SCA/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 2036.0,
+            "entry_price": 0.08985,
+            "mark_price": 0.0934,
+            "unrealized_pnl": -7.2278,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113532+00:00"
+          },
+          {
+            "symbol": "1000NEIROCTO/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 991.0,
+            "entry_price": 0.1608,
+            "mark_price": 0.1558,
+            "unrealized_pnl": -4.955,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113533+00:00"
+          },
+          {
+            "symbol": "CLOUD/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 1380.0,
+            "entry_price": 0.141,
+            "mark_price": 0.15464,
+            "unrealized_pnl": -18.8232,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113534+00:00"
+          },
+          {
+            "symbol": "OKB/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 1.0,
+            "entry_price": 155.72,
+            "mark_price": 155.72,
+            "unrealized_pnl": 0.0,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113536+00:00"
+          },
+          {
+            "symbol": "HNT/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 59.88,
+            "entry_price": 1.772732,
+            "mark_price": 1.616,
+            "unrealized_pnl": -9.38511216,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:39:34.113537+00:00"
+          }
+        ]
+      }
+    },
+    "after": {
+      "timestamp": "2025-10-14T22:49:34.678394+00:00",
+      "orders": {
+        "binance": [],
+        "bybit": [
+          {
+            "order_id": "b901a6db-d6f1-4b19-baf4-525ffcc4bd26",
+            "symbol": "1000000PEIPEI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 6896.0,
+            "price": 0.02894,
+            "timestamp": 1760461245209,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275549+00:00"
+          },
+          {
+            "order_id": "81e5d2b5-fbec-4a90-aa38-151d5cfe664a",
+            "symbol": "OSMO/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 1398.0,
+            "price": 0.1427,
+            "timestamp": 1760471214509,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275555+00:00"
+          },
+          {
+            "order_id": "262acece-b5a2-4b2a-b4b5-7d0e48b5ba0e",
+            "symbol": "SCA/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 2036.0,
+            "price": 0.0,
+            "timestamp": 1760474455990,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275558+00:00"
+          },
+          {
+            "order_id": "89f8b731-f769-4359-ae38-92d8aafeb103",
+            "symbol": "AGI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 3160.0,
+            "price": 0.0,
+            "timestamp": 1760474458261,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275559+00:00"
+          },
+          {
+            "order_id": "2e918561-4513-4798-85da-3a98eda0ca0f",
+            "symbol": "10000WEN/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 769.0,
+            "price": 0.0,
+            "timestamp": 1760474460552,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275561+00:00"
+          },
+          {
+            "order_id": "61de6168-6362-4e51-9b16-20c5b76f4520",
+            "symbol": "XDC/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 200.0,
+            "price": 0.0,
+            "timestamp": 1760474467163,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275562+00:00"
+          },
+          {
+            "order_id": "2742bb0b-65ba-4b6a-ad29-c9e1f65bc4dd",
+            "symbol": "NODE/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 2409.0,
+            "price": 0.0,
+            "timestamp": 1760474470103,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275564+00:00"
+          },
+          {
+            "order_id": "acaba974-9f90-43b9-9456-b624519829fb",
+            "symbol": "1000000PEIPEI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 6896.0,
+            "price": 0.0,
+            "timestamp": 1760474475345,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275565+00:00"
+          },
+          {
+            "order_id": "b20e6e58-5f3b-4069-9e85-3abbb6bdc853",
+            "symbol": "RAD/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 74.6,
+            "price": 0.0,
+            "timestamp": 1760476684562,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275567+00:00"
+          },
+          {
+            "order_id": "0eed7d83-fb49-4cd0-888b-65e915c2fb8d",
+            "symbol": "OSMO/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 1398.0,
+            "price": 0.0,
+            "timestamp": 1760476688825,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275568+00:00"
+          },
+          {
+            "order_id": "eb731b81-7e66-4c11-9171-ae97adf89eb4",
+            "symbol": "DOG/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 276200.0,
+            "price": 0.0,
+            "timestamp": 1760476691031,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275570+00:00"
+          },
+          {
+            "order_id": "c419687d-f7f6-4aba-89dc-06493cdabda6",
+            "symbol": "SCA/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 2036.0,
+            "price": 0.09033,
+            "timestamp": 1760480022172,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275571+00:00"
+          },
+          {
+            "order_id": "d5001e88-4600-4516-aeac-a46679a69f5e",
+            "symbol": "AGI/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "buy",
+            "status": "open",
+            "amount": 3160.0,
+            "price": 0.04639,
+            "timestamp": 1760480025709,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275573+00:00"
+          },
+          {
+            "order_id": "f3bc4ab6-7fe7-430a-ab0e-5f4b99b67001",
+            "symbol": "NODE/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "sell",
+            "status": "open",
+            "amount": 2409.0,
+            "price": 0.08256,
+            "timestamp": 1760480028336,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275574+00:00"
+          },
+          {
+            "order_id": "003530f8-7b4f-422a-934b-c5a2c86a6de6",
+            "symbol": "10000WEN/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "sell",
+            "status": "open",
+            "amount": 769.0,
+            "price": 0.2584,
+            "timestamp": 1760480354004,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275575+00:00"
+          },
+          {
+            "order_id": "d8af3592-fc7f-4799-9c86-707f862b7ea9",
+            "symbol": "DOG/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "limit",
+            "side": "sell",
+            "status": "open",
+            "amount": 276200.0,
+            "price": 0.001443,
+            "timestamp": 1760481013835,
+            "reduce_only": true,
+            "close_on_trigger": false,
+            "stop_order_type": "",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275577+00:00"
+          },
+          {
+            "order_id": "e5ea829e-2e60-42cf-a334-16225f44e9e4",
+            "symbol": "1000NEIROCTO/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 991.0,
+            "price": 0.0,
+            "timestamp": 1760482175112,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275578+00:00"
+          },
+          {
+            "order_id": "acc287ce-dfc5-4d8b-92c6-83c0f93074ae",
+            "symbol": "CLOUD/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "buy",
+            "status": "open",
+            "amount": 1380.0,
+            "price": 0.0,
+            "timestamp": 1760482175112,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275579+00:00"
+          },
+          {
+            "order_id": "63a3b8f3-41a9-48e1-b43b-0fd9aa70f973",
+            "symbol": "OKB/USDT:USDT",
+            "exchange": "bybit",
+            "order_type": "market",
+            "side": "sell",
+            "status": "open",
+            "amount": 1.0,
+            "price": 0.0,
+            "timestamp": 1760482175112,
+            "reduce_only": true,
+            "close_on_trigger": true,
+            "stop_order_type": "StopLoss",
+            "position_idx": 0,
+            "client_order_id": null,
+            "order_list_id": null,
+            "snapshot_time": "2025-10-14T22:49:35.275581+00:00"
+          }
+        ]
+      },
+      "positions": {
+        "binance": [],
+        "bybit": [
+          {
+            "symbol": "DOG/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 276200.0,
+            "entry_price": 0.001448,
+            "mark_price": 0.001448,
+            "unrealized_pnl": 0.0,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618204+00:00"
+          },
+          {
+            "symbol": "OSMO/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 1398.0,
+            "entry_price": 0.1373,
+            "mark_price": 0.1371,
+            "unrealized_pnl": 0.2796,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618208+00:00"
+          },
+          {
+            "symbol": "RAD/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 74.6,
+            "entry_price": 2.4,
+            "mark_price": 2.5,
+            "unrealized_pnl": -7.46,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618213+00:00"
+          },
+          {
+            "symbol": "1000000PEIPEI/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 6896.0,
+            "entry_price": 0.03045,
+            "mark_price": 0.03043,
+            "unrealized_pnl": 0.13792,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618214+00:00"
+          },
+          {
+            "symbol": "NODE/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 2409.0,
+            "entry_price": 0.08301,
+            "mark_price": 0.08301,
+            "unrealized_pnl": 0.0,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618216+00:00"
+          },
+          {
+            "symbol": "XDC/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 200.0,
+            "entry_price": 0.06,
+            "mark_price": 0.06001,
+            "unrealized_pnl": -0.002,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618217+00:00"
+          },
+          {
+            "symbol": "10000WEN/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 769.0,
+            "entry_price": 0.2599,
+            "mark_price": 0.2599,
+            "unrealized_pnl": 0.0,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618218+00:00"
+          },
+          {
+            "symbol": "AGI/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 3160.0,
+            "entry_price": 0.04614,
+            "mark_price": 0.04677,
+            "unrealized_pnl": -1.9908,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618219+00:00"
+          },
+          {
+            "symbol": "SCA/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 2036.0,
+            "entry_price": 0.08985,
+            "mark_price": 0.0934,
+            "unrealized_pnl": -7.2278,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618221+00:00"
+          },
+          {
+            "symbol": "1000NEIROCTO/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 991.0,
+            "entry_price": 0.1608,
+            "mark_price": 0.15581,
+            "unrealized_pnl": -4.94509,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618222+00:00"
+          },
+          {
+            "symbol": "CLOUD/USDT:USDT",
+            "exchange": "bybit",
+            "side": "short",
+            "contracts": 1380.0,
+            "entry_price": 0.141,
+            "mark_price": 0.1546,
+            "unrealized_pnl": -18.768,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618223+00:00"
+          },
+          {
+            "symbol": "OKB/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 1.0,
+            "entry_price": 155.72,
+            "mark_price": 155.74,
+            "unrealized_pnl": 0.02,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618224+00:00"
+          },
+          {
+            "symbol": "HNT/USDT:USDT",
+            "exchange": "bybit",
+            "side": "long",
+            "contracts": 59.88,
+            "entry_price": 1.772732,
+            "mark_price": 1.617,
+            "unrealized_pnl": -9.32523216,
+            "position_idx": 0,
+            "leverage": 10.0,
+            "snapshot_time": "2025-10-14T22:49:35.618225+00:00"
+          }
+        ]
+      }
+    }
+  },
+  "log_events": [
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:24,225",
+      "raw_line": "2025-10-15 02:40:24,225 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 4946 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:30,687",
+      "raw_line": "2025-10-15 02:40:30,687 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481630669}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:30,687",
+      "raw_line": "2025-10-15 02:40:30,687 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481630669}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:30,687",
+      "raw_line": "2025-10-15 02:40:30,687 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481630669}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:31,433",
+      "raw_line": "2025-10-15 02:40:31,433 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9036, count_after=9037, delta=1, last_ids=[id=9040:stop_loss_error, id=9039:health_check_failed, id=9038:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:32,701",
+      "raw_line": "2025-10-15 02:40:32,701 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481632682}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:32,701",
+      "raw_line": "2025-10-15 02:40:32,701 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481632682}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:32,701",
+      "raw_line": "2025-10-15 02:40:32,701 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481632682}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:35,727",
+      "raw_line": "2025-10-15 02:40:35,727 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481635709}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:35,727",
+      "raw_line": "2025-10-15 02:40:35,727 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481635709}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:35,727",
+      "raw_line": "2025-10-15 02:40:35,727 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481635709}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:35,728",
+      "raw_line": "2025-10-15 02:40:35,728 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481635709}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:35,728",
+      "raw_line": "2025-10-15 02:40:35,728 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:35,728",
+      "raw_line": "2025-10-15 02:40:35,728 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:36,111",
+      "raw_line": "2025-10-15 02:40:36,111 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9037, count_after=9038, delta=1, last_ids=[id=9041:stop_loss_error, id=9040:stop_loss_error, id=9039:health_check_failed])",
+      "extracted_data": {}
+    },
+    {
+      "type": "zombie_check_start",
+      "timestamp": "2025-10-15 02:40:36,454",
+      "raw_line": "2025-10-15 02:40:36,454 - core.position_manager - INFO - \ud83e\uddf9 Starting enhanced zombie order cleanup...",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:39,133",
+      "raw_line": "2025-10-15 02:40:39,133 - core.binance_zombie_manager - INFO - \ud83d\udcca binance metrics: {'empty_responses': 0, 'rate_limit_waits': 0, 'error_2011_count': 0, 'error_2013_count': 0, 'oco_handled': 0, 'zombies_cleaned': 0, 'async_delays_detected': 0, 'current_weight': '50/1180', 'health': 'OK'}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:41,819",
+      "raw_line": "2025-10-15 02:40:41,819 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9038, count_after=9039, delta=1, last_ids=[id=9042:stop_loss_error, id=9041:stop_loss_error, id=9040:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:43,575",
+      "raw_line": "2025-10-15 02:40:43,575 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 4965 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:50,426",
+      "raw_line": "2025-10-15 02:40:50,426 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481650408}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:50,427",
+      "raw_line": "2025-10-15 02:40:50,427 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481650408}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:50,427",
+      "raw_line": "2025-10-15 02:40:50,427 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481650408}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:51,179",
+      "raw_line": "2025-10-15 02:40:51,179 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9039, count_after=9040, delta=1, last_ids=[id=9043:stop_loss_error, id=9042:stop_loss_error, id=9041:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:52,434",
+      "raw_line": "2025-10-15 02:40:52,434 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481652415}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:52,434",
+      "raw_line": "2025-10-15 02:40:52,434 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481652415}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:52,434",
+      "raw_line": "2025-10-15 02:40:52,434 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481652415}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:55,440",
+      "raw_line": "2025-10-15 02:40:55,440 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481655422}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:55,440",
+      "raw_line": "2025-10-15 02:40:55,440 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481655422}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:55,440",
+      "raw_line": "2025-10-15 02:40:55,440 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481655422}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:55,440",
+      "raw_line": "2025-10-15 02:40:55,440 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481655422}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:55,440",
+      "raw_line": "2025-10-15 02:40:55,440 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:55,440",
+      "raw_line": "2025-10-15 02:40:55,440 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:40:55,853",
+      "raw_line": "2025-10-15 02:40:55,853 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9040, count_after=9041, delta=1, last_ids=[id=9044:stop_loss_error, id=9043:stop_loss_error, id=9042:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:01,527",
+      "raw_line": "2025-10-15 02:41:01,527 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9041, count_after=9042, delta=1, last_ids=[id=9045:stop_loss_error, id=9044:stop_loss_error, id=9043:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:16,477",
+      "raw_line": "2025-10-15 02:41:16,477 - core.exchange_manager_enhanced - ERROR - \u274c Unexpected error creating exit order: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481676459}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566363",
+      "raw_line": "self.handle_errors(http_status_code, http_status_text, url, method, headers, http_response, json_response, request_headers, request_body)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566372",
+      "raw_line": "File \"/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/.venv/lib/python3.12/site-packages/ccxt/async_support/bybit.py\", line 8724, in handle_errors",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566378",
+      "raw_line": "raise ExchangeError(feedback)  # unknown message",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566386",
+      "raw_line": "ccxt.base.errors.ExchangeError: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481676459}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:16,478",
+      "raw_line": "2025-10-15 02:41:16,478 - core.aged_position_manager - ERROR - Error updating exit order: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481676459}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566472",
+      "raw_line": "self.handle_errors(http_status_code, http_status_text, url, method, headers, http_response, json_response, request_headers, request_body)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566481",
+      "raw_line": "File \"/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/.venv/lib/python3.12/site-packages/ccxt/async_support/bybit.py\", line 8724, in handle_errors",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566486",
+      "raw_line": "raise ExchangeError(feedback)  # unknown message",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:16.566495",
+      "raw_line": "ccxt.base.errors.ExchangeError: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481676459}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:18,776",
+      "raw_line": "2025-10-15 02:41:18,776 - core.exchange_manager_enhanced - ERROR - \u274c Invalid order: bybit {\"retCode\":170193,\"retMsg\":\"Buy order price cannot be higher than 0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481678758}",
+      "extracted_data": {
+        "symbol": "0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481678758}"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:18,776",
+      "raw_line": "2025-10-15 02:41:18,776 - core.aged_position_manager - ERROR - Error updating exit order: bybit {\"retCode\":170193,\"retMsg\":\"Buy order price cannot be higher than 0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481678758}",
+      "extracted_data": {
+        "symbol": "0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481678758}"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:18.787487",
+      "raw_line": "self.handle_errors(http_status_code, http_status_text, url, method, headers, http_response, json_response, request_headers, request_body)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:18.787494",
+      "raw_line": "File \"/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/.venv/lib/python3.12/site-packages/ccxt/async_support/bybit.py\", line 8723, in handle_errors",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:18.787500",
+      "raw_line": "self.throw_exactly_matched_exception(self.exceptions['exact'], errorCode, feedback)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:41:18.787512",
+      "raw_line": "ccxt.base.errors.InvalidOrder: bybit {\"retCode\":170193,\"retMsg\":\"Buy order price cannot be higher than 0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481678758}",
+      "extracted_data": {
+        "symbol": "0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760481678758}"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:29,100",
+      "raw_line": "2025-10-15 02:41:29,100 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5011 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:35,295",
+      "raw_line": "2025-10-15 02:41:35,295 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481695277}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:35,296",
+      "raw_line": "2025-10-15 02:41:35,296 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481695277}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:35,296",
+      "raw_line": "2025-10-15 02:41:35,296 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481695277}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:35,700",
+      "raw_line": "2025-10-15 02:41:35,700 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9042, count_after=9043, delta=1, last_ids=[id=9046:stop_loss_error, id=9045:stop_loss_error, id=9044:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:37,321",
+      "raw_line": "2025-10-15 02:41:37,321 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481697302}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:37,321",
+      "raw_line": "2025-10-15 02:41:37,321 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481697302}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:37,321",
+      "raw_line": "2025-10-15 02:41:37,321 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481697302}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:40,333",
+      "raw_line": "2025-10-15 02:41:40,333 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481700311}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:40,333",
+      "raw_line": "2025-10-15 02:41:40,333 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481700311}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:40,333",
+      "raw_line": "2025-10-15 02:41:40,333 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481700311}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:40,333",
+      "raw_line": "2025-10-15 02:41:40,333 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481700311}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:40,333",
+      "raw_line": "2025-10-15 02:41:40,333 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:40,334",
+      "raw_line": "2025-10-15 02:41:40,334 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:40,731",
+      "raw_line": "2025-10-15 02:41:40,731 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9043, count_after=9044, delta=1, last_ids=[id=9047:stop_loss_error, id=9046:stop_loss_error, id=9045:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:41:46,409",
+      "raw_line": "2025-10-15 02:41:46,409 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9044, count_after=9045, delta=1, last_ids=[id=9048:stop_loss_error, id=9047:stop_loss_error, id=9046:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:00,143",
+      "raw_line": "2025-10-15 02:43:00,143 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5102 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:06,250",
+      "raw_line": "2025-10-15 02:43:06,250 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481786229}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:06,250",
+      "raw_line": "2025-10-15 02:43:06,250 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481786229}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:06,250",
+      "raw_line": "2025-10-15 02:43:06,250 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481786229}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:06,982",
+      "raw_line": "2025-10-15 02:43:06,982 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9045, count_after=9046, delta=1, last_ids=[id=9049:stop_loss_error, id=9048:stop_loss_error, id=9047:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:08,270",
+      "raw_line": "2025-10-15 02:43:08,270 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481788252}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:08,271",
+      "raw_line": "2025-10-15 02:43:08,271 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481788252}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:08,271",
+      "raw_line": "2025-10-15 02:43:08,271 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481788252}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:11,278",
+      "raw_line": "2025-10-15 02:43:11,278 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481791257}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:11,278",
+      "raw_line": "2025-10-15 02:43:11,278 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481791257}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:11,278",
+      "raw_line": "2025-10-15 02:43:11,278 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481791257}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:11,278",
+      "raw_line": "2025-10-15 02:43:11,278 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481791257}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:11,278",
+      "raw_line": "2025-10-15 02:43:11,278 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:11,278",
+      "raw_line": "2025-10-15 02:43:11,278 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:11,716",
+      "raw_line": "2025-10-15 02:43:11,716 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9046, count_after=9047, delta=1, last_ids=[id=9050:stop_loss_error, id=9049:stop_loss_error, id=9048:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "zombie_check_start",
+      "timestamp": "2025-10-15 02:43:11,986",
+      "raw_line": "2025-10-15 02:43:11,986 - core.position_manager - INFO - \ud83e\uddf9 Starting enhanced zombie order cleanup...",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:14,648",
+      "raw_line": "2025-10-15 02:43:14,648 - core.binance_zombie_manager - INFO - \ud83d\udcca binance metrics: {'empty_responses': 0, 'rate_limit_waits': 0, 'error_2011_count': 0, 'error_2013_count': 0, 'oco_handled': 0, 'zombies_cleaned': 0, 'async_delays_detected': 0, 'current_weight': '50/1180', 'health': 'OK'}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:17,392",
+      "raw_line": "2025-10-15 02:43:17,392 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9047, count_after=9048, delta=1, last_ids=[id=9051:stop_loss_error, id=9050:stop_loss_error, id=9049:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:19,105",
+      "raw_line": "2025-10-15 02:43:19,105 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5121 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:25,208",
+      "raw_line": "2025-10-15 02:43:25,208 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481805189}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:25,209",
+      "raw_line": "2025-10-15 02:43:25,209 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481805189}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:25,209",
+      "raw_line": "2025-10-15 02:43:25,209 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481805189}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:25,965",
+      "raw_line": "2025-10-15 02:43:25,965 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9048, count_after=9049, delta=1, last_ids=[id=9052:stop_loss_error, id=9051:stop_loss_error, id=9050:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:27,215",
+      "raw_line": "2025-10-15 02:43:27,215 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481807194}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:27,215",
+      "raw_line": "2025-10-15 02:43:27,215 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481807194}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:27,216",
+      "raw_line": "2025-10-15 02:43:27,216 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481807194}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:30,226",
+      "raw_line": "2025-10-15 02:43:30,226 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481810207}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:30,226",
+      "raw_line": "2025-10-15 02:43:30,226 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481810207}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:30,226",
+      "raw_line": "2025-10-15 02:43:30,226 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481810207}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:30,226",
+      "raw_line": "2025-10-15 02:43:30,226 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481810207}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:30,226",
+      "raw_line": "2025-10-15 02:43:30,226 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:30,226",
+      "raw_line": "2025-10-15 02:43:30,226 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:30,635",
+      "raw_line": "2025-10-15 02:43:30,635 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9049, count_after=9050, delta=1, last_ids=[id=9053:stop_loss_error, id=9052:stop_loss_error, id=9051:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:36,312",
+      "raw_line": "2025-10-15 02:43:36,312 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9050, count_after=9051, delta=1, last_ids=[id=9054:stop_loss_error, id=9053:stop_loss_error, id=9052:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:43:51,172",
+      "raw_line": "2025-10-15 02:43:51,172 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9051, count_after=9052, delta=1, last_ids=[id=9055:health_check_failed, id=9054:stop_loss_error, id=9053:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:34,877",
+      "raw_line": "2025-10-15 02:45:34,877 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5257 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:41,005",
+      "raw_line": "2025-10-15 02:45:41,005 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481940972}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:41,006",
+      "raw_line": "2025-10-15 02:45:41,006 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481940972}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:41,006",
+      "raw_line": "2025-10-15 02:45:41,006 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481940972}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:41,754",
+      "raw_line": "2025-10-15 02:45:41,754 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9052, count_after=9053, delta=1, last_ids=[id=9056:stop_loss_error, id=9055:health_check_failed, id=9054:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:43,019",
+      "raw_line": "2025-10-15 02:45:43,019 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481942995}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:43,019",
+      "raw_line": "2025-10-15 02:45:43,019 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481942995}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:43,019",
+      "raw_line": "2025-10-15 02:45:43,019 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481942995}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:46,038",
+      "raw_line": "2025-10-15 02:45:46,038 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481946016}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:46,039",
+      "raw_line": "2025-10-15 02:45:46,039 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481946016}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:46,039",
+      "raw_line": "2025-10-15 02:45:46,039 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481946016}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:46,039",
+      "raw_line": "2025-10-15 02:45:46,039 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481946016}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:46,039",
+      "raw_line": "2025-10-15 02:45:46,039 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:46,039",
+      "raw_line": "2025-10-15 02:45:46,039 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:46,448",
+      "raw_line": "2025-10-15 02:45:46,448 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9053, count_after=9054, delta=1, last_ids=[id=9057:stop_loss_error, id=9056:stop_loss_error, id=9055:health_check_failed])",
+      "extracted_data": {}
+    },
+    {
+      "type": "zombie_check_start",
+      "timestamp": "2025-10-15 02:45:46,728",
+      "raw_line": "2025-10-15 02:45:46,728 - core.position_manager - INFO - \ud83e\uddf9 Starting enhanced zombie order cleanup...",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:49,395",
+      "raw_line": "2025-10-15 02:45:49,395 - core.binance_zombie_manager - INFO - \ud83d\udcca binance metrics: {'empty_responses': 0, 'rate_limit_waits': 0, 'error_2011_count': 0, 'error_2013_count': 0, 'oco_handled': 0, 'zombies_cleaned': 0, 'async_delays_detected': 0, 'current_weight': '50/1180', 'health': 'OK'}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:52,111",
+      "raw_line": "2025-10-15 02:45:52,111 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9054, count_after=9055, delta=1, last_ids=[id=9058:stop_loss_error, id=9057:stop_loss_error, id=9056:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:45:53,826",
+      "raw_line": "2025-10-15 02:45:53,826 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5276 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:00,002",
+      "raw_line": "2025-10-15 02:46:00,002 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481959981}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:00,003",
+      "raw_line": "2025-10-15 02:46:00,003 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481959981}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:00,003",
+      "raw_line": "2025-10-15 02:46:00,003 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481959981}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:00,750",
+      "raw_line": "2025-10-15 02:46:00,750 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9055, count_after=9056, delta=1, last_ids=[id=9059:stop_loss_error, id=9058:stop_loss_error, id=9057:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:02,010",
+      "raw_line": "2025-10-15 02:46:02,010 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481961987}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:02,010",
+      "raw_line": "2025-10-15 02:46:02,010 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481961987}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:02,010",
+      "raw_line": "2025-10-15 02:46:02,010 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481961987}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:05,018",
+      "raw_line": "2025-10-15 02:46:05,018 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481964995}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:05,018",
+      "raw_line": "2025-10-15 02:46:05,018 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481964995}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:05,018",
+      "raw_line": "2025-10-15 02:46:05,018 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481964995}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:05,018",
+      "raw_line": "2025-10-15 02:46:05,018 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760481964995}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:05,018",
+      "raw_line": "2025-10-15 02:46:05,018 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:05,018",
+      "raw_line": "2025-10-15 02:46:05,018 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:05,437",
+      "raw_line": "2025-10-15 02:46:05,437 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9056, count_after=9057, delta=1, last_ids=[id=9060:stop_loss_error, id=9059:stop_loss_error, id=9058:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:11,099",
+      "raw_line": "2025-10-15 02:46:11,099 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9057, count_after=9058, delta=1, last_ids=[id=9061:stop_loss_error, id=9060:stop_loss_error, id=9059:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:46,606",
+      "raw_line": "2025-10-15 02:46:46,606 - core.exchange_manager_enhanced - ERROR - \u274c Unexpected error creating exit order: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482006583}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645554",
+      "raw_line": "self.handle_errors(http_status_code, http_status_text, url, method, headers, http_response, json_response, request_headers, request_body)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645561",
+      "raw_line": "File \"/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/.venv/lib/python3.12/site-packages/ccxt/async_support/bybit.py\", line 8724, in handle_errors",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645567",
+      "raw_line": "raise ExchangeError(feedback)  # unknown message",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645574",
+      "raw_line": "ccxt.base.errors.ExchangeError: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482006583}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:46,607",
+      "raw_line": "2025-10-15 02:46:46,607 - core.aged_position_manager - ERROR - Error updating exit order: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482006583}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645660",
+      "raw_line": "self.handle_errors(http_status_code, http_status_text, url, method, headers, http_response, json_response, request_headers, request_body)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645665",
+      "raw_line": "File \"/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/.venv/lib/python3.12/site-packages/ccxt/async_support/bybit.py\", line 8724, in handle_errors",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645670",
+      "raw_line": "raise ExchangeError(feedback)  # unknown message",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:46.645677",
+      "raw_line": "ccxt.base.errors.ExchangeError: bybit {\"retCode\":170209,\"retMsg\":\"This trading pair is only available to the China region.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482006583}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:48,909",
+      "raw_line": "2025-10-15 02:46:48,909 - core.exchange_manager_enhanced - ERROR - \u274c Invalid order: bybit {\"retCode\":170193,\"retMsg\":\"Buy order price cannot be higher than 0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482008886}",
+      "extracted_data": {
+        "symbol": "0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482008886}"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:48,909",
+      "raw_line": "2025-10-15 02:46:48,909 - core.aged_position_manager - ERROR - Error updating exit order: bybit {\"retCode\":170193,\"retMsg\":\"Buy order price cannot be higher than 0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482008886}",
+      "extracted_data": {
+        "symbol": "0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482008886}"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:48.967769",
+      "raw_line": "self.handle_errors(http_status_code, http_status_text, url, method, headers, http_response, json_response, request_headers, request_body)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:48.967776",
+      "raw_line": "File \"/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/.venv/lib/python3.12/site-packages/ccxt/async_support/bybit.py\", line 8723, in handle_errors",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:48.967781",
+      "raw_line": "self.throw_exactly_matched_exception(self.exceptions['exact'], errorCode, feedback)",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15T02:46:48.967798",
+      "raw_line": "ccxt.base.errors.InvalidOrder: bybit {\"retCode\":170193,\"retMsg\":\"Buy order price cannot be higher than 0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482008886}",
+      "extracted_data": {
+        "symbol": "0USDT.\",\"result\":{},\"retExtInfo\":{},\"time\":1760482008886}"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:46:59,193",
+      "raw_line": "2025-10-15 02:46:59,193 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5341 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:05,603",
+      "raw_line": "2025-10-15 02:47:05,603 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482025578}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:05,603",
+      "raw_line": "2025-10-15 02:47:05,603 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482025578}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:05,603",
+      "raw_line": "2025-10-15 02:47:05,603 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482025578}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:06,015",
+      "raw_line": "2025-10-15 02:47:06,015 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9058, count_after=9059, delta=1, last_ids=[id=9062:stop_loss_error, id=9061:stop_loss_error, id=9060:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:07,613",
+      "raw_line": "2025-10-15 02:47:07,613 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482027590}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:07,613",
+      "raw_line": "2025-10-15 02:47:07,613 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482027590}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:07,613",
+      "raw_line": "2025-10-15 02:47:07,613 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482027590}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:10,619",
+      "raw_line": "2025-10-15 02:47:10,619 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482030598}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:10,619",
+      "raw_line": "2025-10-15 02:47:10,619 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482030598}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:10,619",
+      "raw_line": "2025-10-15 02:47:10,619 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482030598}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:10,620",
+      "raw_line": "2025-10-15 02:47:10,620 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482030598}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:10,620",
+      "raw_line": "2025-10-15 02:47:10,620 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:10,620",
+      "raw_line": "2025-10-15 02:47:10,620 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:11,018",
+      "raw_line": "2025-10-15 02:47:11,018 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9059, count_after=9060, delta=1, last_ids=[id=9063:stop_loss_error, id=9062:stop_loss_error, id=9061:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:47:16,673",
+      "raw_line": "2025-10-15 02:47:16,673 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9060, count_after=9061, delta=1, last_ids=[id=9064:stop_loss_error, id=9063:stop_loss_error, id=9062:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:09,058",
+      "raw_line": "2025-10-15 02:48:09,058 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5411 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:15,245",
+      "raw_line": "2025-10-15 02:48:15,245 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482095198}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:15,245",
+      "raw_line": "2025-10-15 02:48:15,245 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482095198}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:15,245",
+      "raw_line": "2025-10-15 02:48:15,245 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482095198}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:15,670",
+      "raw_line": "2025-10-15 02:48:15,670 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9061, count_after=9062, delta=1, last_ids=[id=9065:stop_loss_error, id=9064:stop_loss_error, id=9063:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:17,261",
+      "raw_line": "2025-10-15 02:48:17,261 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482097238}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:17,262",
+      "raw_line": "2025-10-15 02:48:17,262 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482097238}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:17,262",
+      "raw_line": "2025-10-15 02:48:17,262 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482097238}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:20,273",
+      "raw_line": "2025-10-15 02:48:20,273 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482100249}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:20,273",
+      "raw_line": "2025-10-15 02:48:20,273 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482100249}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:20,274",
+      "raw_line": "2025-10-15 02:48:20,274 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482100249}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:20,274",
+      "raw_line": "2025-10-15 02:48:20,274 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482100249}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:20,274",
+      "raw_line": "2025-10-15 02:48:20,274 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:20,274",
+      "raw_line": "2025-10-15 02:48:20,274 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:20,674",
+      "raw_line": "2025-10-15 02:48:20,674 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9062, count_after=9063, delta=1, last_ids=[id=9066:stop_loss_error, id=9065:stop_loss_error, id=9064:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "zombie_check_start",
+      "timestamp": "2025-10-15 02:48:20,967",
+      "raw_line": "2025-10-15 02:48:20,967 - core.position_manager - INFO - \ud83e\uddf9 Starting enhanced zombie order cleanup...",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:23,628",
+      "raw_line": "2025-10-15 02:48:23,628 - core.binance_zombie_manager - INFO - \ud83d\udcca binance metrics: {'empty_responses': 0, 'rate_limit_waits': 0, 'error_2011_count': 0, 'error_2013_count': 0, 'oco_handled': 0, 'zombies_cleaned': 0, 'async_delays_detected': 0, 'current_weight': '50/1180', 'health': 'OK'}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:26,322",
+      "raw_line": "2025-10-15 02:48:26,322 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9063, count_after=9064, delta=1, last_ids=[id=9067:stop_loss_error, id=9066:stop_loss_error, id=9065:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:28,065",
+      "raw_line": "2025-10-15 02:48:28,065 - core.position_manager - CRITICAL - \ud83d\udea8 CRITICAL ALERT: Position HNTUSDT WITHOUT STOP LOSS for 5430 seconds! Position at risk!",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:34,169",
+      "raw_line": "2025-10-15 02:48:34,169 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482114146}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:34,169",
+      "raw_line": "2025-10-15 02:48:34,169 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482114146}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:34,170",
+      "raw_line": "2025-10-15 02:48:34,170 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482114146}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:34,900",
+      "raw_line": "2025-10-15 02:48:34,900 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9064, count_after=9065, delta=1, last_ids=[id=9068:stop_loss_error, id=9067:stop_loss_error, id=9066:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:36,188",
+      "raw_line": "2025-10-15 02:48:36,188 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482116164}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:36,189",
+      "raw_line": "2025-10-15 02:48:36,189 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482116164}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:36,189",
+      "raw_line": "2025-10-15 02:48:36,189 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482116164}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:39,519",
+      "raw_line": "2025-10-15 02:48:39,519 - core.stop_loss_manager - ERROR - Failed to set Bybit Stop Loss: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482119495}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:39,521",
+      "raw_line": "2025-10-15 02:48:39,521 - core.event_logger - ERROR - stop_loss_error: {'symbol': 'HNTUSDT', 'exchange': 'bybit', 'error': 'bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482119495}'}",
+      "extracted_data": {
+        "symbol": "'HNTUSDT',"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:39,521",
+      "raw_line": "2025-10-15 02:48:39,521 - core.stop_loss_manager - ERROR - Failed to set Stop Loss for HNTUSDT: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482119495}",
+      "extracted_data": {
+        "symbol": "HNTUSDT:"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:39,521",
+      "raw_line": "2025-10-15 02:48:39,521 - core.stop_loss_manager - ERROR - \u274c Failed to recreate SL after 3 attempts: bybit {\"retCode\":10001,\"retMsg\":\"StopLoss:324000000 set for Buy position should lower than base_price:161600000??LastPrice\",\"result\":{},\"retExtInfo\":{},\"time\":1760482119495}",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:39,521",
+      "raw_line": "2025-10-15 02:48:39,521 - core.position_manager - ERROR - \u274c Failed to set stop loss for HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:39,521",
+      "raw_line": "2025-10-15 02:48:39,521 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: HNTUSDT",
+      "extracted_data": {
+        "symbol": "HNTUSDT"
+      }
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:39,606",
+      "raw_line": "2025-10-15 02:48:39,606 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9065, count_after=9066, delta=1, last_ids=[id=9069:stop_loss_error, id=9068:stop_loss_error, id=9067:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:45,281",
+      "raw_line": "2025-10-15 02:48:45,281 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9066, count_after=9067, delta=1, last_ids=[id=9070:stop_loss_error, id=9069:stop_loss_error, id=9068:stop_loss_error])",
+      "extracted_data": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2025-10-15 02:48:52,137",
+      "raw_line": "2025-10-15 02:48:52,137 - core.event_logger - INFO - EventLogger wrote 1 events to DB (count_before=9067, count_after=9068, delta=1, last_ids=[id=9071:health_check_failed, id=9070:stop_loss_error, id=9069:stop_loss_error])",
+      "extracted_data": {}
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "issue_type": "reduce_only_deleted_with_position",
+      "description": "ReduceOnly order fd7316ae-a3c6-4e66-8a2c-58bc3a208e18 deleted while position was open",
+      "evidence": {
+        "order": {
+          "order_id": "fd7316ae-a3c6-4e66-8a2c-58bc3a208e18",
+          "symbol": "1000NEIROCTO/USDT:USDT",
+          "exchange": "bybit",
+          "order_type": "market",
+          "side": "sell",
+          "status": "open",
+          "amount": 991.0,
+          "price": 0.0,
+          "timestamp": 1760481573643,
+          "reduce_only": true,
+          "close_on_trigger": true,
+          "stop_order_type": "StopLoss",
+          "position_idx": 0,
+          "client_order_id": null,
+          "order_list_id": null,
+          "snapshot_time": "2025-10-14T22:39:33.777024+00:00"
+        },
+        "position_before": {
+          "symbol": "1000NEIROCTO/USDT:USDT",
+          "exchange": "bybit",
+          "side": "long",
+          "contracts": 991.0,
+          "entry_price": 0.1608,
+          "mark_price": 0.1558,
+          "unrealized_pnl": -4.955,
+          "position_idx": 0,
+          "leverage": 10.0,
+          "snapshot_time": "2025-10-14T22:39:34.113533+00:00"
+        }
+      },
+      "timestamp": "2025-10-14T22:49:36.119891+00:00"
+    },
+    {
+      "severity": "HIGH",
+      "issue_type": "reduce_only_deleted_with_position",
+      "description": "ReduceOnly order 593ef560-2744-4add-a4c5-7b08e415a9ce deleted while position was open",
+      "evidence": {
+        "order": {
+          "order_id": "593ef560-2744-4add-a4c5-7b08e415a9ce",
+          "symbol": "CLOUD/USDT:USDT",
+          "exchange": "bybit",
+          "order_type": "market",
+          "side": "buy",
+          "status": "open",
+          "amount": 1380.0,
+          "price": 0.0,
+          "timestamp": 1760481573644,
+          "reduce_only": true,
+          "close_on_trigger": true,
+          "stop_order_type": "StopLoss",
+          "position_idx": 0,
+          "client_order_id": null,
+          "order_list_id": null,
+          "snapshot_time": "2025-10-14T22:39:33.777026+00:00"
+        },
+        "position_before": {
+          "symbol": "CLOUD/USDT:USDT",
+          "exchange": "bybit",
+          "side": "short",
+          "contracts": 1380.0,
+          "entry_price": 0.141,
+          "mark_price": 0.15464,
+          "unrealized_pnl": -18.8232,
+          "position_idx": 0,
+          "leverage": 10.0,
+          "snapshot_time": "2025-10-14T22:39:34.113534+00:00"
+        }
+      },
+      "timestamp": "2025-10-14T22:49:36.119990+00:00"
+    },
+    {
+      "severity": "HIGH",
+      "issue_type": "reduce_only_deleted_with_position",
+      "description": "ReduceOnly order c8eee6b8-86b2-4d5c-b0f5-8cbda7317bb3 deleted while position was open",
+      "evidence": {
+        "order": {
+          "order_id": "c8eee6b8-86b2-4d5c-b0f5-8cbda7317bb3",
+          "symbol": "OKB/USDT:USDT",
+          "exchange": "bybit",
+          "order_type": "market",
+          "side": "sell",
+          "status": "open",
+          "amount": 1.0,
+          "price": 0.0,
+          "timestamp": 1760481573643,
+          "reduce_only": true,
+          "close_on_trigger": true,
+          "stop_order_type": "StopLoss",
+          "position_idx": 0,
+          "client_order_id": null,
+          "order_list_id": null,
+          "snapshot_time": "2025-10-14T22:39:33.777025+00:00"
+        },
+        "position_before": {
+          "symbol": "OKB/USDT:USDT",
+          "exchange": "bybit",
+          "side": "long",
+          "contracts": 1.0,
+          "entry_price": 155.72,
+          "mark_price": 155.72,
+          "unrealized_pnl": 0.0,
+          "position_idx": 0,
+          "leverage": 10.0,
+          "snapshot_time": "2025-10-14T22:39:34.113536+00:00"
+        }
+      },
+      "timestamp": "2025-10-14T22:49:36.120072+00:00"
+    }
+  ],
+  "stats": {
+    "total_orders_before": 19,
+    "total_orders_after": 19,
+    "total_positions_before": 13,
+    "total_positions_after": 13,
+    "orders_deleted": 3,
+    "orders_added": 3,
+    "positions_closed": 0,
+    "positions_opened": 0
+  }
+}

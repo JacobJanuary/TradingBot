@@ -1,0 +1,95 @@
+=== AGE DETECTOR FIX - 10 MINUTE TEST ===
+Start: 2025-10-15 05:12:21
+Bot PID: 99448
+Check interval: every 2.5 minutes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHECK #1 at 05:12:21
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏳ Waiting 2.5 min for first Age Detector cycle...
+
+📊 METRICS (since bot restart):
+  Age Detector cycles: 4
+  Orders created: 27
+  Duplicates prevented: 0
+  Orders updated: 1
+
+📝 Last Age Detector cycle:
+2025-10-15 05:12:26,952 - __main__ - INFO - 📊 Aged positions processed: 14, breakeven: 0, liquidated: 0
+
+🔍 Last 3 aged position events:
+2025-10-15 05:14:49,774 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: sell 1.0 OKBUSDT @ 152.53
+2025-10-15 05:14:50,773 - core.aged_position_manager - INFO - 📈 Processing aged position CLOUDUSDT:
+2025-10-15 05:14:51,121 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: buy 1380.0 CLOUDUSDT @ 0.14389
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHECK #2 at 05:14:51
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏳ Waiting 2.5 min...
+
+📊 METRICS (since bot restart):
+  Age Detector cycles: 5
+  Orders created: 27
+  Duplicates prevented: 0
+  Orders updated: 2
+
+📝 Last Age Detector cycle:
+2025-10-15 05:17:18,168 - __main__ - INFO - 📊 Aged positions processed: 14, breakeven: 0, liquidated: 0
+
+🔍 Last 3 aged position events:
+2025-10-15 05:17:16,172 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: sell 1.0 OKBUSDT @ 152.5
+2025-10-15 05:17:17,491 - core.aged_position_manager - INFO - 📈 Processing aged position CLOUDUSDT:
+2025-10-15 05:17:17,831 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: buy 1380.0 CLOUDUSDT @ 0.14391
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHECK #3 at 05:17:21
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏳ Waiting 2.5 min...
+
+📊 METRICS (since bot restart):
+  Age Detector cycles: 6
+  Orders created: 33
+  Duplicates prevented: 0
+  Orders updated: 3
+
+📝 Last Age Detector cycle:
+2025-10-15 05:19:44,905 - __main__ - INFO - 📊 Aged positions processed: 14, breakeven: 0, liquidated: 0
+
+🔍 Last 3 aged position events:
+2025-10-15 05:19:42,959 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: sell 1.0 OKBUSDT @ 152.47
+2025-10-15 05:19:43,917 - core.aged_position_manager - INFO - 📈 Processing aged position CLOUDUSDT:
+2025-10-15 05:19:44,254 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: buy 1380.0 CLOUDUSDT @ 0.14394
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHECK #4 at 05:19:51
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏳ Waiting 2.5 min...
+
+📊 METRICS (since bot restart):
+  Age Detector cycles: 6
+  Orders created: 34
+  Duplicates prevented: 0
+  Orders updated: 4
+
+📝 Last Age Detector cycle:
+2025-10-15 05:22:11,822 - __main__ - INFO - 📊 Aged positions processed: 14, breakeven: 0, liquidated: 0
+
+🔍 Last 3 aged position events:
+2025-10-15 05:22:09,790 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: sell 1.0 OKBUSDT @ 152.44
+2025-10-15 05:22:10,799 - core.aged_position_manager - INFO - 📈 Processing aged position CLOUDUSDT:
+2025-10-15 05:22:11,147 - core.exchange_manager_enhanced - INFO - 📝 Creating limit exit order: buy 1380.0 CLOUDUSDT @ 0.14397
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TEST COMPLETE at 05:22:21
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 RUNNING FULL ANALYSIS...
+Using log file: logs/trading_bot.log
+
+⚠️  IMPORTANT: Make sure trading bot is already running!
+Press Enter to start monitoring...Traceback (most recent call last):
+  File "/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/monitor_age_detector.py", line 364, in <module>
+    main()
+  File "/Users/evgeniyyanvarskiy/PycharmProjects/TradingBot/monitor_age_detector.py", line 357, in main
+    input("Press Enter to start monitoring...")
+EOFError: EOF when reading a line

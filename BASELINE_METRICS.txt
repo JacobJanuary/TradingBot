@@ -1,7 +1,0 @@
-=== BASELINE METRICS ===
-Timestamp: 2025-10-15 00:54:47
-Позиций проверено: 30
-Позиций с SL: 28
-Позиций БЕЗ SL: 2
-Ошибок API: 0
-Health: PASS (93.3% with SL)
