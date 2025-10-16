@@ -219,6 +219,7 @@ class AtomicPositionManager:
                 })
 
                 # Log entry order to database for audit trail
+                logger.info(f"🔍 About to log entry order for {symbol}")
                 try:
                     await self.repository.create_order({
                         'position_id': str(position_id),
@@ -236,11 +237,12 @@ class AtomicPositionManager:
                         'fee': getattr(entry_order, 'fee', 0),
                         'fee_currency': getattr(entry_order, 'feeCurrency', 'USDT')
                     })
-                    logger.debug(f"📝 Entry order logged to database")
+                    logger.info(f"📝 Entry order logged to database")
                 except Exception as e:
-                    logger.warning(f"Failed to log entry order to DB: {e}")
+                    logger.error(f"❌ Failed to log entry order to DB: {e}")
 
                 # Log entry trade to database (executed trade)
+                logger.info(f"🔍 About to log entry trade for {symbol}")
                 try:
                     await self.repository.create_trade({
                         'signal_id': signal_id,
@@ -258,9 +260,9 @@ class AtomicPositionManager:
                         'fee': getattr(entry_order, 'fee', 0),
                         'fee_currency': getattr(entry_order, 'feeCurrency', 'USDT')
                     })
-                    logger.debug(f"📝 Entry trade logged to database")
+                    logger.info(f"📝 Entry trade logged to database")
                 except Exception as e:
-                    logger.warning(f"Failed to log entry trade to DB: {e}")
+                    logger.error(f"❌ Failed to log entry trade to DB: {e}")
 
                 # Step 3: Размещение stop-loss с retry
                 logger.info(f"🛡️ Placing stop-loss for {symbol} at {stop_loss_price}")
@@ -303,9 +305,9 @@ class AtomicPositionManager:
                                     'fee': 0,
                                     'fee_currency': 'USDT'
                                 })
-                                logger.debug(f"📝 Stop-loss order logged to database")
+                                logger.info(f"📝 Stop-loss order logged to database")
                             except Exception as e:
-                                logger.warning(f"Failed to log SL order to DB: {e}")
+                                logger.error(f"❌ Failed to log SL order to DB: {e}")
 
                             break
 
