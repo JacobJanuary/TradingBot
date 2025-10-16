@@ -43,43 +43,43 @@ echo ""
 
 # Step 3: Verify schemas
 echo "3️⃣  Verifying schemas..."
-SCHEMAS=$(psql -d $DB_NAME -t -c "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name IN ('fas', 'monitoring');")
-if [ "$SCHEMAS" -eq 2 ]; then
-    echo -e "${GREEN}✅ Schemas verified (2/2)${NC}"
+SCHEMAS=$(psql -d $DB_NAME -t -c "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = 'monitoring';")
+if [ "$SCHEMAS" -eq 1 ]; then
+    echo -e "${GREEN}✅ Schemas verified (1/1)${NC}"
 else
-    echo -e "${RED}❌ Schemas missing (found $SCHEMAS/2)${NC}"
+    echo -e "${RED}❌ Schemas missing (found $SCHEMAS/1)${NC}"
     exit 1
 fi
 echo ""
 
 # Step 4: Verify tables
 echo "4️⃣  Verifying tables..."
-TABLES=$(psql -d $DB_NAME -t -c "SELECT COUNT(*) FROM pg_tables WHERE schemaname IN ('fas', 'monitoring');")
-if [ "$TABLES" -eq 6 ]; then
-    echo -e "${GREEN}✅ Tables verified (6/6)${NC}"
+TABLES=$(psql -d $DB_NAME -t -c "SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'monitoring';")
+if [ "$TABLES" -eq 10 ]; then
+    echo -e "${GREEN}✅ Tables verified (10/10)${NC}"
 else
-    echo -e "${RED}❌ Tables missing (found $TABLES/6)${NC}"
+    echo -e "${RED}❌ Tables missing (found $TABLES/10)${NC}"
     exit 1
 fi
 echo ""
 
 # Step 5: Verify indexes
 echo "5️⃣  Verifying indexes..."
-INDEXES=$(psql -d $DB_NAME -t -c "SELECT COUNT(*) FROM pg_indexes WHERE schemaname IN ('fas', 'monitoring');")
-if [ "$INDEXES" -gt 25 ]; then
-    echo -e "${GREEN}✅ Indexes verified ($INDEXES created)${NC}"
+INDEXES=$(psql -d $DB_NAME -t -c "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'monitoring';")
+if [ "$INDEXES" -eq 37 ]; then
+    echo -e "${GREEN}✅ Indexes verified (37/37)${NC}"
 else
-    echo -e "${YELLOW}⚠️  Expected ~30 indexes, found $INDEXES${NC}"
+    echo -e "${YELLOW}⚠️  Expected 37 indexes, found $INDEXES${NC}"
 fi
 echo ""
 
 # Step 6: Verify triggers
 echo "6️⃣  Verifying triggers..."
 TRIGGERS=$(psql -d $DB_NAME -t -c "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema = 'monitoring';")
-if [ "$TRIGGERS" -eq 3 ]; then
-    echo -e "${GREEN}✅ Triggers verified (3/3)${NC}"
+if [ "$TRIGGERS" -eq 2 ]; then
+    echo -e "${GREEN}✅ Triggers verified (2/2)${NC}"
 else
-    echo -e "${RED}❌ Triggers missing (found $TRIGGERS/3)${NC}"
+    echo -e "${RED}❌ Triggers missing (found $TRIGGERS/2)${NC}"
     exit 1
 fi
 echo ""
@@ -87,19 +87,24 @@ echo ""
 # Step 7: Test trigger functionality
 echo "7️⃣  Testing trigger functionality..."
 psql -d $DB_NAME -c "
-    INSERT INTO monitoring.positions (symbol, exchange, side, quantity, entry_price, status) 
+    INSERT INTO monitoring.positions (symbol, exchange, side, quantity, entry_price, status)
     VALUES ('TESTUSDT', 'binance', 'long', 100, 1.0, 'active');
-    
-    UPDATE monitoring.positions 
-    SET current_price = 1.5 
+" > /dev/null 2>&1
+
+# Small delay to ensure different timestamps
+sleep 1
+
+psql -d $DB_NAME -c "
+    UPDATE monitoring.positions
+    SET current_price = 1.5
     WHERE symbol = 'TESTUSDT';
-    
-    SELECT 
-        CASE 
+
+    SELECT
+        CASE
             WHEN updated_at > created_at THEN 'PASS'
             ELSE 'FAIL'
         END as trigger_test
-    FROM monitoring.positions 
+    FROM monitoring.positions
     WHERE symbol = 'TESTUSDT';
 " > /tmp/trigger_test.txt 2>&1
 

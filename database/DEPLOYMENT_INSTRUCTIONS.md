@@ -62,28 +62,31 @@ conn.close()
 
 ## 📋 Что будет создано
 
-### Схемы (2):
-- `fas` - Данные сигналов от FAS scanner
+### Схемы (1):
 - `monitoring` - Позиции, ордера, события бота
 
-### Таблицы (6):
-1. **fas.scoring_history** - История сигналов от FAS
-2. **monitoring.positions** - Торговые позиции
-3. **monitoring.orders** - Все ордера (market, limit, SL, TP)
-4. **monitoring.trades** - Отдельные сделки (fills)
-5. **monitoring.events** - Лог событий бота
-6. **monitoring.trailing_stop_state** - Состояние trailing stop
+### Таблицы (10):
+1. **monitoring.positions** - Торговые позиции
+2. **monitoring.orders** - Все ордера (market, limit, SL, TP)
+3. **monitoring.trades** - Отдельные сделки (fills)
+4. **monitoring.events** - Лог событий бота
+5. **monitoring.trailing_stop_state** - Состояние trailing stop
+6. **monitoring.performance_metrics** - Метрики производительности
+7. **monitoring.event_performance_metrics** - Event-based метрики
+8. **monitoring.risk_events** - События риск-менеджмента
+9. **monitoring.risk_violations** - Нарушения риск-правил
+10. **monitoring.transaction_log** - Лог транзакций БД
 
-### Индексы (~30):
+### Индексы (37):
 - По символам, биржам, статусам
 - По временным меткам (для быстрых запросов)
 - По связанным ID (foreign keys)
 - Композитные индексы для частых запросов
+- Partial indexes для оптимизации
 
-### Триггеры (3):
+### Триггеры (2):
 - Auto-update `updated_at` для positions
-- Auto-update `updated_at` для orders
-- Auto-update `updated_at` для trailing_stop_state
+- Auto-update `updated_at` для trades
 
 ---
 
@@ -93,42 +96,43 @@ conn.close()
 
 ```sql
 -- 1. Проверка схем
-SELECT schema_name 
-FROM information_schema.schemata 
-WHERE schema_name IN ('fas', 'monitoring');
+SELECT schema_name
+FROM information_schema.schemata
+WHERE schema_name = 'monitoring';
 
 -- 2. Проверка таблиц
-SELECT schemaname, tablename 
-FROM pg_tables 
-WHERE schemaname IN ('fas', 'monitoring')
+SELECT schemaname, tablename
+FROM pg_tables
+WHERE schemaname = 'monitoring'
 ORDER BY schemaname, tablename;
 
 -- 3. Проверка индексов
-SELECT schemaname, tablename, indexname 
-FROM pg_indexes 
-WHERE schemaname IN ('fas', 'monitoring')
+SELECT schemaname, tablename, indexname
+FROM pg_indexes
+WHERE schemaname = 'monitoring'
 ORDER BY schemaname, tablename;
 
 -- 4. Проверка триггеров
-SELECT trigger_schema, trigger_name, event_object_table 
-FROM information_schema.triggers 
+SELECT trigger_schema, trigger_name, event_object_table
+FROM information_schema.triggers
 WHERE trigger_schema = 'monitoring';
 
 -- 5. Размер базы данных
-SELECT 
-    schemaname, 
-    tablename, 
+SELECT
+    schemaname,
+    tablename,
     pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
-FROM pg_tables 
-WHERE schemaname IN ('fas', 'monitoring')
+FROM pg_tables
+WHERE schemaname = 'monitoring'
 ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 ```
 
 Ожидаемый результат:
-- ✅ 2 схемы
-- ✅ 6 таблиц
-- ✅ ~30 индексов
-- ✅ 3 триггера
+- ✅ 1 схема (monitoring)
+- ✅ 10 таблиц
+- ✅ 37 индексов
+- ✅ 2 триггера
+- ✅ 1 foreign key
 
 ---
 
@@ -141,14 +145,14 @@ ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 CREATE USER trading_bot_user WITH PASSWORD 'secure_password';
 
 -- Выдайте права
-GRANT USAGE ON SCHEMA fas, monitoring TO trading_bot_user;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA fas, monitoring TO trading_bot_user;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA fas, monitoring TO trading_bot_user;
+GRANT USAGE ON SCHEMA monitoring TO trading_bot_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA monitoring TO trading_bot_user;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA monitoring TO trading_bot_user;
 
 -- Сделайте права постоянными для новых таблиц
-ALTER DEFAULT PRIVILEGES IN SCHEMA fas, monitoring 
+ALTER DEFAULT PRIVILEGES IN SCHEMA monitoring
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO trading_bot_user;
-ALTER DEFAULT PRIVILEGES IN SCHEMA fas, monitoring 
+ALTER DEFAULT PRIVILEGES IN SCHEMA monitoring
     GRANT USAGE, SELECT ON SEQUENCES TO trading_bot_user;
 ```
 
@@ -189,14 +193,14 @@ sudo systemctl restart postgresql
 ### Проверка медленных запросов:
 
 ```sql
-SELECT 
+SELECT
     query,
     calls,
     total_time,
     mean_time,
     max_time
 FROM pg_stat_statements
-WHERE query LIKE '%monitoring.%' OR query LIKE '%fas.%'
+WHERE query LIKE '%monitoring.%'
 ORDER BY mean_time DESC
 LIMIT 10;
 ```
@@ -204,14 +208,14 @@ LIMIT 10;
 ### Проверка размера таблиц:
 
 ```sql
-SELECT 
+SELECT
     schemaname,
     tablename,
     pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as total_size,
     pg_size_pretty(pg_relation_size(schemaname||'.'||tablename)) as table_size,
     pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename) - pg_relation_size(schemaname||'.'||tablename)) as indexes_size
 FROM pg_tables
-WHERE schemaname IN ('fas', 'monitoring')
+WHERE schemaname = 'monitoring'
 ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 ```
 
@@ -231,10 +235,6 @@ AND closed_at < NOW() - INTERVAL '3 months';
 DELETE FROM monitoring.events 
 WHERE created_at < NOW() - INTERVAL '1 month';
 
--- Удалить обработанные сигналы старше 1 недели
-DELETE FROM fas.scoring_history 
-WHERE is_processed = TRUE 
-AND processed_at < NOW() - INTERVAL '1 week';
 
 -- После очистки обновите статистику
 VACUUM ANALYZE;
@@ -265,7 +265,6 @@ ALTER DATABASE fox_crypto OWNER TO your_user;
 Скрипт использует `CREATE ... IF NOT EXISTS`, поэтому безопасно выполнять повторно.
 Если нужно пересоздать с нуля:
 ```sql
-DROP SCHEMA fas CASCADE;
 DROP SCHEMA monitoring CASCADE;
 -- Затем выполните DEPLOY_SCHEMA.sql снова
 ```
@@ -302,9 +301,10 @@ asyncio.run(test())
 - [ ] PostgreSQL установлен и запущен
 - [ ] База данных `fox_crypto` создана
 - [ ] Скрипт `DEPLOY_SCHEMA.sql` выполнен успешно
-- [ ] Все таблицы созданы (6 штук)
-- [ ] Индексы созданы (~30 штук)
-- [ ] Триггеры работают (3 штуки)
+- [ ] Все таблицы созданы (10 штук)
+- [ ] Индексы созданы (37 штук)
+- [ ] Триггеры работают (2 штуки)
+- [ ] Foreign key создан (1 штука)
 - [ ] Права доступа настроены (если нужно)
 - [ ] Бот может подключиться к БД
 - [ ] Первый тест бота выполнен успешно
