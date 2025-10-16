@@ -116,6 +116,9 @@ class SmartTrailingStopManager:
         # Lock for thread safety
         self.lock = asyncio.Lock()
 
+        # Per-symbol locks for SL updates
+        self.sl_update_locks = {}
+
         # Statistics
         self.stats = {
             'total_created': 0,
@@ -580,8 +583,14 @@ class SmartTrailingStopManager:
             ts.last_stop_update = datetime.now()
             ts.update_count += 1
 
-            # Update stop order on exchange
-            await self._update_stop_order(ts)
+            # Get or create lock for this symbol
+            if ts.symbol not in self.sl_update_locks:
+                self.sl_update_locks[ts.symbol] = asyncio.Lock()
+
+            # Acquire symbol-specific lock before exchange update
+            async with self.sl_update_locks[ts.symbol]:
+                # Update stop order on exchange
+                await self._update_stop_order(ts)
 
             improvement = abs((new_stop_price - old_stop) / old_stop * 100)
             logger.info(

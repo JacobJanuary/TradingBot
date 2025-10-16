@@ -172,6 +172,9 @@ class PositionManager:
         # Prevents race condition when multiple tasks check same symbol simultaneously
         self.check_locks: Dict[str, asyncio.Lock] = {}
 
+        # Per-symbol locks for WebSocket position updates
+        self.position_update_locks: Dict[str, asyncio.Lock] = {}
+
         # Risk management
         self.total_exposure = Decimal('0')
         self.position_count = 0
@@ -1562,118 +1565,76 @@ class PositionManager:
             logger.info(f"  → Skipped: {symbol} not in tracked positions ({list(self.positions.keys())[:5]}...)")
             return
 
-        position = self.positions[symbol]
+        # Get or create lock for this symbol
+        if symbol not in self.position_update_locks:
+            self.position_update_locks[symbol] = asyncio.Lock()
 
-        # Update position state
-        old_price = position.current_price
-        position.current_price = float(data.get('mark_price', position.current_price))
-        logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
+        # Acquire symbol-specific lock before modifying shared state
+        async with self.position_update_locks[symbol]:
+            position = self.positions[symbol]
 
-        position.unrealized_pnl = data.get('unrealized_pnl', 0)
+            # Update position state
+            old_price = position.current_price
+            position.current_price = float(data.get('mark_price', position.current_price))
+            logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
 
-        # Calculate PnL percent
-        if position.entry_price > 0:
-            if position.side == 'long':
-                position.unrealized_pnl_percent = (
-                        (float(position.current_price) - float(position.entry_price)) / float(position.entry_price) * 100
-                )
-            else:
-                position.unrealized_pnl_percent = (
-                        (float(position.entry_price) - float(position.current_price)) / float(position.entry_price) * 100
-                )
+            position.unrealized_pnl = data.get('unrealized_pnl', 0)
 
-            # Persist price and PnL to database
-            logger.info(f"[DB_UPDATE] {symbol}: id={position.id}, price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}")
-            try:
-                await self.repository.update_position(
-                    position.id,
-                    current_price=position.current_price,
-                    pnl_percentage=position.unrealized_pnl_percent
-                )
-            except Exception as e:
-                logger.error(f"[DB_UPDATE] Failed for {symbol}: {e}")
+            # Calculate PnL percent
+            if position.entry_price > 0:
+                if position.side == 'long':
+                    position.unrealized_pnl_percent = (
+                            (float(position.current_price) - float(position.entry_price)) / float(position.entry_price) * 100
+                    )
+                else:
+                    position.unrealized_pnl_percent = (
+                            (float(position.entry_price) - float(position.current_price)) / float(position.entry_price) * 100
+                    )
 
-        # Update trailing stop
-        # LOCK: Acquire lock for trailing stop update
-        trailing_lock_key = f"trailing_stop_{symbol}"
-        if trailing_lock_key not in self.position_locks:
-            self.position_locks[trailing_lock_key] = asyncio.Lock()
+                # Persist price and PnL to database
+                logger.info(f"[DB_UPDATE] {symbol}: id={position.id}, price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}")
+                try:
+                    await self.repository.update_position(
+                        position.id,
+                        current_price=position.current_price,
+                        pnl_percentage=position.unrealized_pnl_percent
+                    )
+                except Exception as e:
+                    logger.error(f"[DB_UPDATE] Failed for {symbol}: {e}")
 
-        async with self.position_locks[trailing_lock_key]:
-            trailing_manager = self.trailing_managers.get(position.exchange)
+            # Update trailing stop
+            # LOCK: Acquire lock for trailing stop update
+            trailing_lock_key = f"trailing_stop_{symbol}"
+            if trailing_lock_key not in self.position_locks:
+                self.position_locks[trailing_lock_key] = asyncio.Lock()
 
-            if trailing_manager and position.has_trailing_stop:
-                # NEW: Update TS health timestamp before calling TS Manager
-                position.ts_last_update_time = datetime.now()
+            async with self.position_locks[trailing_lock_key]:
+                trailing_manager = self.trailing_managers.get(position.exchange)
 
-                update_result = await trailing_manager.update_price(symbol, position.current_price)
+                if trailing_manager and position.has_trailing_stop:
+                    # NEW: Update TS health timestamp before calling TS Manager
+                    position.ts_last_update_time = datetime.now()
 
-                if update_result:
-                    action = update_result.get('action')
+                    update_result = await trailing_manager.update_price(symbol, position.current_price)
 
-                    if action == 'activated':
-                        position.trailing_activated = True
-                        logger.info(f"Trailing stop activated for {symbol}")
+                    if update_result:
+                        action = update_result.get('action')
 
-                        # Log trailing stop activation
-                        event_logger = get_event_logger()
-                        if event_logger:
-                            await event_logger.log_event(
-                                EventType.TRAILING_STOP_ACTIVATED,
-                                {
-                                    'symbol': symbol,
-                                    'position_id': position.id,
-                                    'current_price': float(position.current_price),
-                                    'entry_price': float(position.entry_price),
-                                    'stop_loss_price': float(position.stop_loss_price) if position.stop_loss_price else None
-                                },
-                                position_id=position.id,
-                                symbol=symbol,
-                                exchange=position.exchange,
-                                severity='INFO'
-                            )
+                        if action == 'activated':
+                            position.trailing_activated = True
+                            logger.info(f"Trailing stop activated for {symbol}")
 
-                        # Save trailing activation to database
-                        try:
-                            await self.repository.update_position(position.id, trailing_activated=True)
-                        except Exception as db_error:
-                            logger.error(f"Failed to update trailing activation in database for {symbol}: {db_error}")
-
-                            # Log database update failure
+                            # Log trailing stop activation
                             event_logger = get_event_logger()
                             if event_logger:
                                 await event_logger.log_event(
-                                    EventType.DATABASE_ERROR,
+                                    EventType.TRAILING_STOP_ACTIVATED,
                                     {
                                         'symbol': symbol,
                                         'position_id': position.id,
-                                        'operation': 'update_trailing_activation',
-                                        'error': str(db_error)
-                                    },
-                                    position_id=position.id,
-                                    symbol=symbol,
-                                    exchange=position.exchange,
-                                    severity='ERROR'
-                                )
-
-                    elif action == 'updated':
-                        # CRITICAL FIX: Save new trailing stop price to database
-                        new_stop = update_result.get('new_stop')
-                        if new_stop:
-                            old_stop = position.stop_loss_price
-                            position.stop_loss_price = new_stop
-
-                            # Log trailing stop update
-                            event_logger = get_event_logger()
-                            if event_logger:
-                                await event_logger.log_event(
-                                    EventType.TRAILING_STOP_UPDATED,
-                                    {
-                                        'symbol': symbol,
-                                        'position_id': position.id,
-                                        'old_stop_price': float(old_stop) if old_stop else None,
-                                        'new_stop_price': float(new_stop),
-                                        'current_price': float(position.current_price)
+                                        'current_price': float(position.current_price),
+                                        'entry_price': float(position.entry_price),
+                                        'stop_loss_price': float(position.stop_loss_price) if position.stop_loss_price else None
                                     },
                                     position_id=position.id,
                                     symbol=symbol,
@@ -1681,14 +1642,11 @@ class PositionManager:
                                     severity='INFO'
                                 )
 
+                            # Save trailing activation to database
                             try:
-                                await self.repository.update_position(
-                                    position.id,
-                                    stop_loss_price=new_stop
-                                )
-                                logger.info(f"✅ Saved new trailing stop price for {symbol}: {new_stop}")
+                                await self.repository.update_position(position.id, trailing_activated=True)
                             except Exception as db_error:
-                                logger.error(f"Failed to update trailing stop price in database for {symbol}: {db_error}")
+                                logger.error(f"Failed to update trailing activation in database for {symbol}: {db_error}")
 
                                 # Log database update failure
                                 event_logger = get_event_logger()
@@ -1698,9 +1656,8 @@ class PositionManager:
                                         {
                                             'symbol': symbol,
                                             'position_id': position.id,
-                                            'operation': 'update_trailing_stop_price',
-                                            'error': str(db_error),
-                                            'new_stop_price': float(new_stop)
+                                            'operation': 'update_trailing_activation',
+                                            'error': str(db_error)
                                         },
                                         position_id=position.id,
                                         symbol=symbol,
@@ -1708,57 +1665,109 @@ class PositionManager:
                                         severity='ERROR'
                                     )
 
-        # Update database
-        try:
-            await self.repository.update_position_from_websocket({
-                'symbol': symbol,
-                'exchange': position.exchange,
-                'current_price': position.current_price,
-                'mark_price': position.current_price,
-                'unrealized_pnl': position.unrealized_pnl,
-                'unrealized_pnl_percent': position.unrealized_pnl_percent
-            })
+                        elif action == 'updated':
+                            # CRITICAL FIX: Save new trailing stop price to database
+                            new_stop = update_result.get('new_stop')
+                            if new_stop:
+                                old_stop = position.stop_loss_price
+                                position.stop_loss_price = new_stop
 
-            # Log successful position update
-            event_logger = get_event_logger()
-            if event_logger:
-                await event_logger.log_event(
-                    EventType.POSITION_UPDATED,
-                    {
-                        'symbol': symbol,
-                        'position_id': position.id,
-                        'old_price': float(old_price),
-                        'new_price': float(position.current_price),
-                        'unrealized_pnl': float(position.unrealized_pnl),
-                        'unrealized_pnl_percent': float(position.unrealized_pnl_percent),
-                        'source': 'websocket'
-                    },
-                    position_id=position.id,
-                    symbol=symbol,
-                    exchange=position.exchange,
-                    severity='INFO'
-                )
+                                # Log trailing stop update
+                                event_logger = get_event_logger()
+                                if event_logger:
+                                    await event_logger.log_event(
+                                        EventType.TRAILING_STOP_UPDATED,
+                                        {
+                                            'symbol': symbol,
+                                            'position_id': position.id,
+                                            'old_stop_price': float(old_stop) if old_stop else None,
+                                            'new_stop_price': float(new_stop),
+                                            'current_price': float(position.current_price)
+                                        },
+                                        position_id=position.id,
+                                        symbol=symbol,
+                                        exchange=position.exchange,
+                                        severity='INFO'
+                                    )
 
-        except Exception as db_error:
-            logger.error(f"Failed to update position from websocket in database for {symbol}: {db_error}")
+                                try:
+                                    await self.repository.update_position(
+                                        position.id,
+                                        stop_loss_price=new_stop
+                                    )
+                                    logger.info(f"✅ Saved new trailing stop price for {symbol}: {new_stop}")
+                                except Exception as db_error:
+                                    logger.error(f"Failed to update trailing stop price in database for {symbol}: {db_error}")
 
-            # Log database update failure
-            event_logger = get_event_logger()
-            if event_logger:
-                await event_logger.log_event(
-                    EventType.DATABASE_ERROR,
-                    {
-                        'symbol': symbol,
-                        'position_id': position.id,
-                        'operation': 'update_position_from_websocket',
-                        'error': str(db_error),
-                        'current_price': float(position.current_price)
-                    },
-                    position_id=position.id,
-                    symbol=symbol,
-                    exchange=position.exchange,
-                    severity='ERROR'
-                )
+                                    # Log database update failure
+                                    event_logger = get_event_logger()
+                                    if event_logger:
+                                        await event_logger.log_event(
+                                            EventType.DATABASE_ERROR,
+                                            {
+                                                'symbol': symbol,
+                                                'position_id': position.id,
+                                                'operation': 'update_trailing_stop_price',
+                                                'error': str(db_error),
+                                                'new_stop_price': float(new_stop)
+                                            },
+                                            position_id=position.id,
+                                            symbol=symbol,
+                                            exchange=position.exchange,
+                                            severity='ERROR'
+                                        )
+
+            # Update database
+            try:
+                await self.repository.update_position_from_websocket({
+                    'symbol': symbol,
+                    'exchange': position.exchange,
+                    'current_price': position.current_price,
+                    'mark_price': position.current_price,
+                    'unrealized_pnl': position.unrealized_pnl,
+                    'unrealized_pnl_percent': position.unrealized_pnl_percent
+                })
+
+                # Log successful position update
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.POSITION_UPDATED,
+                        {
+                            'symbol': symbol,
+                            'position_id': position.id,
+                            'old_price': float(old_price),
+                            'new_price': float(position.current_price),
+                            'unrealized_pnl': float(position.unrealized_pnl) if position.unrealized_pnl is not None else 0.0,
+                            'unrealized_pnl_percent': float(position.unrealized_pnl_percent) if position.unrealized_pnl_percent is not None else 0.0,
+                            'source': 'websocket'
+                        },
+                        position_id=position.id,
+                        symbol=symbol,
+                        exchange=position.exchange,
+                        severity='INFO'
+                    )
+
+            except Exception as db_error:
+                logger.error(f"Failed to update position from websocket in database for {symbol}: {db_error}")
+
+                # Log database update failure
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.DATABASE_ERROR,
+                        {
+                            'symbol': symbol,
+                            'position_id': position.id,
+                            'operation': 'update_position_from_websocket',
+                            'error': str(db_error),
+                            'current_price': float(position.current_price)
+                        },
+                        position_id=position.id,
+                        symbol=symbol,
+                        exchange=position.exchange,
+                        severity='ERROR'
+                    )
 
     async def _on_order_filled(self, data: Dict):
         """Handle order filled event"""
