@@ -218,6 +218,28 @@ class AtomicPositionManager:
                     'exchange_order_id': entry_order.id  # Track order ID
                 })
 
+                # Log entry order to database for audit trail
+                try:
+                    await self.repository.create_order({
+                        'position_id': str(position_id),
+                        'exchange': exchange,
+                        'symbol': symbol,
+                        'order_id': entry_order.id,
+                        'client_order_id': getattr(entry_order, 'clientOrderId', None),
+                        'type': 'MARKET',
+                        'side': side,
+                        'size': quantity,
+                        'price': exec_price or entry_price,
+                        'status': 'FILLED',
+                        'filled': quantity,
+                        'remaining': 0,
+                        'fee': getattr(entry_order, 'fee', 0),
+                        'fee_currency': getattr(entry_order, 'feeCurrency', 'USDT')
+                    })
+                    logger.debug(f"📝 Entry order logged to database")
+                except Exception as e:
+                    logger.warning(f"Failed to log entry order to DB: {e}")
+
                 # Step 3: Размещение stop-loss с retry
                 logger.info(f"🛡️ Placing stop-loss for {symbol} at {stop_loss_price}")
                 state = PositionState.PENDING_SL
