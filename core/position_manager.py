@@ -1811,6 +1811,48 @@ class PositionManager:
                     realized_pnl = (position.entry_price - exit_price) * position.quantity
                     realized_pnl_percent = (position.entry_price - exit_price) / position.entry_price * 100
 
+                # Log exit order to database
+                try:
+                    exit_side = 'sell' if position.side == 'long' else 'buy'
+                    await self.repository.create_order({
+                        'position_id': str(position.id),
+                        'exchange': position.exchange,
+                        'symbol': symbol,
+                        'order_id': None,
+                        'type': 'MARKET',
+                        'side': exit_side,
+                        'size': position.quantity,
+                        'price': exit_price,
+                        'status': 'FILLED',
+                        'filled': position.quantity,
+                        'remaining': 0,
+                        'fee': 0,
+                        'fee_currency': 'USDT'
+                    })
+                    logger.debug(f"📝 Exit order logged to database")
+                except Exception as e:
+                    logger.warning(f"Failed to log exit order: {e}")
+
+                # Log exit trade to database
+                try:
+                    await self.repository.create_trade({
+                        'symbol': symbol,
+                        'exchange': position.exchange,
+                        'side': exit_side,
+                        'order_type': 'MARKET',
+                        'quantity': position.quantity,
+                        'price': exit_price,
+                        'executed_qty': position.quantity,
+                        'average_price': exit_price,
+                        'order_id': None,
+                        'status': 'FILLED',
+                        'fee': 0,
+                        'fee_currency': 'USDT'
+                    })
+                    logger.debug(f"📝 Exit trade logged to database")
+                except Exception as e:
+                    logger.warning(f"Failed to log exit trade: {e}")
+
                 # Update database
                 await self.repository.close_position(
                     position.id,                    # position_id: int
