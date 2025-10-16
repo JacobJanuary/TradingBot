@@ -615,6 +615,42 @@ class PositionManager:
                     logger.info(f"Closing orphaned position: {pos_state.symbol}")
                     # Close position in database
                     if pos_state.id:
+                        # Log estimated exit (we missed the real close event)
+                        try:
+                            exit_side = 'sell' if pos_state.side == 'long' else 'buy'
+                            await self.repository.create_order({
+                                'position_id': str(pos_state.id),
+                                'exchange': pos_state.exchange,
+                                'symbol': pos_state.symbol,
+                                'order_id': None,
+                                'type': 'MARKET',
+                                'side': exit_side,
+                                'size': pos_state.quantity,
+                                'price': pos_state.current_price,
+                                'status': 'FILLED',
+                                'filled': pos_state.quantity,
+                                'remaining': 0,
+                                'fee': 0,
+                                'fee_currency': 'USDT'
+                            })
+                            await self.repository.create_trade({
+                                'symbol': pos_state.symbol,
+                                'exchange': pos_state.exchange,
+                                'side': exit_side,
+                                'order_type': 'MARKET',
+                                'quantity': pos_state.quantity,
+                                'price': pos_state.current_price,
+                                'executed_qty': pos_state.quantity,
+                                'average_price': pos_state.current_price,
+                                'order_id': None,
+                                'status': 'FILLED',
+                                'fee': 0,
+                                'fee_currency': 'USDT'
+                            })
+                            logger.debug(f"📝 Estimated exit logged for sync_cleanup")
+                        except Exception as e:
+                            logger.warning(f"Failed to log sync_cleanup exit: {e}")
+
                         await self.repository.close_position(
                             pos_state.id,                           # position_id: int
                             pos_state.current_price or 0.0,        # close_price: float
