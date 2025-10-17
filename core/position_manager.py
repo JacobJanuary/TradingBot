@@ -600,8 +600,15 @@ class PositionManager:
 
             # DEBUG: Log symbols comparison
             logger.info(f"🔍 DEBUG active_symbols ({len(active_symbols)}): {sorted(active_symbols)}")
-            db_symbols = {s for s, p in self.positions.items() if p.exchange == exchange_name}
-            logger.info(f"🔍 DEBUG db_symbols for {exchange_name} ({len(db_symbols)}): {sorted(db_symbols)}")
+
+            # FIX 2.2: Query database directly for db_symbols instead of relying on self.positions
+            # This prevents duplicates when self.positions is out of sync with DB
+            db_positions_list = await self.repository.get_open_positions()
+            db_symbols = {
+                p['symbol'] for p in db_positions_list
+                if p.get('exchange') == exchange_name
+            }
+            logger.info(f"🔍 DEBUG db_symbols from DB ({len(db_symbols)}): {sorted(db_symbols)}")
             logger.info(f"🔍 DEBUG self.positions total: {len(self.positions)}")
 
             # Find positions in DB but not on exchange (closed positions)
@@ -677,47 +684,84 @@ class PositionManager:
 
                 # Check if position exists in our tracking
                 if symbol not in self.positions or self.positions[symbol].exchange != exchange_name:
-                    # New position - add to database
-                    position_id = await self.repository.create_position({
-                        'symbol': symbol,
-                        'exchange': exchange_name,
-                        'side': side,
-                        'quantity': quantity,
-                        'entry_price': entry_price
-                    })
+                    # FIX 1.2: Check database first before creating (prevent duplicates)
+                    db_position = await self.repository.get_open_position(symbol, exchange_name)
 
-                    # Create position state
-                    position_state = PositionState(
-                        id=position_id,
-                        symbol=symbol,
-                        exchange=exchange_name,
-                        side=side,
-                        quantity=quantity,
-                        entry_price=entry_price,
-                        current_price=entry_price,
-                        unrealized_pnl=0,
-                        unrealized_pnl_percent=0,
-                        has_stop_loss=False,
-                        stop_loss_price=None,
-                        has_trailing_stop=False,
-                        trailing_activated=False,
-                        opened_at=datetime.now(timezone.utc),
-                        age_hours=0
-                    )
+                    if db_position:
+                        # Position exists in DB but not in memory - restore it
+                        position_state = PositionState(
+                            id=db_position['id'],
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            side=side,
+                            quantity=quantity,
+                            entry_price=entry_price,
+                            current_price=entry_price,
+                            unrealized_pnl=0,
+                            unrealized_pnl_percent=0,
+                            has_stop_loss=db_position.get('has_stop_loss', False),
+                            stop_loss_price=to_decimal(db_position.get('stop_loss_price')) if db_position.get('stop_loss_price') else None,
+                            has_trailing_stop=db_position.get('has_trailing_stop', False),
+                            trailing_activated=False,
+                            opened_at=db_position.get('opened_at') or datetime.now(timezone.utc),
+                            age_hours=0
+                        )
 
-                    self.positions[symbol] = position_state
-                    logger.info(f"➕ Added new position: {symbol}")
+                        self.positions[symbol] = position_state
+                        logger.info(f"♻️ Restored existing position from DB: {symbol} (id={db_position['id']})")
 
-                    # Set stop loss for new position
-                    stop_loss_percent = to_decimal(self.config.stop_loss_percent)
-                    stop_loss_price = calculate_stop_loss(
-                        to_decimal(entry_price), side, stop_loss_percent
-                    )
+                        # Check if stop loss needs to be set
+                        if not position_state.has_stop_loss:
+                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            stop_loss_price = calculate_stop_loss(
+                                to_decimal(entry_price), side, stop_loss_percent
+                            )
+                            if await self._set_stop_loss(exchange, position_state, stop_loss_price):
+                                position_state.has_stop_loss = True
+                                position_state.stop_loss_price = stop_loss_price
+                                logger.info(f"✅ Stop loss set for restored position {symbol}")
+                    else:
+                        # Position truly doesn't exist - create new one
+                        position_id = await self.repository.create_position({
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'side': side,
+                            'quantity': quantity,
+                            'entry_price': entry_price
+                        })
 
-                    if await self._set_stop_loss(exchange, position_state, stop_loss_price):
-                        position_state.has_stop_loss = True
-                        position_state.stop_loss_price = stop_loss_price
-                        logger.info(f"✅ Stop loss set for new position {symbol}")
+                        # Create position state
+                        position_state = PositionState(
+                            id=position_id,
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            side=side,
+                            quantity=quantity,
+                            entry_price=entry_price,
+                            current_price=entry_price,
+                            unrealized_pnl=0,
+                            unrealized_pnl_percent=0,
+                            has_stop_loss=False,
+                            stop_loss_price=None,
+                            has_trailing_stop=False,
+                            trailing_activated=False,
+                            opened_at=datetime.now(timezone.utc),
+                            age_hours=0
+                        )
+
+                        self.positions[symbol] = position_state
+                        logger.info(f"➕ Added new position: {symbol}")
+
+                        # Set stop loss for new position
+                        stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                        stop_loss_price = calculate_stop_loss(
+                            to_decimal(entry_price), side, stop_loss_percent
+                        )
+
+                        if await self._set_stop_loss(exchange, position_state, stop_loss_price):
+                            position_state.has_stop_loss = True
+                            position_state.stop_loss_price = stop_loss_price
+                            logger.info(f"✅ Stop loss set for new position {symbol}")
 
         except Exception as e:
             logger.error(f"Error syncing {exchange_name} positions: {e}")

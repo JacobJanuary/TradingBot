@@ -1,0 +1,666 @@
+{
+  "wave_num": 1,
+  "expected_time": "2025-10-17T20:50:00",
+  "start_monitoring": "2025-10-17T20:49:30.006426",
+  "snapshot_before": {
+    "timestamp": "2025-10-17T20:49:30.006452",
+    "all_positions": [],
+    "active_positions": [],
+    "recent_events": [],
+    "trailing_states": [],
+    "statistics": {},
+    "error": "column \"entry_order_id\" does not exist"
+  },
+  "db_events": [],
+  "positions_created": [],
+  "errors": [],
+  "snapshot_after": {
+    "timestamp": "2025-10-17T20:52:30.161267",
+    "all_positions": [],
+    "active_positions": [],
+    "recent_events": [],
+    "trailing_states": [],
+    "statistics": {},
+    "error": "column \"entry_order_id\" does not exist"
+  },
+  "end_monitoring": "2025-10-17T20:52:30.162525",
+  "log_analysis": {
+    "start_time": null,
+    "expected_timestamp": null,
+    "wave_found_time": null,
+    "signals_count": 0,
+    "validated_signals": [],
+    "positions_opened": [],
+    "sl_set": [],
+    "errors": [
+      {
+        "raw_line": "2025-10-17 20:49:31,285 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:31.285000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:31,285 - core.aged_position_manager - ERROR - Could not get price for IDEXUSDT",
+        "timestamp": "2025-10-17 20:49:31.285000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:31,627 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:31.627000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:31,627 - core.aged_position_manager - ERROR - Could not get price for SCAUSDT",
+        "timestamp": "2025-10-17 20:49:31.627000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:31,967 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:31.967000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:31,968 - core.aged_position_manager - ERROR - Could not get price for NODEUSDT",
+        "timestamp": "2025-10-17 20:49:31.968000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:32,307 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:32.307000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:32,307 - core.aged_position_manager - ERROR - Could not get price for AGIUSDT",
+        "timestamp": "2025-10-17 20:49:32.307000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:32,647 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:32.647000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:32,647 - core.aged_position_manager - ERROR - Could not get price for GLMRUSDT",
+        "timestamp": "2025-10-17 20:49:32.647000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:32,987 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:32.987000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:32,987 - core.aged_position_manager - ERROR - Could not get price for ETHBTCUSDT",
+        "timestamp": "2025-10-17 20:49:32.987000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:33,327 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:33.327000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:33,327 - core.aged_position_manager - ERROR - Could not get price for CLOUDUSDT",
+        "timestamp": "2025-10-17 20:49:33.327000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:33,669 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:33.669000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:33,669 - core.aged_position_manager - ERROR - Could not get price for DOGUSDT",
+        "timestamp": "2025-10-17 20:49:33.669000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:34,010 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:34.010000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:34,010 - core.aged_position_manager - ERROR - Could not get price for OSMOUSDT",
+        "timestamp": "2025-10-17 20:49:34.010000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:34,351 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:34.351000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:34,351 - core.aged_position_manager - ERROR - Could not get price for OKBUSDT",
+        "timestamp": "2025-10-17 20:49:34.351000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:34,692 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:34.692000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:34,692 - core.aged_position_manager - ERROR - Could not get price for HNTUSDT",
+        "timestamp": "2025-10-17 20:49:34.692000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:35,033 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:35.033000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:35,033 - core.aged_position_manager - ERROR - Could not get price for RADUSDT",
+        "timestamp": "2025-10-17 20:49:35.033000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:35,372 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:35.372000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:35,372 - core.aged_position_manager - ERROR - Could not get price for PYRUSDT",
+        "timestamp": "2025-10-17 20:49:35.372000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:35,711 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:35.711000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:35,711 - core.aged_position_manager - ERROR - Could not get price for BOBAUSDT",
+        "timestamp": "2025-10-17 20:49:35.711000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:36,050 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:36.050000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:36,050 - core.aged_position_manager - ERROR - Could not get price for ORBSUSDT",
+        "timestamp": "2025-10-17 20:49:36.050000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:36,391 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:36.391000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:36,391 - core.aged_position_manager - ERROR - Could not get price for SAROSUSDT",
+        "timestamp": "2025-10-17 20:49:36.391000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:36,732 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:36.732000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:36,732 - core.aged_position_manager - ERROR - Could not get price for 1000NEIROCTOUSDT",
+        "timestamp": "2025-10-17 20:49:36.732000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:37,073 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:49:37.073000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:37,073 - core.aged_position_manager - ERROR - Could not get price for XDCUSDT",
+        "timestamp": "2025-10-17 20:49:37.073000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:50,248 - core.position_manager - ERROR - Failed to fetch ticker for IDEXUSDT: 'unified'",
+        "timestamp": "2025-10-17 20:49:50.248000"
+      },
+      {
+        "raw_line": "2025-10-17 20:49:50,249 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: IDEXUSDT",
+        "timestamp": "2025-10-17 20:49:50.249000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:16,385 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:51:16.385000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:16,385 - core.signal_processor_websocket - ERROR - \u274c Error executing signal #4778309: name 'exchange_name' is not defined",
+        "timestamp": "2025-10-17 20:51:16.385000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:17,387 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'",
+        "timestamp": "2025-10-17 20:51:17.387000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:17,387 - core.signal_processor_websocket - ERROR - \u274c Error executing signal #4778319: name 'exchange_name' is not defined",
+        "timestamp": "2025-10-17 20:51:17.387000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:25,348 - core.position_manager - ERROR - Failed to fetch ticker for IDEXUSDT: 'unified'",
+        "timestamp": "2025-10-17 20:51:25.348000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:25,348 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: IDEXUSDT",
+        "timestamp": "2025-10-17 20:51:25.348000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:25,453 - core.signal_processor_websocket - INFO - \ud83c\udfaf Wave 2025-10-17T16:30:00+00:00 complete: 5 positions opened, 2 failed, 0 validation errors, 0 duplicates",
+        "timestamp": "2025-10-17 20:51:25.453000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:25,453 - core.event_logger - INFO - wave_completed: {'wave_timestamp': '2025-10-17T16:30:00+00:00', 'total_signals': 41, 'positions_opened': 5, 'failed': 2, 'validation_errors': 0, 'duplicates': 0, 'completion_time': '2025-10-17T16:51:25.453974+00:00'}",
+        "timestamp": "2025-10-17 20:51:25.453000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:29,096 - core.binance_zombie_manager - INFO - \ud83d\udcca binance metrics: {'empty_responses': 0, 'rate_limit_waits': 0, 'error_2011_count': 0, 'error_2013_count': 0, 'oco_handled': 0, 'zombies_cleaned': 0, 'async_delays_detected': 0, 'current_weight': '55/1180', 'health': 'OK'}",
+        "timestamp": "2025-10-17 20:51:29.096000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:45,040 - core.position_manager - ERROR - Failed to fetch ticker for IDEXUSDT: 'unified'",
+        "timestamp": "2025-10-17 20:51:45.040000"
+      },
+      {
+        "raw_line": "2025-10-17 20:51:45,040 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: IDEXUSDT",
+        "timestamp": "2025-10-17 20:51:45.040000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:12,438 - core.exchange_manager - ERROR - \u274c Binance optimized SL update failed: No open position found for HEIUSDT",
+        "timestamp": "2025-10-17 20:52:12.438000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:12,438 - core.exchange_manager - ERROR - \u274c SL update failed: HEIUSDT - No open position found for HEIUSDT",
+        "timestamp": "2025-10-17 20:52:12.438000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:12,438 - core.event_logger - ERROR - trailing_stop_sl_update_failed: {'symbol': 'HEIUSDT', 'error': 'No open position found for HEIUSDT', 'execution_time_ms': 1174.557, 'method_attempted': 'binance_cancel_create_optimized'}",
+        "timestamp": "2025-10-17 20:52:12.438000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:12,438 - protection.trailing_stop - ERROR - \u274c HEIUSDT: SL update failed - No open position found for HEIUSDT",
+        "timestamp": "2025-10-17 20:52:12.438000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:13,172 - core.exchange_manager - ERROR - \u274c Binance optimized SL update failed: No open position found for USUALUSDT",
+        "timestamp": "2025-10-17 20:52:13.172000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:13,175 - core.exchange_manager - ERROR - \u274c SL update failed: USUALUSDT - No open position found for USUALUSDT",
+        "timestamp": "2025-10-17 20:52:13.175000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:13,176 - core.event_logger - ERROR - trailing_stop_sl_update_failed: {'symbol': 'USUALUSDT', 'error': 'No open position found for USUALUSDT', 'execution_time_ms': 732.402, 'method_attempted': 'binance_cancel_create_optimized'}",
+        "timestamp": "2025-10-17 20:52:13.176000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:13,176 - protection.trailing_stop - ERROR - \u274c USUALUSDT: SL update failed - No open position found for USUALUSDT",
+        "timestamp": "2025-10-17 20:52:13.176000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:26,436 - core.exchange_manager - ERROR - \u274c Binance optimized SL update failed: No open position found for USUALUSDT",
+        "timestamp": "2025-10-17 20:52:26.436000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:26,437 - core.exchange_manager - ERROR - \u274c SL update failed: USUALUSDT - No open position found for USUALUSDT",
+        "timestamp": "2025-10-17 20:52:26.437000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:26,437 - core.event_logger - ERROR - trailing_stop_sl_update_failed: {'symbol': 'USUALUSDT', 'error': 'No open position found for USUALUSDT', 'execution_time_ms': 760.7819999999999, 'method_attempted': 'binance_cancel_create_optimized'}",
+        "timestamp": "2025-10-17 20:52:26.437000"
+      },
+      {
+        "raw_line": "2025-10-17 20:52:26,437 - protection.trailing_stop - ERROR - \u274c USUALUSDT: SL update failed - No open position found for USUALUSDT",
+        "timestamp": "2025-10-17 20:52:26.437000"
+      }
+    ],
+    "rollbacks": [],
+    "duration_ms": null,
+    "all_events": [
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:31.285000",
+        "timestamp_str": "2025-10-17 20:49:31,285",
+        "raw_line": "2025-10-17 20:49:31,285 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:31.285000",
+        "timestamp_str": "2025-10-17 20:49:31,285",
+        "raw_line": "2025-10-17 20:49:31,285 - core.aged_position_manager - ERROR - Could not get price for IDEXUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:31.627000",
+        "timestamp_str": "2025-10-17 20:49:31,627",
+        "raw_line": "2025-10-17 20:49:31,627 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:31.627000",
+        "timestamp_str": "2025-10-17 20:49:31,627",
+        "raw_line": "2025-10-17 20:49:31,627 - core.aged_position_manager - ERROR - Could not get price for SCAUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:31.967000",
+        "timestamp_str": "2025-10-17 20:49:31,967",
+        "raw_line": "2025-10-17 20:49:31,967 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:31.968000",
+        "timestamp_str": "2025-10-17 20:49:31,968",
+        "raw_line": "2025-10-17 20:49:31,968 - core.aged_position_manager - ERROR - Could not get price for NODEUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:32.307000",
+        "timestamp_str": "2025-10-17 20:49:32,307",
+        "raw_line": "2025-10-17 20:49:32,307 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:32.307000",
+        "timestamp_str": "2025-10-17 20:49:32,307",
+        "raw_line": "2025-10-17 20:49:32,307 - core.aged_position_manager - ERROR - Could not get price for AGIUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:32.647000",
+        "timestamp_str": "2025-10-17 20:49:32,647",
+        "raw_line": "2025-10-17 20:49:32,647 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:32.647000",
+        "timestamp_str": "2025-10-17 20:49:32,647",
+        "raw_line": "2025-10-17 20:49:32,647 - core.aged_position_manager - ERROR - Could not get price for GLMRUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:32.987000",
+        "timestamp_str": "2025-10-17 20:49:32,987",
+        "raw_line": "2025-10-17 20:49:32,987 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:32.987000",
+        "timestamp_str": "2025-10-17 20:49:32,987",
+        "raw_line": "2025-10-17 20:49:32,987 - core.aged_position_manager - ERROR - Could not get price for ETHBTCUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:33.327000",
+        "timestamp_str": "2025-10-17 20:49:33,327",
+        "raw_line": "2025-10-17 20:49:33,327 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:33.327000",
+        "timestamp_str": "2025-10-17 20:49:33,327",
+        "raw_line": "2025-10-17 20:49:33,327 - core.aged_position_manager - ERROR - Could not get price for CLOUDUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:33.669000",
+        "timestamp_str": "2025-10-17 20:49:33,669",
+        "raw_line": "2025-10-17 20:49:33,669 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:33.669000",
+        "timestamp_str": "2025-10-17 20:49:33,669",
+        "raw_line": "2025-10-17 20:49:33,669 - core.aged_position_manager - ERROR - Could not get price for DOGUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:34.010000",
+        "timestamp_str": "2025-10-17 20:49:34,010",
+        "raw_line": "2025-10-17 20:49:34,010 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:34.010000",
+        "timestamp_str": "2025-10-17 20:49:34,010",
+        "raw_line": "2025-10-17 20:49:34,010 - core.aged_position_manager - ERROR - Could not get price for OSMOUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:34.351000",
+        "timestamp_str": "2025-10-17 20:49:34,351",
+        "raw_line": "2025-10-17 20:49:34,351 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:34.351000",
+        "timestamp_str": "2025-10-17 20:49:34,351",
+        "raw_line": "2025-10-17 20:49:34,351 - core.aged_position_manager - ERROR - Could not get price for OKBUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:34.692000",
+        "timestamp_str": "2025-10-17 20:49:34,692",
+        "raw_line": "2025-10-17 20:49:34,692 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:34.692000",
+        "timestamp_str": "2025-10-17 20:49:34,692",
+        "raw_line": "2025-10-17 20:49:34,692 - core.aged_position_manager - ERROR - Could not get price for HNTUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:35.033000",
+        "timestamp_str": "2025-10-17 20:49:35,033",
+        "raw_line": "2025-10-17 20:49:35,033 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:35.033000",
+        "timestamp_str": "2025-10-17 20:49:35,033",
+        "raw_line": "2025-10-17 20:49:35,033 - core.aged_position_manager - ERROR - Could not get price for RADUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:35.372000",
+        "timestamp_str": "2025-10-17 20:49:35,372",
+        "raw_line": "2025-10-17 20:49:35,372 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:35.372000",
+        "timestamp_str": "2025-10-17 20:49:35,372",
+        "raw_line": "2025-10-17 20:49:35,372 - core.aged_position_manager - ERROR - Could not get price for PYRUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:35.711000",
+        "timestamp_str": "2025-10-17 20:49:35,711",
+        "raw_line": "2025-10-17 20:49:35,711 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:35.711000",
+        "timestamp_str": "2025-10-17 20:49:35,711",
+        "raw_line": "2025-10-17 20:49:35,711 - core.aged_position_manager - ERROR - Could not get price for BOBAUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:36.050000",
+        "timestamp_str": "2025-10-17 20:49:36,050",
+        "raw_line": "2025-10-17 20:49:36,050 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:36.050000",
+        "timestamp_str": "2025-10-17 20:49:36,050",
+        "raw_line": "2025-10-17 20:49:36,050 - core.aged_position_manager - ERROR - Could not get price for ORBSUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:36.391000",
+        "timestamp_str": "2025-10-17 20:49:36,391",
+        "raw_line": "2025-10-17 20:49:36,391 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:36.391000",
+        "timestamp_str": "2025-10-17 20:49:36,391",
+        "raw_line": "2025-10-17 20:49:36,391 - core.aged_position_manager - ERROR - Could not get price for SAROSUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:36.732000",
+        "timestamp_str": "2025-10-17 20:49:36,732",
+        "raw_line": "2025-10-17 20:49:36,732 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:36.732000",
+        "timestamp_str": "2025-10-17 20:49:36,732",
+        "raw_line": "2025-10-17 20:49:36,732 - core.aged_position_manager - ERROR - Could not get price for 1000NEIROCTOUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:37.073000",
+        "timestamp_str": "2025-10-17 20:49:37,073",
+        "raw_line": "2025-10-17 20:49:37,073 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:37.073000",
+        "timestamp_str": "2025-10-17 20:49:37,073",
+        "raw_line": "2025-10-17 20:49:37,073 - core.aged_position_manager - ERROR - Could not get price for XDCUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:50.248000",
+        "timestamp_str": "2025-10-17 20:49:50,248",
+        "raw_line": "2025-10-17 20:49:50,248 - core.position_manager - ERROR - Failed to fetch ticker for IDEXUSDT: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:49:50.249000",
+        "timestamp_str": "2025-10-17 20:49:50,249",
+        "raw_line": "2025-10-17 20:49:50,249 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: IDEXUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:16.385000",
+        "timestamp_str": "2025-10-17 20:51:16,385",
+        "raw_line": "2025-10-17 20:51:16,385 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:16.385000",
+        "timestamp_str": "2025-10-17 20:51:16,385",
+        "raw_line": "2025-10-17 20:51:16,385 - core.signal_processor_websocket - ERROR - \u274c Error executing signal #4778309: name 'exchange_name' is not defined"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:17.387000",
+        "timestamp_str": "2025-10-17 20:51:17,387",
+        "raw_line": "2025-10-17 20:51:17,387 - utils.rate_limiter - ERROR - Unexpected error in rate limited function: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:17.387000",
+        "timestamp_str": "2025-10-17 20:51:17,387",
+        "raw_line": "2025-10-17 20:51:17,387 - core.signal_processor_websocket - ERROR - \u274c Error executing signal #4778319: name 'exchange_name' is not defined"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:25.348000",
+        "timestamp_str": "2025-10-17 20:51:25,348",
+        "raw_line": "2025-10-17 20:51:25,348 - core.position_manager - ERROR - Failed to fetch ticker for IDEXUSDT: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:25.348000",
+        "timestamp_str": "2025-10-17 20:51:25,348",
+        "raw_line": "2025-10-17 20:51:25,348 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: IDEXUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:25.453000",
+        "timestamp_str": "2025-10-17 20:51:25,453",
+        "raw_line": "2025-10-17 20:51:25,453 - core.signal_processor_websocket - INFO - \ud83c\udfaf Wave 2025-10-17T16:30:00+00:00 complete: 5 positions opened, 2 failed, 0 validation errors, 0 duplicates"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:25.453000",
+        "timestamp_str": "2025-10-17 20:51:25,453",
+        "raw_line": "2025-10-17 20:51:25,453 - core.event_logger - INFO - wave_completed: {'wave_timestamp': '2025-10-17T16:30:00+00:00', 'total_signals': 41, 'positions_opened': 5, 'failed': 2, 'validation_errors': 0, 'duplicates': 0, 'completion_time': '2025-10-17T16:51:25.453974+00:00'}"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:29.096000",
+        "timestamp_str": "2025-10-17 20:51:29,096",
+        "raw_line": "2025-10-17 20:51:29,096 - core.binance_zombie_manager - INFO - \ud83d\udcca binance metrics: {'empty_responses': 0, 'rate_limit_waits': 0, 'error_2011_count': 0, 'error_2013_count': 0, 'oco_handled': 0, 'zombies_cleaned': 0, 'async_delays_detected': 0, 'current_weight': '55/1180', 'health': 'OK'}"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:45.040000",
+        "timestamp_str": "2025-10-17 20:51:45,040",
+        "raw_line": "2025-10-17 20:51:45,040 - core.position_manager - ERROR - Failed to fetch ticker for IDEXUSDT: 'unified'"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:51:45.040000",
+        "timestamp_str": "2025-10-17 20:51:45,040",
+        "raw_line": "2025-10-17 20:51:45,040 - core.position_manager - ERROR - \ud83d\udd34 CRITICAL: 1 positions still without stop loss! Symbols: IDEXUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:12.438000",
+        "timestamp_str": "2025-10-17 20:52:12,438",
+        "raw_line": "2025-10-17 20:52:12,438 - core.exchange_manager - ERROR - \u274c Binance optimized SL update failed: No open position found for HEIUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:12.438000",
+        "timestamp_str": "2025-10-17 20:52:12,438",
+        "raw_line": "2025-10-17 20:52:12,438 - core.exchange_manager - ERROR - \u274c SL update failed: HEIUSDT - No open position found for HEIUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:12.438000",
+        "timestamp_str": "2025-10-17 20:52:12,438",
+        "raw_line": "2025-10-17 20:52:12,438 - core.event_logger - ERROR - trailing_stop_sl_update_failed: {'symbol': 'HEIUSDT', 'error': 'No open position found for HEIUSDT', 'execution_time_ms': 1174.557, 'method_attempted': 'binance_cancel_create_optimized'}"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:12.438000",
+        "timestamp_str": "2025-10-17 20:52:12,438",
+        "raw_line": "2025-10-17 20:52:12,438 - protection.trailing_stop - ERROR - \u274c HEIUSDT: SL update failed - No open position found for HEIUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:13.172000",
+        "timestamp_str": "2025-10-17 20:52:13,172",
+        "raw_line": "2025-10-17 20:52:13,172 - core.exchange_manager - ERROR - \u274c Binance optimized SL update failed: No open position found for USUALUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:13.175000",
+        "timestamp_str": "2025-10-17 20:52:13,175",
+        "raw_line": "2025-10-17 20:52:13,175 - core.exchange_manager - ERROR - \u274c SL update failed: USUALUSDT - No open position found for USUALUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:13.176000",
+        "timestamp_str": "2025-10-17 20:52:13,176",
+        "raw_line": "2025-10-17 20:52:13,176 - core.event_logger - ERROR - trailing_stop_sl_update_failed: {'symbol': 'USUALUSDT', 'error': 'No open position found for USUALUSDT', 'execution_time_ms': 732.402, 'method_attempted': 'binance_cancel_create_optimized'}"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:13.176000",
+        "timestamp_str": "2025-10-17 20:52:13,176",
+        "raw_line": "2025-10-17 20:52:13,176 - protection.trailing_stop - ERROR - \u274c USUALUSDT: SL update failed - No open position found for USUALUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:26.436000",
+        "timestamp_str": "2025-10-17 20:52:26,436",
+        "raw_line": "2025-10-17 20:52:26,436 - core.exchange_manager - ERROR - \u274c Binance optimized SL update failed: No open position found for USUALUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:26.437000",
+        "timestamp_str": "2025-10-17 20:52:26,437",
+        "raw_line": "2025-10-17 20:52:26,437 - core.exchange_manager - ERROR - \u274c SL update failed: USUALUSDT - No open position found for USUALUSDT"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:26.437000",
+        "timestamp_str": "2025-10-17 20:52:26,437",
+        "raw_line": "2025-10-17 20:52:26,437 - core.event_logger - ERROR - trailing_stop_sl_update_failed: {'symbol': 'USUALUSDT', 'error': 'No open position found for USUALUSDT', 'execution_time_ms': 760.7819999999999, 'method_attempted': 'binance_cancel_create_optimized'}"
+      },
+      {
+        "type": "error",
+        "timestamp": "2025-10-17 20:52:26.437000",
+        "timestamp_str": "2025-10-17 20:52:26,437",
+        "raw_line": "2025-10-17 20:52:26,437 - protection.trailing_stop - ERROR - \u274c USUALUSDT: SL update failed - No open position found for USUALUSDT"
+      }
+    ]
+  },
+  "timing_metrics": {
+    "check_to_detection_ms": null,
+    "detection_to_first_position_ms": null,
+    "first_to_last_position_ms": null,
+    "total_processing_ms": null,
+    "avg_position_creation_ms": null
+  },
+  "anomalies": [
+    {
+      "type": "NO_POSITIONS_CREATED",
+      "severity": "HIGH",
+      "description": "No new positions created during wave cycle"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "timestamp": "2025-10-17T21:08:30.432359",
+  "all_positions": [],
+  "active_positions": [],
+  "recent_events": [],
+  "trailing_states": [],
+  "statistics": {},
+  "error": "column \"entry_order_id\" does not exist"
+}

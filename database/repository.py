@@ -210,7 +210,19 @@ class Repository:
         import logging
         logger = logging.getLogger(__name__)
 
-        logger.info(f"🔍 REPO DEBUG: create_position() called for {position_data['symbol']}")
+        symbol = position_data['symbol']
+        exchange = position_data['exchange']
+
+        logger.info(f"🔍 REPO DEBUG: create_position() called for {symbol}")
+
+        # FIX 1.1: Check if active position already exists (prevent duplicates)
+        existing = await self.get_open_position(symbol, exchange)
+        if existing:
+            logger.warning(
+                f"⚠️ Position {symbol} already exists in DB (id={existing['id']}). "
+                f"Returning existing position instead of creating duplicate."
+            )
+            return existing['id']
 
         query = """
             INSERT INTO monitoring.positions (
@@ -221,20 +233,44 @@ class Repository:
         """
 
         async with self.pool.acquire() as conn:
-            logger.info(f"🔍 REPO DEBUG: Got connection from pool for {position_data['symbol']}")
-            logger.info(f"🔍 REPO DEBUG: Executing INSERT for {position_data['symbol']}, quantity={position_data['quantity']}")
+            logger.info(f"🔍 REPO DEBUG: Got connection from pool for {symbol}")
+            logger.info(f"🔍 REPO DEBUG: Executing INSERT for {symbol}, quantity={position_data['quantity']}")
 
-            position_id = await conn.fetchval(
-                query,
-                position_data['symbol'],
-                position_data['exchange'],
-                position_data['side'],
-                position_data['quantity'],
-                position_data['entry_price']
-            )
+            # FIX 3.2: Handle IntegrityError (second layer of protection)
+            try:
+                position_id = await conn.fetchval(
+                    query,
+                    symbol,
+                    exchange,
+                    position_data['side'],
+                    position_data['quantity'],
+                    position_data['entry_price']
+                )
 
-            logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {position_data['symbol']}")
-            return position_id
+                logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {symbol}")
+                return position_id
+
+            except Exception as e:
+                # Check if it's a unique constraint violation
+                error_msg = str(e)
+                if 'idx_unique_active_position' in error_msg or 'duplicate key' in error_msg.lower():
+                    logger.warning(
+                        f"⚠️ IntegrityError caught: Duplicate active position {symbol} on {exchange}. "
+                        f"Fetching existing position."
+                    )
+                    # Fetch and return the existing position
+                    existing = await self.get_open_position(symbol, exchange)
+                    if existing:
+                        logger.info(f"✅ Returning existing position id={existing['id']}")
+                        return existing['id']
+                    else:
+                        # This shouldn't happen, but handle it gracefully
+                        logger.error(f"❌ IntegrityError but no existing position found for {symbol}")
+                        raise
+                else:
+                    # Re-raise if it's a different error
+                    logger.error(f"❌ Database error during INSERT for {symbol}: {e}")
+                    raise
 
     async def open_position(self, position_data: Dict) -> int:
         """
