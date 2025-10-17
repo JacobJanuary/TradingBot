@@ -9,7 +9,6 @@ import hashlib
 from typing import Dict, Optional, Callable
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
 from .improved_stream import ImprovedStream
 import sys
 from pathlib import Path
@@ -20,16 +19,6 @@ from models.validation import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class StreamEvent(Enum):
-    """WebSocket stream events"""
-    CONNECTED = "connected"
-    ERROR = "error"
-    BALANCE_UPDATE = "balance_update"
-    POSITION_UPDATE = "position_update"
-    ORDER_UPDATE = "order_update"
-    MARGIN_CALL = "margin_call"
 
 
 class BinancePrivateStream(ImprovedStream):
@@ -118,11 +107,6 @@ class BinancePrivateStream(ImprovedStream):
     async def _subscribe_channels(self):
         """Subscribe handled by python-binance"""
         pass
-
-    async def _emit_event(self, event: StreamEvent, data: Dict):
-        """Emit event to handler"""
-        if self.event_handler:
-            await self.event_handler(event.value, data)
 
     async def connect(self):
         """Connect to Binance user data stream"""

@@ -731,11 +731,6 @@ class TradingBot:
         self.shutdown_event.set()
 
 
-async def async_main(bot: TradingBot):
-    """Async main function"""
-    await bot.initialize()
-    await bot.start()
-
 
 def main():
     """Main entry point"""
@@ -804,6 +799,12 @@ def main():
     finally:
         # Lock is automatically released by SingleInstance on exit
         pass
+
+
+async def async_main(bot: TradingBot):
+    """Async main function"""
+    await bot.initialize()
+    await bot.start()
 
 
 if __name__ == "__main__":
