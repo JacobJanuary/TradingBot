@@ -626,7 +626,8 @@ class WebSocketSignalProcessor:
             # Get current price
             ticker = await exchange_manager.fetch_ticker(symbol)
             if not ticker:
-                logger.error(f"Cannot get ticker for {symbol}")
+                # MINIMAL FIX: Changed from error to info - symbol might not exist on exchange
+                logger.info(f"Symbol {symbol} not available on {exchange_name}, skipping")
                 return False
 
             current_price = ticker.get('last', 0)

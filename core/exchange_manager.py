@@ -206,9 +206,18 @@ class ExchangeManager:
             if time.time() - self._last_ticker_update[symbol] < 1:
                 return self.tickers.get(symbol)
 
-        ticker = await self.rate_limiter.execute_request(
-            self.exchange.fetch_ticker, symbol
-        )
+        # MINIMAL FIX: Handle Bybit 'unified' KeyError for non-existent symbols
+        try:
+            ticker = await self.rate_limiter.execute_request(
+                self.exchange.fetch_ticker, symbol
+            )
+        except KeyError as e:
+            if "'unified'" in str(e) and self.name == 'bybit':
+                # Symbol doesn't exist on Bybit - return None instead of crashing
+                logger.debug(f"Symbol {symbol} not found on Bybit (unified error)")
+                return None
+            raise  # Re-raise other KeyErrors
+
         self.tickers[symbol] = ticker
         self._last_ticker_update[symbol] = time.time()
 
