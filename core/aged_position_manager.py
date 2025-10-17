@@ -634,6 +634,9 @@ class AgedPositionManager:
                 return None
 
             ticker = await exchange.fetch_ticker(symbol, use_cache=False)
+            if ticker is None:
+                logger.warning(f"Could not get price for {symbol}")
+                return None
             price = float(ticker['last'])
 
             # Check for invalid price
