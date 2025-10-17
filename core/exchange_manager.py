@@ -108,7 +108,7 @@ class ExchangeManager:
         elif self.name == 'bybit':
             # CRITICAL: Bybit V5 API requires UNIFIED account
             exchange_options['options']['accountType'] = 'UNIFIED'
-            exchange_options['options']['defaultType'] = 'future'  # For perpetual futures
+            exchange_options['options']['defaultType'] = 'unified'  # For UNIFIED account (V5 API requirement)
             
         self.exchange = exchange_class(exchange_options)
 
@@ -126,7 +126,7 @@ class ExchangeManager:
                 
                 # Ensure UNIFIED account settings are applied
                 self.exchange.options['accountType'] = 'UNIFIED'
-                self.exchange.options['defaultType'] = 'future'
+                self.exchange.options['defaultType'] = 'unified'
                 
                 logger.info(f"Bybit testnet configured with UNIFIED account settings")
 
