@@ -179,6 +179,14 @@ class AgedPositionManager:
             Order dict if successful, None otherwise
         """
         try:
+            # CRITICAL FIX: Ensure futures symbol format for Bybit
+            # Bot only trades futures, so always use futures format
+            if exchange.exchange.id == 'bybit' and ':' not in symbol:
+                if symbol.endswith('USDT'):
+                    base = symbol[:-4]
+                    symbol = f"{base}/USDT:USDT"
+                logger.info(f"🔄 Converted to futures format: {symbol}")
+
             logger.info(f"📤 MARKET {reason}: {side} {amount} {symbol}")
 
             params = {
