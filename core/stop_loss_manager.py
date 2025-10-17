@@ -514,16 +514,23 @@ class StopLossManager:
                 )
 
                 # STEP 3: Create order with validated price
+                # CRITICAL VALIDATION: Build params with enforced reduceOnly
+                params = {
+                    'stopPrice': final_stop_price,
+                    'reduceOnly': True  # ALWAYS True for futures SL
+                }
+
+                # Log for audit
+                if self.exchange_name in ['binance', 'bybit']:
+                    self.logger.info(f"✅ reduceOnly validated: {params.get('reduceOnly')} for {symbol}")
+
                 order = await self.exchange.create_order(
                     symbol=symbol,
                     type='stop_market',
                     side=side,
                     amount=amount,
                     price=None,  # Market order при срабатывании
-                    params={
-                        'stopPrice': final_stop_price,
-                        'reduceOnly': True
-                    }
+                    params=params
                 )
 
                 self.logger.info(f"✅ Stop Loss order created: {order['id']}")

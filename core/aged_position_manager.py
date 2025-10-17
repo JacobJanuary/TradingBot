@@ -136,10 +136,13 @@ class AgedPositionManager:
                         position.age_hours = age_hours
                         aged_positions.append(position)
 
+                        # Calculate PnL value for formatting
+                        pnl_value = float(position.unrealized_pnl) if position.unrealized_pnl is not None else 0.0
+
                         logger.warning(
                             f"⏰ Found aged position {position.symbol}: "
                             f"age={age_hours:.1f}h (max={self.max_position_age_hours}h), "
-                            f"pnl={position.unrealized_pnl:.2f if position.unrealized_pnl is not None else 0.0} USD"
+                            f"pnl={pnl_value:.2f} USD"
                         )
 
             if aged_positions:

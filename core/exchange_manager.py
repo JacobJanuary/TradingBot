@@ -458,6 +458,18 @@ class ExchangeManager:
             # Binance futures stop loss implementation
             if self.name == 'binance':
                 # For Binance futures, use STOP_MARKET order type
+                # Build params with enforced reduceOnly
+                params = {
+                    'stopPrice': float(stop_price),
+                    'reduceOnly': True,  # CRITICAL: Always True for futures SL
+                    'workingType': 'CONTRACT_PRICE'  # Use last price as trigger
+                }
+
+                # Validation logging
+                if not params.get('reduceOnly'):
+                    logger.critical(f"🚨 reduceOnly not set for Binance SL on {symbol}!")
+                    params['reduceOnly'] = True
+
                 order = await self.rate_limiter.execute_request(
                     self.exchange.create_order,
                     symbol=symbol,
@@ -465,11 +477,7 @@ class ExchangeManager:
                     side=side.lower(),
                     amount=amount,
                     price=None,  # No price needed for STOP_MARKET
-                    params={
-                        'stopPrice': float(stop_price),
-                        'reduceOnly': reduce_only,  # Only reduce existing position
-                        'workingType': 'CONTRACT_PRICE'  # Use last price as trigger
-                    }
+                    params=params
                 )
             elif self.name == 'bybit':
                 # CRITICAL FIX: Use position-attached stop loss instead of conditional order

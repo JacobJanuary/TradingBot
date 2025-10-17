@@ -52,8 +52,18 @@ class ImprovedStream(ABC):
         self.last_reconnect_attempt = None
         
         # Heartbeat settings - CRITICAL FIX: Bybit requires ping every 20s!
-        self.heartbeat_interval = config.get('ws_heartbeat_interval', 20)  # Changed from 30 to 20 for Bybit compliance
-        self.heartbeat_timeout = config.get('ws_heartbeat_timeout', 90)     # Increased from 60 to 90 for testnet latency
+        # Check if this is for Bybit
+        is_bybit = 'bybit' in name.lower()
+
+        if is_bybit:
+            # CRITICAL: Bybit REQUIRES ping every 20 seconds, ignore config
+            self.heartbeat_interval = 20  # HARDCODED for Bybit
+            self.heartbeat_timeout = 90   # Extended for testnet latency
+            logger.info(f"🔧 Bybit detected: forcing heartbeat_interval=20s")
+        else:
+            # Other exchanges can use config
+            self.heartbeat_interval = config.get('ws_heartbeat_interval', 30)
+            self.heartbeat_timeout = config.get('ws_heartbeat_timeout', 60)
         self.last_heartbeat = datetime.now()
         self.last_pong = datetime.now()
         self.last_ping_time = datetime.now()  # Track ping time for RTT calculation
