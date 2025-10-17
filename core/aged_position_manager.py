@@ -60,6 +60,11 @@ class AgedPositionManager:
             'emergency_closes': 0,
             'orders_updated': 0,
             'orders_created': 0,
+            'orders_failed': 0,
+            'market_orders_created': 0,
+            'market_orders_failed': 0,
+            'limit_orders_created': 0,
+            'profit_closes': 0,
             'breakeven_closes': 0,
             'gradual_liquidations': 0
         }
@@ -97,6 +102,109 @@ class AgedPositionManager:
         except Exception as e:
             logger.warning(f"Could not apply price precision for {symbol}: {e}")
             return price
+
+    def _calculate_current_pnl_percent(
+        self,
+        side: str,
+        entry_price: Decimal,
+        current_price: Decimal
+    ) -> Decimal:
+        """
+        Calculate current PnL percentage
+
+        Args:
+            side: 'long', 'buy', 'short', or 'sell'
+            entry_price: Entry price
+            current_price: Current market price
+
+        Returns:
+            PnL in percent (positive = profit, negative = loss)
+        """
+        if side in ['long', 'buy']:
+            # LONG: profit when current > entry
+            pnl_percent = ((current_price - entry_price) / entry_price) * 100
+        else:  # short/sell
+            # SHORT: profit when current < entry
+            pnl_percent = ((entry_price - current_price) / entry_price) * 100
+
+        return pnl_percent
+
+    def _validate_limit_price(
+        self,
+        side: str,
+        target_price: float,
+        current_price: float,
+        buffer_pct: float = 0.1
+    ) -> bool:
+        """
+        Validate if LIMIT order can be placed at target price
+
+        Args:
+            side: 'buy' or 'sell'
+            target_price: Desired order price
+            current_price: Current market price
+            buffer_pct: Buffer in percent (default 0.1%)
+
+        Returns:
+            True if LIMIT order is valid, False otherwise
+        """
+        if side == 'buy':
+            # BUY LIMIT must be BELOW market
+            max_allowed = current_price * (1 - buffer_pct / 100)
+            return target_price <= max_allowed
+        else:  # sell
+            # SELL LIMIT must be ABOVE market
+            min_allowed = current_price * (1 + buffer_pct / 100)
+            return target_price >= min_allowed
+
+    async def _create_market_exit_order(
+        self,
+        exchange,
+        symbol: str,
+        side: str,
+        amount: float,
+        reason: str = "MARKET_CLOSE"
+    ) -> Optional[Dict]:
+        """
+        Create MARKET order for immediate position closure
+
+        Args:
+            exchange: Exchange object
+            symbol: Trading pair
+            side: 'buy' or 'sell'
+            amount: Position quantity
+            reason: Closure reason (for logging)
+
+        Returns:
+            Order dict if successful, None otherwise
+        """
+        try:
+            logger.info(f"📤 MARKET {reason}: {side} {amount} {symbol}")
+
+            params = {
+                'reduceOnly': True
+            }
+
+            if exchange.exchange.id == 'bybit':
+                params['positionIdx'] = 0
+
+            order = await exchange.exchange.create_order(
+                symbol=symbol,
+                type='market',
+                side=side,
+                amount=amount,
+                params=params
+            )
+
+            if order:
+                logger.info(f"✅ MARKET order executed: {order['id']}")
+                self.stats['market_orders_created'] = self.stats.get('market_orders_created', 0) + 1
+                return order
+
+        except Exception as e:
+            logger.error(f"❌ MARKET order failed for {symbol}: {e}")
+            self.stats['market_orders_failed'] = self.stats.get('market_orders_failed', 0) + 1
+            return None
 
     async def check_and_process_aged_positions(self) -> int:
         """
@@ -200,8 +308,8 @@ class AgedPositionManager:
             # Calculate hours over limit
             hours_over_limit = age_hours - self.max_position_age_hours
 
-            # Determine phase and calculate target price
-            phase, target_price, loss_percent = self._calculate_target_price(
+            # Determine phase, calculate target price and determine order type
+            phase, target_price, loss_percent, order_type = self._calculate_target_price(
                 position, hours_over_limit, current_price
             )
 
@@ -213,7 +321,8 @@ class AgedPositionManager:
                 f"  • Entry: ${position.entry_price:.4f}\n"
                 f"  • Current: ${current_price:.4f}\n"
                 f"  • Target: ${target_price:.4f}\n"
-                f"  • Loss tolerance: {loss_percent:.2f}%"
+                f"  • Loss tolerance: {loss_percent:.2f}%\n"
+                f"  • Order type: {order_type}"
             )
 
             # Update statistics
@@ -224,8 +333,8 @@ class AgedPositionManager:
             elif 'EMERGENCY' in phase:
                 self.stats['emergency_closes'] += 1
 
-            # Update or create limit exit order
-            await self._update_single_exit_order(position, target_price, phase)
+            # Update or create exit order with correct type
+            await self._update_single_exit_order(position, target_price, phase, order_type)
 
         except ccxt.ExchangeError as e:
             error_msg = str(e)
@@ -255,17 +364,38 @@ class AgedPositionManager:
         except Exception as e:
             logger.error(f"Error processing aged position {position.symbol}: {e}", exc_info=True)
 
-    def _calculate_target_price(self, position, hours_over_limit: float, current_price: float) -> Tuple[str, float, float]:
+    def _calculate_target_price(self, position, hours_over_limit: float, current_price: float) -> Tuple[str, float, float, str]:
         """
-        Calculate target price based on position age
+        Calculate target price based on position age and determine order type
 
         Returns:
-            Tuple of (phase_name, target_price, loss_percent)
+            Tuple of (phase_name, target_price, loss_percent, order_type)
         """
         # Convert to Decimal for consistent arithmetic
         entry_price = Decimal(str(position.entry_price))
         current_price_decimal = Decimal(str(current_price))
 
+        # STEP 1: CHECK PROFITABILITY (NEW - PRIORITY)
+        current_pnl_percent = self._calculate_current_pnl_percent(
+            position.side,
+            entry_price,
+            current_price_decimal
+        )
+
+        if current_pnl_percent > 0:
+            # POSITION IN PROFIT - CLOSE IMMEDIATELY WITH MARKET ORDER
+            logger.info(
+                f"💰 {position.symbol} in profit {current_pnl_percent:.2f}% "
+                f"(age {hours_over_limit:.1f}h) - MARKET close"
+            )
+            return (
+                f"IMMEDIATE_PROFIT_CLOSE (PnL: +{current_pnl_percent:.2f}%)",
+                current_price_decimal,
+                Decimal('0'),
+                'MARKET'
+            )
+
+        # STEP 2: CALCULATE BY PHASES (for PnL <= 0%)
         if hours_over_limit <= self.grace_period_hours:
             # PHASE 1: GRACE PERIOD - Strict breakeven
             # Breakeven = entry + double commission
@@ -304,7 +434,7 @@ class AgedPositionManager:
             phase = f"PROGRESSIVE_LIQUIDATION (loss: {loss_percent:.1f}%)"
 
         else:
-            # PHASE 3: EMERGENCY - Use current market price
+            # PHASE 3: EMERGENCY - Use current market price, ALWAYS MARKET ORDER
             target_price = current_price_decimal
             phase = "EMERGENCY_MARKET_CLOSE"
 
@@ -314,11 +444,41 @@ class AgedPositionManager:
             else:
                 loss_percent = ((current_price_decimal - entry_price) / entry_price) * 100
 
-        return phase, target_price, loss_percent
+            # EMERGENCY always uses MARKET
+            return (phase, target_price, loss_percent, 'MARKET')
 
-    async def _update_single_exit_order(self, position, target_price: float, phase: str):
+        # STEP 3: VALIDATE LIMIT FOR GRACE AND PROGRESSIVE
+        order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
+
+        can_use_limit = self._validate_limit_price(
+            side=order_side,
+            target_price=float(target_price),
+            current_price=float(current_price_decimal),
+            buffer_pct=0.1
+        )
+
+        if can_use_limit:
+            order_type = 'LIMIT'
+        else:
+            logger.warning(
+                f"⚠️ LIMIT impossible for {position.symbol} "
+                f"(target=${target_price:.4f}, market=${current_price:.4f}) "
+                f"- using MARKET"
+            )
+            order_type = 'MARKET'
+            target_price = current_price_decimal  # Update to market price
+
+        return (phase, target_price, loss_percent, order_type)
+
+    async def _update_single_exit_order(self, position, target_price: float, phase: str, order_type: str):
         """
-        Update or create a SINGLE limit exit order for the position
+        Update or create exit order with correct order type (LIMIT or MARKET)
+
+        Args:
+            position: Position object
+            target_price: Target price
+            phase: Current phase
+            order_type: 'LIMIT' or 'MARKET'
 
         CRITICAL:
         - Check for existing order first
@@ -337,6 +497,31 @@ class AgedPositionManager:
             # Determine order side (opposite of position)
             order_side = 'sell' if position.side in ['long', 'buy'] else 'buy'
 
+            # NEW: Choose between MARKET and LIMIT
+            if order_type == 'MARKET':
+                # Use MARKET order for immediate execution
+                order = await self._create_market_exit_order(
+                    exchange=exchange,
+                    symbol=position.symbol,
+                    side=order_side,
+                    amount=abs(float(position.quantity)),
+                    reason=phase
+                )
+
+                if order:
+                    self.managed_positions[position_id] = {
+                        'last_update': datetime.now(),
+                        'order_id': order['id'],
+                        'phase': phase,
+                        'order_type': 'MARKET'
+                    }
+                    logger.info(f"✅ MARKET close: {position.symbol} in phase {phase}")
+                    if 'PROFIT' in phase:
+                        self.stats['profit_closes'] = self.stats.get('profit_closes', 0) + 1
+
+                return
+
+            # LIMIT order path (existing logic)
             # Apply price precision to avoid rounding errors
             precise_price = self._apply_price_precision(
                 float(target_price),
@@ -364,13 +549,15 @@ class AgedPositionManager:
                     self.managed_positions[position_id] = {
                         'last_update': datetime.now(),
                         'order_id': order['id'],
-                        'phase': phase
+                        'phase': phase,
+                        'order_type': 'LIMIT'
                     }
                     # Update statistics based on whether order was updated or created
                     if order.get('_was_updated'):
                         self.stats['orders_updated'] += 1
                     else:
                         self.stats['orders_created'] += 1
+                    self.stats['limit_orders_created'] = self.stats.get('limit_orders_created', 0) + 1
 
             except ImportError:
                 # Fallback to standard method if enhanced manager not available
