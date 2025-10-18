@@ -840,7 +840,13 @@ class ExchangeManager:
                     break
 
             if amount == 0:
-                raise ValueError(f"No open position found for {symbol}")
+                # FIX: Position closed - return graceful failure instead of exception
+                # This is expected during position lifecycle (aged closes, manual closes, etc.)
+                logger.debug(f"Position {symbol} not found (likely closed), skipping SL update")
+                result['success'] = False
+                result['error'] = 'position_not_found'
+                result['message'] = f"Position {symbol} not found on exchange (likely closed)"
+                return result
 
             close_side = 'SELL' if position_side == 'long' else 'BUY'
 
