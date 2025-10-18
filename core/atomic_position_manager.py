@@ -194,6 +194,24 @@ class AtomicPositionManager:
                 if raw_order is None:
                     raise AtomicPositionError(f"Failed to create order for {symbol}: order returned None")
 
+                # FIX: Check Bybit retCode IMMEDIATELY to catch errors before SL attempt
+                # Bybit returns retCode != 0 for all errors (e.g., 10001 = minimum size)
+                if exchange == 'bybit' and raw_order:
+                    order_info = raw_order.get('info', {})
+                    ret_code = order_info.get('retCode', 0)
+
+                    if ret_code != 0:
+                        ret_msg = order_info.get('retMsg', 'Unknown error')
+
+                        # Minimum size error (retCode 10001)
+                        if ret_code == 10001 or 'minimum limit' in ret_msg.lower():
+                            logger.warning(f"⚠️ Order size for {symbol} doesn't meet exchange requirements: {ret_msg}")
+                            raise MinimumOrderLimitError(f"Order size for {symbol} below minimum limit on {exchange}: {ret_msg}")
+
+                        # Other Bybit errors
+                        logger.error(f"❌ Bybit order failed for {symbol}: retCode={ret_code}, {ret_msg}")
+                        raise AtomicPositionError(f"Bybit order creation failed: {ret_msg}")
+
                 # Normalize order response
                 entry_order = ExchangeResponseAdapter.normalize_order(raw_order, exchange)
 
@@ -263,6 +281,38 @@ class AtomicPositionManager:
                     logger.info(f"📝 Entry trade logged to database")
                 except Exception as e:
                     logger.error(f"❌ Failed to log entry trade to DB: {e}")
+
+                # FIX: Verify position exists on exchange before SL placement
+                # Add 1s delay for order settlement
+                logger.debug(f"Waiting 1s for position settlement on {exchange}...")
+                await asyncio.sleep(1.0)
+
+                # Verify position actually exists
+                try:
+                    positions = await exchange_instance.fetch_positions([symbol])
+                    active_position = next(
+                        (p for p in positions if p.get('contracts', 0) > 0 or p.get('size', 0) > 0),
+                        None
+                    )
+
+                    if not active_position:
+                        logger.error(
+                            f"❌ Position not found for {symbol} after order. "
+                            f"Order status: {entry_order.status}, filled: {entry_order.filled}"
+                        )
+                        raise AtomicPositionError(
+                            f"Position not found after order - order may have failed. "
+                            f"Order status: {entry_order.status}"
+                        )
+
+                    logger.debug(f"✅ Position verified for {symbol}: {active_position.get('contracts', 0)} contracts")
+
+                except Exception as e:
+                    # If position verification fails, log warning but continue
+                    # (exchange might have different position reporting)
+                    if isinstance(e, AtomicPositionError):
+                        raise  # Re-raise our own errors
+                    logger.warning(f"⚠️ Could not verify position for {symbol}: {e}")
 
                 # Step 3: Размещение stop-loss с retry
                 logger.info(f"🛡️ Placing stop-loss for {symbol} at {stop_loss_price}")
