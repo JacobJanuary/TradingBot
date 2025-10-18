@@ -306,6 +306,15 @@ class AgedPositionManager:
             age_hours = position.age_hours
             symbol = position.symbol
 
+            # FIX: Skip aged processing if trailing stop is active
+            # Trailing stop should have priority to manage profitable positions
+            if hasattr(position, 'trailing_activated') and position.trailing_activated:
+                logger.debug(
+                    f"⏭️ Skipping aged processing for {symbol} - "
+                    f"trailing stop is active (age: {age_hours:.1f}h, TS managing exit)"
+                )
+                return
+
             # CRITICAL: Verify position exists on exchange before any operations
             position_exists = await self.position_manager.verify_position_exists(symbol, position.exchange)
             if not position_exists:
