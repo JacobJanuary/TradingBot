@@ -675,6 +675,16 @@ class PositionManager:
                         )
                     # Remove from tracking
                     self.positions.pop(pos_state.symbol, None)
+
+                    # FIX: Notify trailing stop manager of orphaned position closure
+                    trailing_manager = self.trailing_managers.get(pos_state.exchange)
+                    if trailing_manager:
+                        try:
+                            await trailing_manager.on_position_closed(pos_state.symbol, realized_pnl=None)
+                            logger.debug(f"Notified trailing stop manager of {pos_state.symbol} orphaned closure")
+                        except Exception as e:
+                            logger.warning(f"Failed to notify trailing manager for orphaned {pos_state.symbol}: {e}")
+
                     logger.info(f"✅ Closed orphaned position: {pos_state.symbol}")
 
             # Update or add positions
