@@ -317,17 +317,30 @@ class AdaptiveBinanceStream:
     
     async def _process_orders_update(self, orders: list):
         """Process orders update from REST"""
+        # Ensure orders is a list
+        if not isinstance(orders, list):
+            orders = [orders] if orders else []
+
         for order in orders:
-            order_id = order['orderId']
-            self.orders[order_id] = {
-                'symbol': order['symbol'],
-                'side': order['side'],
-                'type': order['type'],
-                'quantity': float(order['origQty']),
-                'price': float(order['price']) if order['price'] else 0,
-                'status': order['status']
-            }
-        
+            # Skip non-dict orders (CCXT should always return dicts, but be defensive)
+            if not isinstance(order, dict):
+                logger.debug(f"Skipping non-dict order: {type(order)}")
+                continue
+
+            try:
+                order_id = order['orderId']
+                self.orders[order_id] = {
+                    'symbol': order['symbol'],
+                    'side': order['side'],
+                    'type': order['type'],
+                    'quantity': float(order['origQty']),
+                    'price': float(order['price']) if order['price'] else 0,
+                    'status': order['status']
+                }
+            except (KeyError, TypeError) as e:
+                logger.debug(f"Skipping malformed order: {e}")
+                continue
+
         # Trigger callback
         if self.callbacks['order_update']:
             await self.callbacks['order_update'](self.orders)
