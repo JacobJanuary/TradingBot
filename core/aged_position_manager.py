@@ -207,6 +207,24 @@ class AgedPositionManager:
             if order:
                 logger.info(f"✅ MARKET order executed: {order['id']}")
                 self.stats['market_orders_created'] = self.stats.get('market_orders_created', 0) + 1
+
+                # FIX: Notify trailing stop manager of position closure
+                # This prevents orphaned trailing stops that continue attempting SL updates
+                if hasattr(self.position_manager, 'trailing_managers'):
+                    # Get exchange name from symbol (remove /USDT:USDT suffix for Bybit)
+                    original_symbol = symbol.split('/')[0] + 'USDT' if '/' in symbol else symbol
+
+                    # Find which exchange this position belongs to
+                    exchange_name = exchange.exchange.id if hasattr(exchange, 'exchange') else None
+
+                    if exchange_name and exchange_name in self.position_manager.trailing_managers:
+                        trailing_manager = self.position_manager.trailing_managers[exchange_name]
+                        try:
+                            await trailing_manager.on_position_closed(original_symbol, realized_pnl=None)
+                            logger.debug(f"Notified trailing stop manager of {original_symbol} closure")
+                        except Exception as e:
+                            logger.warning(f"Failed to notify trailing manager for {original_symbol}: {e}")
+
                 return order
 
         except Exception as e:
