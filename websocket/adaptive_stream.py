@@ -228,9 +228,9 @@ class AdaptiveBinanceStream:
                                 logger.debug(f"No orders for {symbol}: {e}")
                         await self._process_orders_update(all_orders)
                     else:
-                        # No active positions, fetch all orders
-                        orders = await self.client.fetch_open_orders()
-                        await self._process_orders_update(orders)
+                        # No active positions - skip order fetching to save rate limits
+                        logger.debug("No active symbols, skipping order fetch")
+                        await self._process_orders_update([])
                 except Exception as e:
                     logger.debug(f"Order fetch error (non-critical): {e}")
                 
