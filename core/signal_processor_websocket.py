@@ -630,10 +630,33 @@ class WebSocketSignalProcessor:
                 logger.info(f"Symbol {symbol} not available on {exchange}, skipping")
                 return False
 
-            current_price = ticker.get('last', 0)
-            if current_price is None or current_price <= 0:
-                logger.error(f"Invalid price for {symbol}: {current_price}")
-                return False
+            # FIX: Handle Binance returning ticker with last=None during low-liquidity
+            # Try 'last' first, fallback to 'close', then retry if both None
+            current_price = ticker.get('last') or ticker.get('close', 0)
+
+            if not current_price or current_price <= 0:
+                # Retry up to 2 times with fresh fetch (bypass cache)
+                MAX_PRICE_RETRIES = 2
+                PRICE_RETRY_DELAY = 2.0
+
+                for attempt in range(MAX_PRICE_RETRIES):
+                    logger.warning(
+                        f"Invalid price for {symbol}: {current_price}, "
+                        f"retrying {attempt + 1}/{MAX_PRICE_RETRIES}..."
+                    )
+                    await asyncio.sleep(PRICE_RETRY_DELAY)
+
+                    ticker = await exchange_manager.fetch_ticker(symbol, use_cache=False)
+                    if ticker:
+                        current_price = ticker.get('last') or ticker.get('close', 0)
+                        if current_price and current_price > 0:
+                            logger.info(f"✅ Got valid price for {symbol} on retry: {current_price}")
+                            break
+
+                # Final check after retries
+                if not current_price or current_price <= 0:
+                    logger.error(f"Invalid price for {symbol} after {MAX_PRICE_RETRIES} retries: {current_price}")
+                    return False
 
             # Determine side (PositionRequest expects 'BUY' or 'SELL')
             if validated_signal.action in [OrderSide.BUY, OrderSide.LONG]:
