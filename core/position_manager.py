@@ -2322,7 +2322,7 @@ class PositionManager:
 
                     try:
                         # Fetch current market price from exchange
-                        ticker = await exchange.exchange.fetch_ticker(symbol)
+                        ticker = await exchange.fetch_ticker(symbol)
                         real_time_price = ticker.get('last') or ticker.get('markPrice')
 
                         if real_time_price:
@@ -2566,7 +2566,7 @@ class PositionManager:
 
                         # STEP 1: Get current market price from exchange
                         try:
-                            ticker = await exchange.exchange.fetch_ticker(position.symbol)
+                            ticker = await exchange.fetch_ticker(position.symbol)
                             mark_price = ticker.get('info', {}).get('markPrice')
                             current_price = float(mark_price or ticker.get('last') or 0)
 
