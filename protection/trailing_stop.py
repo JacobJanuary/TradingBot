@@ -842,6 +842,29 @@ class SmartTrailingStopManager:
         - Binance: Uses optimized cancel+create (minimal race window)
         """
         try:
+            # FIX: Defensive check - verify position exists before SL update
+            # This catches orphaned trailing stops (position closed but TS not cleaned up)
+            if hasattr(self.exchange, 'fetch_positions'):
+                try:
+                    positions = await self.exchange.fetch_positions([ts.symbol])
+                    position_exists = any(
+                        p.get('symbol') == ts.symbol and (p.get('contracts', 0) > 0 or p.get('size', 0) > 0)
+                        for p in positions
+                    )
+
+                    if not position_exists:
+                        logger.warning(
+                            f"⚠️ {ts.symbol}: Position not found on exchange, "
+                            f"removing orphaned trailing stop (auto-cleanup)"
+                        )
+                        # Auto-cleanup orphaned trailing stop
+                        await self.on_position_closed(ts.symbol, realized_pnl=None)
+                        return False
+                except Exception as e:
+                    # If verification fails, log but continue with SL update
+                    # (don't want verification failures to block legitimate updates)
+                    logger.debug(f"Position verification failed for {ts.symbol}: {e}")
+
             # Check if atomic update is available
             if not hasattr(self.exchange, 'update_stop_loss_atomic'):
                 logger.error(f"{ts.symbol}: Exchange does not support atomic SL update")
