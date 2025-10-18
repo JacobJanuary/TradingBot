@@ -27,7 +27,7 @@ from monitoring.performance import PerformanceTracker
 
 # Setup logging
 logging.basicConfig(
-    level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO')),
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         RotatingFileHandler('logs/trading_bot.log', maxBytes=100*1024*1024, backupCount=10),

@@ -383,17 +383,12 @@ class PositionManager:
                 
                 # Add to tracking
                 self.positions[pos['symbol']] = position_state
-                # DEBUG: Log each loaded position
-                logger.debug(f"   ✅ Loaded: {pos['symbol']} on {pos['exchange']} (id={pos['id']})")
-
+                
                 # Update exposure
                 position_value = abs(pos['quantity'] * (pos['current_price'] or pos['entry_price']))
                 self.total_exposure += Decimal(str(position_value))
-
+            
             logger.info(f"📊 Loaded {len(self.positions)} positions from database")
-            # DEBUG: Log full list of loaded symbols
-            loaded_symbols = sorted(list(self.positions.keys()))
-            logger.debug(f"   Loaded symbols: {loaded_symbols}")
             logger.info(f"💰 Total exposure: ${self.total_exposure:.2f}")
 
             # Log positions loaded event
@@ -1350,28 +1345,16 @@ class PositionManager:
 
         # Atomic check - only ONE task can check at a time for this symbol
         async with self.check_locks[lock_key]:
-            # DEBUG: Log entry
-            logger.debug(f"🔍 _position_exists(symbol='{symbol}', exchange='{exchange}')")
-
-            # Check local tracking - must verify BOTH symbol AND exchange
-            logger.debug(f"   Step 1/3: Checking cache...")
-            exchange_lower = exchange.lower()
-            for pos_symbol, position in self.positions.items():
-                if pos_symbol == symbol and position.exchange.lower() == exchange_lower:
-                    logger.debug(f"   ✅ Found in cache: {symbol} on {position.exchange}")
-                    return True
-            logger.debug(f"   ❌ Not in cache")
+            # Check local tracking
+            if symbol in self.positions:
+                return True
 
             # Check database
-            logger.debug(f"   Step 2/3: Checking database...")
             db_position = await self.repository.get_open_position(symbol, exchange)
             if db_position:
-                logger.debug(f"   ✅ Found in DB: position_id={db_position.get('id')}")
                 return True
-            logger.debug(f"   ❌ Not in DB")
 
             # Check exchange
-            logger.debug(f"   Step 3/3: Checking exchange API...")
             exchange_obj = self.exchanges.get(exchange)
             if exchange_obj:
                 # CRITICAL FIX: Same issue as verify_position_exists - use fetch_positions() without [symbol]
@@ -1382,13 +1365,8 @@ class PositionManager:
                     if normalize_symbol(pos.get('symbol')) == normalized_symbol:
                         contracts = float(pos.get('contracts') or 0)
                         if abs(contracts) > 0:
-                            logger.debug(f"   ✅ Found on exchange: {pos.get('symbol')} with {contracts} contracts")
                             return True
-                logger.debug(f"   ❌ Not on exchange")
-            else:
-                logger.debug(f"   ❌ Exchange object not found")
 
-            logger.debug(f"   Final result: FALSE (not found anywhere)")
             return False
 
     async def has_open_position(self, symbol: str, exchange: str = None) -> bool:
@@ -1404,10 +1382,6 @@ class PositionManager:
         Returns:
             bool: True if open position exists
         """
-        # DEBUG: Log entry
-        logger.debug(f"🔍 has_open_position(symbol='{symbol}', exchange='{exchange}')")
-        logger.debug(f"   Cache size: {len(self.positions)} positions")
-
         # If specific exchange provided, check only that exchange
         if exchange:
             # Normalize exchange name (binance, bybit, etc)
@@ -1416,16 +1390,11 @@ class PositionManager:
             # Check in local cache for specific exchange
             for pos_symbol, position in self.positions.items():
                 if pos_symbol == symbol and position.exchange.lower() == exchange_lower:
-                    logger.debug(f"   ✅ Found in cache: {symbol} on {position.exchange}")
                     return True
-
-            logger.debug(f"   ❌ Not in cache, checking DB/exchange via _position_exists()...")
 
             # Check on specific exchange
             if exchange in self.exchanges:
-                result = await self._position_exists(symbol, exchange)
-                logger.debug(f"   _position_exists() returned: {result}")
-                return result
+                return await self._position_exists(symbol, exchange)
             else:
                 logger.warning(f"Exchange {exchange} not found in configured exchanges")
                 return False

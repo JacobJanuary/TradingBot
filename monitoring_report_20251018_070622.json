@@ -1,0 +1,870 @@
+{
+  "monitoring_duration_minutes": 153,
+  "monitoring_start": "2025-10-18T04:34:13.972897",
+  "monitoring_end": "2025-10-18T07:06:16.449397",
+  "total_alerts": 170,
+  "critical_alerts": 17,
+  "warning_alerts": 0,
+  "metrics_summary": {
+    "total_positions_opened": 37,
+    "total_positions_closed": 0,
+    "total_ts_activations": 0,
+    "total_sl_updates": 19,
+    "total_zombies": 0,
+    "total_errors": 9,
+    "total_emergency_closes": 0,
+    "total_ws_reconnects": 0
+  },
+  "alerts": [
+    {
+      "severity": "INFO",
+      "message": "39 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:34:13.972897"
+    },
+    {
+      "severity": "INFO",
+      "message": "39 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:35:13.981920"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "3 positions without SL",
+      "timestamp": "2025-10-18 04:36:13.993224"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:36:13.993224"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "4 positions without SL",
+      "timestamp": "2025-10-18 04:37:14.004738"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:37:14.004738"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "1 positions without SL",
+      "timestamp": "2025-10-18 04:38:14.017501"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:38:14.017501"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:39:14.032653"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:40:14.039745"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:41:14.057035"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:42:14.068095"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:43:14.076562"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:44:14.111289"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:45:14.133652"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:46:14.143825"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:47:14.154644"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:48:14.164700"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:49:14.178801"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:50:14.186787"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "1 positions without SL",
+      "timestamp": "2025-10-18 04:51:14.201336"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:51:14.201336"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "2 positions without SL",
+      "timestamp": "2025-10-18 04:52:14.212959"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:52:14.212959"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:53:14.223151"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:54:14.234817"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:55:14.248088"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:56:14.261564"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:57:14.289278"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:58:14.299820"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:59:14.313996"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:00:14.315586"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:01:14.327413"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:02:14.343467"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:03:14.357915"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:04:14.376007"
+    },
+    {
+      "severity": "INFO",
+      "message": "42 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:05:14.389377"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "2 positions without SL",
+      "timestamp": "2025-10-18 05:06:14.402171"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:06:14.402171"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "1 positions without SL",
+      "timestamp": "2025-10-18 05:07:14.414377"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:07:14.414377"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:08:14.426113"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:09:14.445523"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:10:14.454772"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:11:14.472884"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:12:14.496491"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:13:14.507689"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:14:14.526547"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:15:14.539640"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:16:14.569668"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:17:14.585821"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:18:14.605455"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:19:14.617493"
+    },
+    {
+      "severity": "INFO",
+      "message": "43 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:20:14.631717"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:21:14.642137"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "2 positions without SL",
+      "timestamp": "2025-10-18 05:22:14.655568"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:22:14.655568"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "4 positions without SL",
+      "timestamp": "2025-10-18 05:23:14.669689"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:23:14.669689"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "4 positions without SL",
+      "timestamp": "2025-10-18 05:24:14.686152"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:24:14.686152"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:25:14.702900"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:26:14.719448"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:27:14.733045"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:28:14.751100"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:29:14.765465"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:30:14.779368"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:31:14.794010"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:32:14.792375"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:33:14.801954"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:34:14.822005"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:35:14.830747"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:36:14.850465"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "2 positions without SL",
+      "timestamp": "2025-10-18 05:37:14.864001"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:37:14.864001"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:38:14.883358"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:39:14.899093"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:40:14.916006"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:41:14.933293"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:42:14.944451"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:43:14.962894"
+    },
+    {
+      "severity": "INFO",
+      "message": "46 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:44:14.985352"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:45:14.996095"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:46:15.014497"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:47:15.034685"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:48:15.064603"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:49:15.086710"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:50:15.100759"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "2 positions without SL",
+      "timestamp": "2025-10-18 05:51:15.121170"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:51:15.121170"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "4 positions without SL",
+      "timestamp": "2025-10-18 05:52:15.139386"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:52:15.139386"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "4 positions without SL",
+      "timestamp": "2025-10-18 05:53:15.152745"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:53:15.152745"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:54:15.171474"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:55:15.184807"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:56:15.201070"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:57:15.221742"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:58:15.237340"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 05:59:15.260973"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:00:15.276098"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:01:15.294105"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:02:15.308733"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:03:15.324313"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:04:15.335903"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:05:15.350358"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:06:15.365920"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:07:15.397753"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:08:15.419938"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:09:15.440832"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:10:15.454510"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:11:15.469880"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:12:15.487958"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:13:15.506518"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:14:15.529476"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:15:15.553042"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:16:15.568983"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:17:15.586136"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:18:15.601009"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:19:15.620780"
+    },
+    {
+      "severity": "INFO",
+      "message": "45 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:20:15.651538"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "2 positions without SL",
+      "timestamp": "2025-10-18 06:21:15.668345"
+    },
+    {
+      "severity": "INFO",
+      "message": "47 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:21:15.668345"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "3 positions without SL",
+      "timestamp": "2025-10-18 06:22:15.685865"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:22:15.685865"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:23:15.701666"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:24:15.724294"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:25:15.741162"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:26:15.758094"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:27:15.772404"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:28:15.791529"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:29:15.817890"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:30:15.828226"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:31:15.840654"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:32:15.855746"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:33:15.875362"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:34:15.891907"
+    },
+    {
+      "severity": "INFO",
+      "message": "48 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:35:15.909940"
+    },
+    {
+      "severity": "CRITICAL",
+      "message": "3 positions without SL",
+      "timestamp": "2025-10-18 06:36:15.936536"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:36:15.936536"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:37:15.972035"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:38:15.991005"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:39:16.010929"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:40:16.030636"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:41:16.046115"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:42:16.061799"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:43:16.077817"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:44:16.092710"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:45:16.110519"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:46:16.125782"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:47:16.141540"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:48:16.161064"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:49:16.184660"
+    },
+    {
+      "severity": "INFO",
+      "message": "51 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:50:16.198475"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:51:16.214910"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:52:16.239876"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:53:16.254322"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:54:16.269266"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:55:16.283126"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:56:16.297370"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:57:16.319072"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:58:16.333364"
+    },
+    {
+      "severity": "INFO",
+      "message": "53 positions older than 3 hours",
+      "timestamp": "2025-10-18 06:59:16.351818"
+    },
+    {
+      "severity": "INFO",
+      "message": "52 positions older than 3 hours",
+      "timestamp": "2025-10-18 07:00:16.366484"
+    },
+    {
+      "severity": "INFO",
+      "message": "52 positions older than 3 hours",
+      "timestamp": "2025-10-18 07:01:16.381570"
+    },
+    {
+      "severity": "INFO",
+      "message": "52 positions older than 3 hours",
+      "timestamp": "2025-10-18 07:02:16.395996"
+    },
+    {
+      "severity": "INFO",
+      "message": "52 positions older than 3 hours",
+      "timestamp": "2025-10-18 07:03:16.407292"
+    },
+    {
+      "severity": "INFO",
+      "message": "52 positions older than 3 hours",
+      "timestamp": "2025-10-18 07:04:16.425324"
+    },
+    {
+      "severity": "INFO",
+      "message": "52 positions older than 3 hours",
+      "timestamp": "2025-10-18 07:05:16.436050"
+    },
+    {
+      "severity": "INFO",
+      "message": "50 positions older than 3 hours",
+      "timestamp": "2025-10-18 07:06:16.449397"
+    }
+  ]
+}

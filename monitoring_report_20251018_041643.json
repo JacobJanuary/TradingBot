@@ -1,0 +1,115 @@
+{
+  "monitoring_duration_minutes": 9,
+  "monitoring_start": "2025-10-18T04:08:19.316953",
+  "monitoring_end": "2025-10-18T04:16:19.434406",
+  "total_alerts": 19,
+  "critical_alerts": 1,
+  "warning_alerts": 9,
+  "metrics_summary": {
+    "total_positions_opened": 0,
+    "total_positions_closed": 0,
+    "total_ts_activations": 14,
+    "total_sl_updates": 0,
+    "total_zombies": 0,
+    "total_errors": 0,
+    "total_emergency_closes": 0,
+    "total_ws_reconnects": 0
+  },
+  "alerts": [
+    {
+      "severity": "CRITICAL",
+      "message": "7 positions without SL",
+      "timestamp": "2025-10-18 04:08:19.316953"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:08:19.316953"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:08:19.316953"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:09:19.338035"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:09:19.338035"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:10:19.351781"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:10:19.351781"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:11:19.368026"
+    },
+    {
+      "severity": "INFO",
+      "message": "44 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:11:19.368026"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:12:19.378866"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:12:19.378866"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:13:19.395408"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:13:19.395408"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:14:19.409742"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:14:19.409742"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:15:19.425492"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:15:19.425492"
+    },
+    {
+      "severity": "WARNING",
+      "message": "No price updates for existing positions",
+      "timestamp": "2025-10-18 04:16:19.434406"
+    },
+    {
+      "severity": "INFO",
+      "message": "41 positions older than 3 hours",
+      "timestamp": "2025-10-18 04:16:19.434406"
+    }
+  ]
+}

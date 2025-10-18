@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Модуль для обеспечения единственного экземпляра приложения.
-Использует fcntl.flock для атомарной блокировки (Unix/Mac).
+Использует filelock для кроссплатформенной блокировки.
 
 Features:
-- Атомарная блокировка через fcntl.flock
-- Автоматическое освобождение при завершении процесса
+- 100% кроссплатформенность (Mac OS, Linux, Windows)
+- Автоматическое восстановление после краха
 - Проверка валидности PID
 - Graceful shutdown
 - Подробное логирование
@@ -17,16 +17,16 @@ import time
 import atexit
 import signal
 import logging
-import fcntl
 from pathlib import Path
 from typing import Optional, Callable
 from datetime import datetime
 
 try:
+    from filelock import FileLock, Timeout
     import psutil
 except ImportError as e:
     print(f"ERROR: Required dependencies not installed: {e}")
-    print("Install with: pip install psutil")
+    print("Install with: pip install filelock psutil")
     sys.exit(1)
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class SingleInstance:
     """
     Защита от множественного запуска приложения.
 
-    Использует fcntl.flock для атомарной блокировки и psutil для проверки процессов.
+    Использует filelock для атомарной блокировки и psutil для проверки процессов.
 
     Usage:
         # Простое использование
@@ -53,7 +53,7 @@ class SingleInstance:
 
         # С обработкой ошибок
         try:
-            app = SingleInstance('my_app')
+            app = SingleInstance('my_app', timeout=5)
         except SingleInstanceError as e:
             print(f"Cannot start: {e}")
     """
@@ -98,17 +98,25 @@ class SingleInstance:
         self.info_file = self.lock_dir / f"{app_id}.info"
 
         # Объект блокировки
-        self.lock_fd: Optional[int] = None
+        self.lock: Optional[FileLock] = None
         self.acquired = False
 
         # Автоматическая попытка получить блокировку
-        if not self.acquire():
+        try:
+            if not self.acquire():
+                if self.auto_exit:
+                    logger.error("❌ Another instance is already running")
+                    self._show_running_instance_info()
+                    sys.exit(1)
+                else:
+                    raise SingleInstanceError("Another instance is already running")
+        except Timeout:
             if self.auto_exit:
-                logger.error("❌ Another instance is already running")
+                logger.error(f"❌ Failed to acquire lock within {timeout}s")
                 self._show_running_instance_info()
                 sys.exit(1)
             else:
-                raise SingleInstanceError("Another instance is already running")
+                raise SingleInstanceError(f"Timeout acquiring lock ({timeout}s)")
 
     def acquire(self) -> bool:
         """
@@ -116,18 +124,22 @@ class SingleInstance:
 
         Returns:
             True если блокировка получена, False если уже заблокировано
+
+        Raises:
+            Timeout: Если не удалось получить блокировку за timeout секунд
         """
         try:
-            # Открываем lock файл (создаст если не существует)
-            self.lock_fd = os.open(str(self.lock_file), os.O_CREAT | os.O_RDWR, 0o644)
+            # Проверяем существующую блокировку
+            if self.lock_file.exists():
+                if not self._is_lock_valid():
+                    logger.warning("⚠️ Found stale lock file, cleaning up")
+                    self._cleanup_stale_lock()
 
-            # Пытаемся получить эксклюзивную блокировку (неблокирующий режим)
-            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Создаем объект блокировки
+            self.lock = FileLock(str(self.lock_file), timeout=self.timeout)
 
-            # Записываем PID в lock файл
-            os.ftruncate(self.lock_fd, 0)
-            os.write(self.lock_fd, f"{os.getpid()}\n".encode())
-            os.fsync(self.lock_fd)
+            # Пытаемся получить блокировку
+            self.lock.acquire(timeout=self.timeout)
 
             # Сохраняем информацию о процессе
             self._write_pid_file()
@@ -144,19 +156,12 @@ class SingleInstance:
             logger.info(f"✅ Lock acquired for '{self.app_id}' (PID: {os.getpid()})")
             return True
 
-        except BlockingIOError:
-            # Блокировка уже занята другим процессом
-            logger.error(f"❌ Lock is held by another process")
-            if self.lock_fd is not None:
-                os.close(self.lock_fd)
-                self.lock_fd = None
-            return False
+        except Timeout:
+            logger.error(f"❌ Lock timeout ({self.timeout}s)")
+            raise
 
         except Exception as e:
             logger.error(f"❌ Failed to acquire lock: {e}", exc_info=True)
-            if self.lock_fd is not None:
-                os.close(self.lock_fd)
-                self.lock_fd = None
             return False
 
     def release(self):
@@ -166,10 +171,8 @@ class SingleInstance:
 
         try:
             # Освобождаем блокировку
-            if self.lock_fd is not None:
-                fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
-                os.close(self.lock_fd)
-                self.lock_fd = None
+            if self.lock:
+                self.lock.release()
 
             # Удаляем файлы
             self._cleanup_files()
