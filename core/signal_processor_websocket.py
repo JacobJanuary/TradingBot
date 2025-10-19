@@ -608,34 +608,38 @@ class WebSocketSignalProcessor:
                 if not validated_signal:
                     logger.warning(f"Signal #{signal_id} failed validation")
 
-                    # Log validation failure
+                    # FIX BUG #1: Log validation failure in background (non-blocking)
                     event_logger = get_event_logger()
                     if event_logger:
-                        await event_logger.log_event(
-                            EventType.SIGNAL_VALIDATION_FAILED,
-                            {
-                                'signal_id': signal_id,
-                                'reason': 'validation_returned_none',
-                                'signal_data': signal
-                            },
-                            severity='WARNING'
+                        asyncio.create_task(
+                            event_logger.log_event(
+                                EventType.SIGNAL_VALIDATION_FAILED,
+                                {
+                                    'signal_id': signal_id,
+                                    'reason': 'validation_returned_none',
+                                    'signal_data': signal
+                                },
+                                severity='WARNING'
+                            )
                         )
 
                     return False
             except Exception as e:
                 logger.error(f"Error validating signal #{signal_id}: {e}")
 
-                # Log validation error
+                # FIX BUG #1: Log validation error in background (non-blocking)
                 event_logger = get_event_logger()
                 if event_logger:
-                    await event_logger.log_event(
-                        EventType.SIGNAL_VALIDATION_FAILED,
-                        {
-                            'signal_id': signal_id,
-                            'reason': 'validation_exception',
-                            'error': str(e)
-                        },
-                        severity='ERROR'
+                    asyncio.create_task(
+                        event_logger.log_event(
+                            EventType.SIGNAL_VALIDATION_FAILED,
+                            {
+                                'signal_id': signal_id,
+                                'reason': 'validation_exception',
+                                'error': str(e)
+                            },
+                            severity='ERROR'
+                        )
                     )
 
                 return False
@@ -650,20 +654,22 @@ class WebSocketSignalProcessor:
                     f"⏸️ Signal #{signal_id} skipped: {symbol} is blocked ({reason})"
                 )
 
-                # Log signal filtered
+                # FIX BUG #1: Log signal filtered in background (non-blocking)
                 event_logger = get_event_logger()
                 if event_logger:
-                    await event_logger.log_event(
-                        EventType.SIGNAL_FILTERED,
-                        {
-                            'signal_id': signal_id,
-                            'symbol': symbol,
-                            'exchange': exchange,
-                            'filter_reason': reason
-                        },
-                        symbol=symbol,
-                        exchange=exchange,
-                        severity='INFO'
+                    asyncio.create_task(
+                        event_logger.log_event(
+                            EventType.SIGNAL_FILTERED,
+                            {
+                                'signal_id': signal_id,
+                                'symbol': symbol,
+                                'exchange': exchange,
+                                'filter_reason': reason
+                            },
+                            symbol=symbol,
+                            exchange=exchange,
+                            severity='INFO'
+                        )
                     )
 
                 return False
@@ -740,46 +746,50 @@ class WebSocketSignalProcessor:
             if position:
                 logger.info(f"✅ Signal #{signal_id} ({symbol}) executed successfully")
 
-                # Log signal execution success
+                # FIX BUG #1: Log signal execution success in background (non-blocking)
                 event_logger = get_event_logger()
                 if event_logger:
-                    await event_logger.log_event(
-                        EventType.SIGNAL_EXECUTED,
-                        {
-                            'signal_id': signal_id,
-                            'symbol': symbol,
-                            'exchange': exchange,
-                            'side': side,
-                            'entry_price': float(current_price),
-                            'position_id': position.id if hasattr(position, 'id') else None,
-                            'score_week': validated_signal.score_week,
-                            'score_month': validated_signal.score_month
-                        },
-                        symbol=symbol,
-                        exchange=exchange,
-                        severity='INFO'
+                    asyncio.create_task(
+                        event_logger.log_event(
+                            EventType.SIGNAL_EXECUTED,
+                            {
+                                'signal_id': signal_id,
+                                'symbol': symbol,
+                                'exchange': exchange,
+                                'side': side,
+                                'entry_price': float(current_price),
+                                'position_id': position.id if hasattr(position, 'id') else None,
+                                'score_week': validated_signal.score_week,
+                                'score_month': validated_signal.score_month
+                            },
+                            symbol=symbol,
+                            exchange=exchange,
+                            severity='INFO'
+                        )
                     )
 
                 return True
             else:
                 logger.warning(f"❌ Signal #{signal_id} ({symbol}) - position_manager returned None")
 
-                # Log signal execution failure
+                # FIX BUG #1: Log signal execution failure in background (non-blocking)
                 event_logger = get_event_logger()
                 if event_logger:
-                    await event_logger.log_event(
-                        EventType.SIGNAL_EXECUTION_FAILED,
-                        {
-                            'signal_id': signal_id,
-                            'symbol': symbol,
-                            'exchange': exchange,
-                            'side': side,
-                            'reason': 'position_manager_returned_none',
-                            'entry_price': float(current_price)
-                        },
-                        symbol=symbol,
-                        exchange=exchange,
-                        severity='WARNING'
+                    asyncio.create_task(
+                        event_logger.log_event(
+                            EventType.SIGNAL_EXECUTION_FAILED,
+                            {
+                                'signal_id': signal_id,
+                                'symbol': symbol,
+                                'exchange': exchange,
+                                'side': side,
+                                'reason': 'position_manager_returned_none',
+                                'entry_price': float(current_price)
+                            },
+                            symbol=symbol,
+                            exchange=exchange,
+                            severity='WARNING'
+                        )
                     )
 
                 return False
