@@ -1515,22 +1515,25 @@ class PositionManager:
         logger.debug(f"  Entry price: ${price}")
         logger.debug(f"  Raw quantity: {quantity}")
 
-        # Apply exchange precision
-        formatted_qty = exchange.amount_to_precision(symbol, quantity)
-
-        # Check minimum amount
+        # Check minimum amount BEFORE formatting
         min_amount = exchange.get_min_amount(symbol)
-        if to_decimal(formatted_qty) < to_decimal(min_amount):
+        adjusted_quantity = quantity
+
+        # Apply fallback if needed (BEFORE amount_to_precision)
+        if to_decimal(quantity) < to_decimal(min_amount):
             # Fallback: check if we can use minimum quantity
             min_cost = float(min_amount) * float(price)
             tolerance = size_usd * 1.1  # 10% over budget allowed
 
             if min_cost <= tolerance:
                 logger.info(f"Using minimum quantity {min_amount} for {symbol} (cost: ${min_cost:.2f}, tolerance: ${tolerance:.2f})")
-                formatted_qty = str(min_amount)
+                adjusted_quantity = Decimal(str(min_amount))
             else:
-                logger.warning(f"Quantity {formatted_qty} below minimum {min_amount} and too expensive (${min_cost:.2f} > ${tolerance:.2f})")
+                logger.warning(f"Quantity {quantity} below minimum {min_amount} and too expensive (${min_cost:.2f} > ${tolerance:.2f})")
                 return None
+
+        # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
+        formatted_qty = exchange.amount_to_precision(symbol, adjusted_quantity)
 
         # Final validation - check actual value
         actual_value = float(formatted_qty) * float(price)
