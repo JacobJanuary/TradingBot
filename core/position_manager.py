@@ -1521,8 +1521,16 @@ class PositionManager:
         # Check minimum amount
         min_amount = exchange.get_min_amount(symbol)
         if to_decimal(formatted_qty) < to_decimal(min_amount):
-            logger.warning(f"Quantity {formatted_qty} below minimum {min_amount} for {symbol}")
-            return None
+            # Fallback: check if we can use minimum quantity
+            min_cost = float(min_amount) * float(price)
+            tolerance = size_usd * 1.1  # 10% over budget allowed
+
+            if min_cost <= tolerance:
+                logger.info(f"Using minimum quantity {min_amount} for {symbol} (cost: ${min_cost:.2f}, tolerance: ${tolerance:.2f})")
+                formatted_qty = str(min_amount)
+            else:
+                logger.warning(f"Quantity {formatted_qty} below minimum {min_amount} and too expensive (${min_cost:.2f} > ${tolerance:.2f})")
+                return None
 
         # Final validation - check actual value
         actual_value = float(formatted_qty) * float(price)

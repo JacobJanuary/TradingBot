@@ -1130,9 +1130,26 @@ class ExchangeManager:
         # CRITICAL FIX: Convert symbol to exchange-specific format
         exchange_symbol = self.find_exchange_symbol(symbol) or symbol
         market = self.markets.get(exchange_symbol)
-        if market:
-            return market['limits']['amount']['min']
-        return 0.001  # Default
+        if not market:
+            return 0.001  # Default
+
+        # For Binance: parse REAL minQty from LOT_SIZE filter (not CCXT parsed value)
+        # CCXT sometimes returns stepSize instead of minQty in limits.amount.min
+        if self.name == 'binance':
+            info = market.get('info', {})
+            filters = info.get('filters', [])
+
+            for f in filters:
+                if f.get('filterType') == 'LOT_SIZE':
+                    min_qty = f.get('minQty')
+                    if min_qty:
+                        try:
+                            return float(min_qty)
+                        except (ValueError, TypeError):
+                            pass
+
+        # Fallback to CCXT parsed value for other exchanges
+        return market.get('limits', {}).get('amount', {}).get('min', 0.001)
 
     def get_tick_size(self, symbol: str) -> float:
         """Get price tick size for symbol"""
