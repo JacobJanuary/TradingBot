@@ -197,7 +197,7 @@ class AtomicPositionManager:
                 # FIX: Check Bybit retCode IMMEDIATELY to catch errors before SL attempt
                 # Bybit returns retCode != 0 for all errors (e.g., 10001 = minimum size)
                 if exchange == 'bybit' and raw_order:
-                    order_info = raw_order.get('info', {})
+                    order_info = raw_order.info
                     ret_code = order_info.get('retCode', 0)
 
                     if ret_code != 0:
