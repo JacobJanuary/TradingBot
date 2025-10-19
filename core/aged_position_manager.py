@@ -695,10 +695,18 @@ class AgedPositionManager:
 
             for exchange_name, exchange in self.exchanges.items():
                 try:
-                    balance = await exchange.fetch_balance()
+                    # Use helper method if available (for Bybit UNIFIED fix)
+                    if hasattr(exchange, '_get_free_balance_usdt'):
+                        usdt_balance = await exchange._get_free_balance_usdt()
+                    else:
+                        balance = await exchange.fetch_balance()
+                        usdt_balance = balance.get('USDT', {}).get('free', 0)
 
-                    # Get USDT balance (main trading currency)
-                    usdt_balance = balance.get('USDT', {}).get('free', 0)
+                    # Protection from None
+                    if usdt_balance is None:
+                        logger.warning(f"Exchange {exchange_name} returned None balance, using 0")
+                        usdt_balance = 0
+
                     total_balance += float(usdt_balance)
 
                 except Exception as e:

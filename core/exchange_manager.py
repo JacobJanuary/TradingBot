@@ -237,11 +237,89 @@ class ExchangeManager:
 
     # ============== Account Information ==============
 
+    async def _get_free_balance_usdt(self) -> float:
+        """
+        Get free USDT balance for this exchange
+
+        For Bybit UNIFIED accounts, uses direct API call.
+        For other exchanges, uses standard fetch_balance().
+
+        Returns:
+            Free USDT balance as float
+        """
+        if self.name == 'bybit':
+            try:
+                response = await self.exchange.privateGetV5AccountWalletBalance({
+                    'accountType': 'UNIFIED',
+                    'coin': 'USDT'
+                })
+                result = response.get('result', {})
+                accounts = result.get('list', [])
+                if accounts:
+                    account = accounts[0]
+                    return float(account.get('totalAvailableBalance', 0))
+                else:
+                    logger.warning("No Bybit account data, returning 0")
+                    return 0.0
+            except Exception as e:
+                logger.warning(f"Bybit balance fetch failed, fallback: {e}")
+                balance = await self.exchange.fetch_balance()
+                return float(balance.get('USDT', {}).get('free', 0) or 0)
+        else:
+            balance = await self.exchange.fetch_balance()
+            return float(balance.get('USDT', {}).get('free', 0) or 0)
+
+    async def _get_total_balance_usdt(self) -> float:
+        """
+        Get total USDT balance for this exchange
+
+        For Bybit UNIFIED accounts, uses direct API call.
+        For other exchanges, uses standard fetch_balance().
+
+        Returns:
+            Total USDT balance as float
+        """
+        if self.name == 'bybit':
+            try:
+                response = await self.exchange.privateGetV5AccountWalletBalance({
+                    'accountType': 'UNIFIED',
+                    'coin': 'USDT'
+                })
+                result = response.get('result', {})
+                accounts = result.get('list', [])
+                if accounts:
+                    account = accounts[0]
+                    return float(account.get('totalWalletBalance', 0))
+                else:
+                    logger.warning("No Bybit account data, returning 0")
+                    return 0.0
+            except Exception as e:
+                logger.warning(f"Bybit balance fetch failed, fallback: {e}")
+                balance = await self.exchange.fetch_balance()
+                return float(balance.get('USDT', {}).get('total', 0) or 0)
+        else:
+            balance = await self.exchange.fetch_balance()
+            return float(balance.get('USDT', {}).get('total', 0) or 0)
+
     async def fetch_balance(self) -> Dict:
         """Fetch account balance with rate limiting"""
         balance = await self.rate_limiter.execute_request(
             self.exchange.fetch_balance
         )
+
+        # FIX: Patch Bybit UNIFIED balance (free=None issue)
+        if self.name == 'bybit':
+            usdt = balance.get('USDT', {})
+            if usdt.get('free') is None and usdt.get('total', 0) > 0:
+                try:
+                    free_usdt = await self._get_free_balance_usdt()
+                    total_usdt = await self._get_total_balance_usdt()
+                    balance['USDT']['free'] = free_usdt
+                    balance['USDT']['used'] = total_usdt - free_usdt
+                    balance['USDT']['total'] = total_usdt
+                except Exception as e:
+                    logger.warning(f"Failed to patch Bybit balance: {e}")
+
         return balance
 
     async def fetch_positions(self, symbols: List[str] = None, params: Dict = None) -> List[Dict]:
@@ -1174,8 +1252,8 @@ class ExchangeManager:
         """
         try:
             # Step 1: Check free balance
-            balance = await self.exchange.fetch_balance()
-            free_usdt = float(balance.get('USDT', {}).get('free', 0) or 0)
+            free_usdt = await self._get_free_balance_usdt()
+            total_usdt = await self._get_total_balance_usdt()
 
             if free_usdt < float(notional_usd):
                 return False, f"Insufficient free balance: ${free_usdt:.2f} < ${notional_usd:.2f}"
@@ -1213,9 +1291,8 @@ class ExchangeManager:
                     logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
 
             # Step 4: Conservative utilization check
-            total_balance = float(balance.get('USDT', {}).get('total', 0) or 0)
-            if total_balance > 0:
-                utilization = (total_notional + float(notional_usd)) / total_balance
+            if total_usdt > 0:
+                utilization = (total_notional + float(notional_usd)) / total_usdt
                 if utilization > 0.80:  # 80% max
                     return False, f"Would exceed safe utilization: {utilization*100:.1f}% > 80%"
 
