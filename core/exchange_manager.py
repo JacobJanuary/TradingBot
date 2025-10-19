@@ -1174,9 +1174,9 @@ class ExchangeManager:
         try:
             # Step 1: Check free balance
             balance = await self.exchange.fetch_balance()
-            free_usdt = balance.get('USDT', {}).get('free', 0)
+            free_usdt = float(balance.get('USDT', {}).get('free', 0) or 0)
 
-            if free_usdt < notional_usd:
+            if free_usdt < float(notional_usd):
                 return False, f"Insufficient free balance: ${free_usdt:.2f} < ${notional_usd:.2f}"
 
             # Step 2: Get total current notional
@@ -1209,9 +1209,9 @@ class ExchangeManager:
                     logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
 
             # Step 4: Conservative utilization check
-            total_balance = balance.get('USDT', {}).get('total', 0)
+            total_balance = float(balance.get('USDT', {}).get('total', 0) or 0)
             if total_balance > 0:
-                utilization = (total_notional + notional_usd) / total_balance
+                utilization = (total_notional + float(notional_usd)) / total_balance
                 if utilization > 0.80:  # 80% max
                     return False, f"Would exceed safe utilization: {utilization*100:.1f}% > 80%"
 
