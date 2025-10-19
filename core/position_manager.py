@@ -1535,6 +1535,12 @@ class PositionManager:
         # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
         formatted_qty = exchange.amount_to_precision(symbol, adjusted_quantity)
 
+        # Check if we can afford this position (margin/leverage validation)
+        can_open, reason = await exchange.can_open_position(symbol, size_usd)
+        if not can_open:
+            logger.warning(f"Cannot open {symbol} position: {reason}")
+            return None
+
         # Final validation - check actual value
         actual_value = float(formatted_qty) * float(price)
         logger.info(f"✅ Position size calculated for {symbol}:")

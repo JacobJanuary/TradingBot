@@ -1160,6 +1160,67 @@ class ExchangeManager:
             return market['precision']['price']
         return 0.01  # Default
 
+    async def can_open_position(self, symbol: str, notional_usd: float) -> Tuple[bool, str]:
+        """
+        Check if we can open a new position without exceeding limits
+
+        Args:
+            symbol: Trading symbol
+            notional_usd: Position size in USD
+
+        Returns:
+            (can_open, reason)
+        """
+        try:
+            # Step 1: Check free balance
+            balance = await self.exchange.fetch_balance()
+            free_usdt = balance.get('USDT', {}).get('free', 0)
+
+            if free_usdt < notional_usd:
+                return False, f"Insufficient free balance: ${free_usdt:.2f} < ${notional_usd:.2f}"
+
+            # Step 2: Get total current notional
+            positions = await self.exchange.fetch_positions()
+            total_notional = sum(abs(float(p.get('notional', 0)))
+                                for p in positions if float(p.get('contracts', 0)) > 0)
+
+            # Step 3: Check maxNotionalValue (Binance specific)
+            if self.name == 'binance':
+                try:
+                    exchange_symbol = self.find_exchange_symbol(symbol)
+                    symbol_clean = exchange_symbol.replace('/USDT:USDT', 'USDT')
+
+                    position_risk = await self.exchange.fapiPrivateV2GetPositionRisk({
+                        'symbol': symbol_clean
+                    })
+
+                    for risk in position_risk:
+                        if risk.get('symbol') == symbol_clean:
+                            max_notional_str = risk.get('maxNotionalValue', 'INF')
+                            if max_notional_str != 'INF':
+                                max_notional = float(max_notional_str)
+                                new_total = total_notional + notional_usd
+
+                                if new_total > max_notional:
+                                    return False, f"Would exceed max notional: ${new_total:.2f} > ${max_notional:.2f}"
+                            break
+                except Exception as e:
+                    # Log warning but don't block
+                    logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
+
+            # Step 4: Conservative utilization check
+            total_balance = balance.get('USDT', {}).get('total', 0)
+            if total_balance > 0:
+                utilization = (total_notional + notional_usd) / total_balance
+                if utilization > 0.80:  # 80% max
+                    return False, f"Would exceed safe utilization: {utilization*100:.1f}% > 80%"
+
+            return True, "OK"
+
+        except Exception as e:
+            logger.error(f"Error checking if can open position for {symbol}: {e}")
+            return False, f"Validation error: {e}"
+
     async def validate_order(self, symbol: str, side: str, amount: Decimal, price: Decimal = None) -> Tuple[bool, str]:
         """
         Validate order parameters before submission
