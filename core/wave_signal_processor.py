@@ -266,8 +266,100 @@ class WaveSignalProcessor:
             if has_position:
                 return True, "Position already exists"
 
-            # ... остальные проверки дубликатов ...
+            # ========== НОВАЯ ПРОВЕРКА: Минимальная стоимость позиции ==========
 
+            # Get exchange manager
+            exchange_manager = self.position_manager.exchanges.get(exchange)
+            if not exchange_manager:
+                logger.warning(f"Exchange {exchange} not available for {symbol}")
+                return {
+                    'error': 'exchange_not_available',
+                    'symbol': symbol,
+                    'exchange': exchange,
+                    'message': f"Exchange {exchange} not available",
+                    'retryable': False
+                }, ""
+
+            # Get exchange-specific symbol format
+            exchange_symbol = exchange_manager.find_exchange_symbol(symbol)
+            if not exchange_symbol:
+                logger.debug(f"Symbol {symbol} not found on {exchange}")
+                return True, f"Symbol {symbol} not found on {exchange}"
+
+            # Get market data
+            market = exchange_manager.markets.get(exchange_symbol)
+            if not market:
+                logger.debug(f"Market data not available for {symbol}")
+                return True, f"Market data not available for {symbol}"
+
+            # Get current price
+            ticker = await exchange_manager.fetch_ticker(symbol)
+            if not ticker:
+                logger.debug(f"Ticker not available for {symbol}")
+                return True, f"Ticker not available for {symbol}"
+
+            current_price = ticker.get('last') or ticker.get('close', 0)
+            if not current_price or current_price <= 0:
+                logger.debug(f"Invalid price for {symbol}: {current_price}")
+                return True, f"Invalid price for {symbol}"
+
+            # Get position size from config
+            position_size_usd = float(self.config.position_size_usd)
+
+            # Calculate notional value
+            quantity = position_size_usd / current_price
+            notional_value = quantity * current_price  # Should equal position_size_usd
+
+            # Get minimum cost using 3-step approach
+            min_cost = await self._get_minimum_cost(
+                market=market,
+                exchange_name=exchange,
+                symbol=symbol,
+                current_price=current_price
+            )
+
+            # Validate against minimum
+            if notional_value < min_cost:
+                logger.info(
+                    f"⏭️ Signal skipped: {symbol} minimum notional ${min_cost:.2f} "
+                    f"> position size ${position_size_usd:.2f} on {exchange}"
+                )
+
+                # Log event to database
+                from core.event_logger import get_event_logger, EventType
+                event_logger = get_event_logger()
+                if event_logger:
+                    # Determine source of min_cost for logging
+                    source = 'unknown'
+                    if market.get('limits', {}).get('cost', {}).get('min'):
+                        source = 'ccxt_standard'
+                    elif exchange == 'bybit' and market.get('info', {}).get('lotSizeFilter', {}).get('minNotionalValue'):
+                        source = 'bybit_raw_api'
+                    else:
+                        source = 'fallback_10usd'
+
+                    await event_logger.log_event(
+                        EventType.SIGNAL_FILTERED,
+                        {
+                            'signal_id': signal.get('id'),
+                            'symbol': symbol,
+                            'exchange': exchange,
+                            'filter_reason': 'below_minimum_notional',
+                            'position_size_usd': position_size_usd,
+                            'notional_value': float(notional_value),
+                            'min_cost_required': float(min_cost),
+                            'current_price': float(current_price),
+                            'quantity': float(quantity),
+                            'min_cost_source': source
+                        },
+                        symbol=symbol,
+                        exchange=exchange,
+                        severity='INFO'
+                    )
+
+                return True, f"Position size (${position_size_usd:.2f}) below exchange minimum (${min_cost:.2f})"
+
+            # All checks passed
             return False, ""
 
         except Exception as e:
@@ -315,6 +407,60 @@ class WaveSignalProcessor:
         except Exception as e:
             logger.error(f"Error processing single signal: {e}", exc_info=True)
             return None
+
+    async def _get_minimum_cost(
+        self,
+        market: Dict,
+        exchange_name: str,
+        symbol: str,
+        current_price: float
+    ) -> float:
+        """
+        Get minimum notional cost for a symbol (3-step approach).
+
+        Step 1: Try CCXT standard (works for Binance, most exchanges)
+        Step 2: Try exchange-specific parsing (Bybit)
+        Step 3: Fallback to safe absolute minimum ($10)
+
+        Args:
+            market: Market data from exchange
+            exchange_name: Exchange name (e.g., 'bybit', 'binance')
+            symbol: Trading symbol
+            current_price: Current market price
+
+        Returns:
+            Minimum cost in USD
+        """
+        # Step 1: Try CCXT standard
+        cost_min = market.get('limits', {}).get('cost', {}).get('min')
+        if cost_min and cost_min > 0:
+            logger.debug(f"{symbol}: Using CCXT cost.min = ${cost_min}")
+            return float(cost_min)
+
+        # Step 2: Try Bybit-specific parsing
+        if exchange_name == 'bybit':
+            info = market.get('info', {})
+            lot_size_filter = info.get('lotSizeFilter', {})
+            min_notional_str = lot_size_filter.get('minNotionalValue')
+
+            if min_notional_str:
+                try:
+                    min_notional = float(min_notional_str)
+                    logger.debug(
+                        f"{symbol}: Using Bybit minNotionalValue = ${min_notional} "
+                        f"(parsed from info.lotSizeFilter)"
+                    )
+                    return min_notional
+                except (ValueError, TypeError) as e:
+                    logger.warning(
+                        f"{symbol}: Could not parse Bybit minNotionalValue '{min_notional_str}': {e}"
+                    )
+
+        # Step 3: Fallback to absolute minimum
+        logger.warning(
+            f"{symbol}: No min_cost from exchange, using fallback $10.00"
+        )
+        return 10.0
 
     async def _get_open_positions(self) -> List[Dict]:
         """Get all open positions with details."""
