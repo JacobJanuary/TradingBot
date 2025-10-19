@@ -289,12 +289,55 @@ class WebSocketSignalProcessor:
                         f"✅ Wave {expected_wave_timestamp} validated: "
                         f"{len(final_signals)} signals with buffer (target: {max_trades} positions)"
                     )
-                    
+
+                    # PARALLEL VALIDATION: Pre-fetch positions once and validate all signals in parallel
+                    try:
+                        exchange = self.position_manager.exchanges.get('binance')
+                        if exchange:
+                            # Pre-fetch positions ONCE for all validations
+                            preloaded_positions = await exchange.exchange.fetch_positions()
+                            logger.info(f"Pre-fetched {len(preloaded_positions)} positions for parallel validation")
+
+                            # Parallel validation for all signals
+                            validation_tasks = []
+                            for signal_result in final_signals:
+                                signal = signal_result.get('signal_data')
+                                if signal:
+                                    symbol = signal.get('symbol')
+                                    size_usd = signal.get('size_usd', 200.0)
+                                    validation_tasks.append(
+                                        exchange.can_open_position(symbol, size_usd, preloaded_positions=preloaded_positions)
+                                    )
+                                else:
+                                    validation_tasks.append(asyncio.sleep(0, result=(False, "No signal data")))
+
+                            # Execute all validations in parallel
+                            validations = await asyncio.gather(*validation_tasks, return_exceptions=True)
+
+                            # Filter to valid signals only
+                            validated_signals = []
+                            for signal_result, validation in zip(final_signals, validations):
+                                if isinstance(validation, Exception):
+                                    logger.warning(f"Validation exception: {validation}")
+                                    continue
+                                can_open, reason = validation
+                                if can_open:
+                                    validated_signals.append(signal_result)
+                                else:
+                                    signal = signal_result.get('signal_data', {})
+                                    logger.info(f"Signal {signal.get('symbol', 'UNKNOWN')} filtered out: {reason}")
+
+                            # Replace final_signals with validated only
+                            final_signals = validated_signals
+                            logger.info(f"Parallel validation complete: {len(final_signals)} signals passed (filtered from {len(validations)})")
+                    except Exception as e:
+                        logger.error(f"Parallel validation failed, continuing with all signals: {e}")
+
                     # EXECUTE: Open positions with buffer logic
                     # Continue trying signals until we open max_trades positions or run out of signals
                     executed_count = 0
                     failed_count = 0
-                    
+
                     for idx, signal_result in enumerate(final_signals):
                         if not self.running:
                             break

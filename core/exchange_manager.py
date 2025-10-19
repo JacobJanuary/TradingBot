@@ -1160,13 +1160,14 @@ class ExchangeManager:
             return market['precision']['price']
         return 0.01  # Default
 
-    async def can_open_position(self, symbol: str, notional_usd: float) -> Tuple[bool, str]:
+    async def can_open_position(self, symbol: str, notional_usd: float, preloaded_positions: Optional[List] = None) -> Tuple[bool, str]:
         """
         Check if we can open a new position without exceeding limits
 
         Args:
             symbol: Trading symbol
             notional_usd: Position size in USD
+            preloaded_positions: Optional pre-fetched positions list (for parallel validation)
 
         Returns:
             (can_open, reason)
@@ -1180,7 +1181,10 @@ class ExchangeManager:
                 return False, f"Insufficient free balance: ${free_usdt:.2f} < ${notional_usd:.2f}"
 
             # Step 2: Get total current notional
-            positions = await self.exchange.fetch_positions()
+            if preloaded_positions is not None:
+                positions = preloaded_positions
+            else:
+                positions = await self.exchange.fetch_positions()
             total_notional = sum(abs(float(p.get('notional', 0)))
                                 for p in positions if float(p.get('contracts', 0)) > 0)
 
