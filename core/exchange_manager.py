@@ -1199,7 +1199,7 @@ class ExchangeManager:
                             max_notional_str = risk.get('maxNotionalValue', 'INF')
                             if max_notional_str != 'INF':
                                 max_notional = float(max_notional_str)
-                                new_total = total_notional + notional_usd
+                                new_total = total_notional + float(notional_usd)
 
                                 if new_total > max_notional:
                                     return False, f"Would exceed max notional: ${new_total:.2f} > ${max_notional:.2f}"
