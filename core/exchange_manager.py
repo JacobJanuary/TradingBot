@@ -1281,10 +1281,14 @@ class ExchangeManager:
                             max_notional_str = risk.get('maxNotionalValue', 'INF')
                             if max_notional_str != 'INF':
                                 max_notional = float(max_notional_str)
-                                new_total = total_notional + float(notional_usd)
 
-                                if new_total > max_notional:
-                                    return False, f"Would exceed max notional: ${new_total:.2f} > ${max_notional:.2f}"
+                                # FIX BUG #2: Ignore maxNotional = 0 (means "no personal limit set")
+                                # Binance returns "0" for symbols without open positions, not as a $0 limit
+                                if max_notional > 0:
+                                    new_total = total_notional + float(notional_usd)
+
+                                    if new_total > max_notional:
+                                        return False, f"Would exceed max notional: ${new_total:.2f} > ${max_notional:.2f}"
                             break
                 except Exception as e:
                     # Log warning but don't block
