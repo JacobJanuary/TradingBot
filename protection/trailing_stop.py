@@ -464,7 +464,8 @@ class SmartTrailingStopManager:
                 ts.highest_profit_percent = profit_percent
 
             # DEBUG: Log current state
-            logger.debug(
+            # TEMP: Upgrade to INFO to diagnose issue
+            logger.info(
                 f"[TS] {symbol} @ {ts.current_price:.4f} | "
                 f"profit: {profit_percent:.2f}% | "
                 f"activation: {ts.activation_price:.4f} | "
