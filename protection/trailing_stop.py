@@ -245,7 +245,9 @@ class SmartTrailingStopManager:
             ts = TrailingStopInstance(
                 symbol=state_data['symbol'],
                 entry_price=Decimal(str(state_data['entry_price'])),
-                current_price=Decimal(str(state_data['current_stop_price'] or state_data['entry_price'])) if state_data.get('current_stop_price') else Decimal(str(state_data['entry_price'])),
+                # FIX: Use entry_price for current_price on restore (will be updated on first update_price() call)
+                current_price=Decimal(str(state_data['entry_price'])),
+                # FIX: Use saved highest/lowest, but allow update_price() to extend them on first call
                 highest_price=Decimal(str(state_data['highest_price'] or state_data['entry_price'])) if state_data.get('highest_price') else (Decimal(str(state_data['entry_price'])) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH),
                 lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else (Decimal(str(state_data['lowest_price'] or state_data['entry_price'])) if state_data.get('lowest_price') else Decimal(str(state_data['entry_price']))),
                 state=TrailingStopState(state_data['state'].lower()),  # FIX: Handle legacy uppercase states
