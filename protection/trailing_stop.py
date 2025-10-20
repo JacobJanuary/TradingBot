@@ -413,6 +413,8 @@ class SmartTrailingStopManager:
         logger.info(f"[TS] update_price called: {symbol} @ {price}")
 
         if symbol not in self.trailing_stops:
+            # TEMP DEBUG: Log available symbols to diagnose issue
+            logger.warning(f"[TS] {symbol} not in trailing_stops! Available: {list(self.trailing_stops.keys())[:10]}")
             # Position closed or not tracked - silent skip (prevents log spam)
             return None
 
