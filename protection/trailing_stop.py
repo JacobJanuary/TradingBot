@@ -247,10 +247,10 @@ class SmartTrailingStopManager:
                 entry_price=Decimal(str(state_data['entry_price'])),
                 # FIX: Use entry_price for current_price on restore (will be updated on first update_price() call)
                 current_price=Decimal(str(state_data['entry_price'])),
-                # FIX: Reset peaks to entry_price on restore - first update_price() will set correct current price
-                # This ensures peaks update correctly from current market price, not stale DB values
-                highest_price=Decimal(str(state_data['entry_price'])) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH,
-                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else Decimal(str(state_data['entry_price'])),
+                # Restore peaks from DB - these are the actual highest/lowest reached
+                # update_price() will naturally update them if price moves beyond these levels
+                highest_price=Decimal(str(state_data.get('highest_price', state_data['entry_price']))) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH,
+                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else Decimal(str(state_data.get('lowest_price', state_data['entry_price']))),
                 state=TrailingStopState(state_data['state'].lower()),  # FIX: Handle legacy uppercase states
                 activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
                 current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
