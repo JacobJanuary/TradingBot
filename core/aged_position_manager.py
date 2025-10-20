@@ -327,6 +327,19 @@ class AgedPositionManager:
                     pnl_percentage=0,
                     reason='PHANTOM_AGED'
                 )
+
+                # FIX: Notify trailing stop manager of position closure
+                # This ensures TS state is deleted from database to prevent stale data
+                if hasattr(self.position_manager, 'trailing_managers'):
+                    exchange_name = position.exchange
+                    if exchange_name in self.position_manager.trailing_managers:
+                        trailing_manager = self.position_manager.trailing_managers[exchange_name]
+                        try:
+                            await trailing_manager.on_position_closed(symbol, realized_pnl=None)
+                            logger.debug(f"Notified trailing stop manager of {symbol} phantom closure")
+                        except Exception as e:
+                            logger.warning(f"Failed to notify trailing manager for {symbol}: {e}")
+
                 # Remove from position manager's memory
                 if symbol in self.position_manager.positions:
                     del self.position_manager.positions[symbol]
