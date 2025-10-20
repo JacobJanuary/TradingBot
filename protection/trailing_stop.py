@@ -788,9 +788,11 @@ class SmartTrailingStopManager:
 
             protection_sl_orders = []
             for order in orders:
-                order_type = order.get('type', '').upper()
-                order_side = order.get('side', '').lower()
-                reduce_only = order.get('reduceOnly', False)
+                # OrderResult attributes (not dict methods)
+                order_type = order.type.upper() if order.type else ''
+                order_side = order.side.lower() if order.side else ''
+                # CCXT raw data from order.info
+                reduce_only = order.info.get('reduceOnly', False)
 
                 if (order_type == 'STOP_MARKET' and
                     order_side == expected_side and
@@ -800,8 +802,10 @@ class SmartTrailingStopManager:
             # Cancel found Protection SL orders
             if protection_sl_orders:
                 for order in protection_sl_orders:
-                    order_id = order['id']
-                    stop_price = order.get('stopPrice', 'unknown')
+                    # OrderResult attributes
+                    order_id = order.id
+                    # CCXT raw data from order.info
+                    stop_price = order.info.get('stopPrice', 'unknown')
 
                     logger.info(
                         f"🗑️  {ts.symbol}: Canceling Protection Manager SL "
