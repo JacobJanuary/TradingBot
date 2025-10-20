@@ -115,7 +115,7 @@ class TradingBot:
                     logger.info(f"Skipping disabled exchange: {name}")
                     continue
                     
-                exchange = ExchangeManager(name, config.__dict__)
+                exchange = ExchangeManager(name, config.__dict__, repository=self.repository)
                 try:
                     await exchange.initialize()
                     self.exchanges[name] = exchange

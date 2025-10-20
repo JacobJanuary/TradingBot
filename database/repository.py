@@ -824,6 +824,7 @@ class Repository:
                 stop_order_id, activation_price, activation_percent, callback_percent,
                 entry_price, side, quantity, update_count, highest_profit_percent,
                 activated_at, last_update_time, last_sl_update_time, last_updated_sl_price,
+                last_peak_save_time, last_saved_peak_price,
                 created_at
             ) VALUES (
                 $1, $2, $3, $4, $5,
@@ -831,7 +832,8 @@ class Repository:
                 $9, $10, $11, $12,
                 $13, $14, $15, $16, $17,
                 $18, $19, $20, $21,
-                COALESCE($22, NOW())
+                $22, $23,
+                COALESCE($24, NOW())
             )
             ON CONFLICT (symbol, exchange)
             DO UPDATE SET
@@ -848,7 +850,9 @@ class Repository:
                 activated_at = COALESCE(monitoring.trailing_stop_state.activated_at, EXCLUDED.activated_at),
                 last_update_time = EXCLUDED.last_update_time,
                 last_sl_update_time = EXCLUDED.last_sl_update_time,
-                last_updated_sl_price = EXCLUDED.last_updated_sl_price
+                last_updated_sl_price = EXCLUDED.last_updated_sl_price,
+                last_peak_save_time = EXCLUDED.last_peak_save_time,
+                last_saved_peak_price = EXCLUDED.last_saved_peak_price
         """
 
         try:
@@ -875,6 +879,8 @@ class Repository:
                 state_data.get('last_update_time'),
                 state_data.get('last_sl_update_time'),
                 state_data.get('last_updated_sl_price'),
+                state_data.get('last_peak_save_time'),
+                state_data.get('last_saved_peak_price'),
                 state_data.get('created_at')
             )
             return True
@@ -900,7 +906,8 @@ class Repository:
                 highest_price, lowest_price, current_stop_price,
                 stop_order_id, activation_price, activation_percent, callback_percent,
                 entry_price, side, quantity, update_count, highest_profit_percent,
-                created_at, activated_at, last_update_time, last_sl_update_time, last_updated_sl_price
+                created_at, activated_at, last_update_time, last_sl_update_time, last_updated_sl_price,
+                last_peak_save_time, last_saved_peak_price
             FROM monitoring.trailing_stop_state
             WHERE symbol = $1 AND exchange = $2
         """

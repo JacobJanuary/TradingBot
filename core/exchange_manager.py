@@ -918,13 +918,27 @@ class ExchangeManager:
                     break
 
             if amount == 0:
-                # FIX: Position closed - return graceful failure instead of exception
-                # This is expected during position lifecycle (aged closes, manual closes, etc.)
-                logger.debug(f"Position {symbol} not found (likely closed), skipping SL update")
-                result['success'] = False
-                result['error'] = 'position_not_found'
-                result['message'] = f"Position {symbol} not found on exchange (likely closed)"
-                return result
+                # FALLBACK: Try database (position might be active but not in exchange cache yet)
+                # This happens after bot restart when exchange API has timing issues
+                if self.repository:
+                    try:
+                        db_position = await self.repository.get_open_position(symbol, self.name)
+                        if db_position and db_position.get('status') == 'active' and db_position.get('quantity', 0) > 0:
+                            amount = float(db_position['quantity'])
+                            logger.warning(
+                                f"⚠️  {symbol}: Position not found on exchange, using DB fallback "
+                                f"(quantity={amount}, timing issue after restart)"
+                            )
+                    except Exception as e:
+                        logger.error(f"❌ {symbol}: DB fallback failed: {e}")
+
+                if amount == 0:
+                    # Position truly not found (closed or never existed)
+                    logger.debug(f"Position {symbol} not found on exchange or DB, skipping SL update")
+                    result['success'] = False
+                    result['error'] = 'position_not_found'
+                    result['message'] = f"Position {symbol} not found (likely closed)"
+                    return result
 
             close_side = 'SELL' if position_side == 'long' else 'BUY'
 

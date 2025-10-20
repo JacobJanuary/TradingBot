@@ -549,18 +549,25 @@ class PositionManager:
                             logger.info(f"✅ {symbol}: TS state restored from DB")
                         else:
                             # No state in DB - create new trailing stop
-                            await trailing_manager.create_trailing_stop(
-                                symbol=symbol,
-                                side=position.side,
-                                entry_price=to_decimal(position.entry_price),
-                                quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0))
+                            # FIX: Add timeout to prevent hanging during startup
+                            await asyncio.wait_for(
+                                trailing_manager.create_trailing_stop(
+                                    symbol=symbol,
+                                    side=position.side,
+                                    entry_price=to_decimal(position.entry_price),
+                                    quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0))
+                                ),
+                                timeout=10.0
                             )
                             position.has_trailing_stop = True
 
                             # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
-                            await self.repository.update_position(
-                                position.id,
-                                has_trailing_stop=True
+                            await asyncio.wait_for(
+                                self.repository.update_position(
+                                    position.id,
+                                    has_trailing_stop=True
+                                ),
+                                timeout=5.0
                             )
 
                             logger.info(f"✅ {symbol}: New TS created (no state in DB)")
@@ -1013,22 +1020,34 @@ class PositionManager:
                     # Trailing создаст свой SL только при активации (когда позиция в прибыли)
                     trailing_manager = self.trailing_managers.get(exchange_name)
                     if trailing_manager:
-                        await trailing_manager.create_trailing_stop(
-                            symbol=symbol,
-                            side=position.side,
-                            entry_price=position.entry_price,
-                            quantity=position.quantity,
-                            initial_stop=None  # Не создавать SL сразу - ждать активации
-                        )
-                        position.has_trailing_stop = True
+                        try:
+                            # FIX: Add timeout to prevent wave execution hanging
+                            await asyncio.wait_for(
+                                trailing_manager.create_trailing_stop(
+                                    symbol=symbol,
+                                    side=position.side,
+                                    entry_price=position.entry_price,
+                                    quantity=position.quantity,
+                                    initial_stop=None  # Не создавать SL сразу - ждать активации
+                                ),
+                                timeout=10.0
+                            )
+                            position.has_trailing_stop = True
 
-                        # Save has_trailing_stop to database for restart persistence
-                        await self.repository.update_position(
-                            position.id,
-                            has_trailing_stop=True
-                        )
+                            # Save has_trailing_stop to database for restart persistence
+                            await asyncio.wait_for(
+                                self.repository.update_position(
+                                    position.id,
+                                    has_trailing_stop=True
+                                ),
+                                timeout=5.0
+                            )
 
-                        logger.info(f"✅ Trailing stop initialized for {symbol}")
+                            logger.info(f"✅ Trailing stop initialized for {symbol}")
+                        except asyncio.TimeoutError:
+                            logger.error(f"❌ Timeout creating trailing stop for {symbol} - continuing without TS")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to create trailing stop for {symbol}: {e} - continuing without TS")
                     else:
                         logger.warning(f"⚠️ No trailing manager for exchange {exchange_name}")
 
@@ -1257,14 +1276,25 @@ class PositionManager:
             # Trailing создаст свой SL только при активации (когда позиция в прибыли)
             trailing_manager = self.trailing_managers.get(exchange_name)
             if trailing_manager:
-                await trailing_manager.create_trailing_stop(
-                    symbol=symbol,
-                    side=position.side,
-                    entry_price=position.entry_price,
-                    quantity=position.quantity,
-                    initial_stop=None  # Не создавать SL сразу - ждать активации
-                )
-                position.has_trailing_stop = True
+                try:
+                    # FIX: Add timeout to prevent wave execution hanging
+                    await asyncio.wait_for(
+                        trailing_manager.create_trailing_stop(
+                            symbol=symbol,
+                            side=position.side,
+                            entry_price=position.entry_price,
+                            quantity=position.quantity,
+                            initial_stop=None  # Не создавать SL сразу - ждать активации
+                        ),
+                        timeout=10.0
+                    )
+                    position.has_trailing_stop = True
+                except asyncio.TimeoutError:
+                    logger.error(f"❌ Timeout creating trailing stop for {symbol} - continuing without TS")
+                    position.has_trailing_stop = False
+                except Exception as e:
+                    logger.error(f"❌ Failed to create trailing stop for {symbol}: {e} - continuing without TS")
+                    position.has_trailing_stop = False
 
                 # Log trailing stop creation
                 event_logger = get_event_logger()

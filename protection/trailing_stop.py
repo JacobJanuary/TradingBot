@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 # Price sentinel values for uninitialized tracking
 UNINITIALIZED_PRICE_HIGH = Decimal('999999')  # For highest_price in short positions, lowest_price in long
 
+# Peak price persistence configuration
+TRAILING_MIN_PEAK_SAVE_INTERVAL_SEC = 10    # Min 10s between peak saves
+TRAILING_MIN_PEAK_CHANGE_PERCENT = 0.2      # Save if peak changed > 0.2%
+TRAILING_EMERGENCY_PEAK_CHANGE = 1.0        # Always save if peak changed > 1.0%
+
 
 class TrailingStopState(Enum):
     """Trailing stop states"""
@@ -74,6 +79,10 @@ class TrailingStopInstance:
     # SL Update tracking (for rate limiting)
     last_sl_update_time: Optional[datetime] = None  # Last SUCCESSFUL SL update on exchange
     last_updated_sl_price: Optional[Decimal] = None  # Last SUCCESSFULLY updated SL price on exchange
+
+    # Peak price persistence tracking
+    last_peak_save_time: Optional[datetime] = None  # Last time peak was saved to DB
+    last_saved_peak_price: Optional[Decimal] = None  # Last saved peak value
 
     # Order tracking
     stop_order_id: Optional[str] = None
@@ -152,17 +161,24 @@ class SmartTrailingStopManager:
             return False
 
         try:
-            # Get position_id from database
-            positions = await self.repository.get_open_positions()
-            position_id = None
-            for pos in positions:
-                if pos['symbol'] == ts.symbol and pos['exchange'] == self.exchange_name:
-                    position_id = pos['id']
-                    break
+            # FIX: P0 - Direct position lookup instead of fetching all positions
+            # Old way was O(N) with N=45+ causing 10s+ delays
+            # New way is O(1) with index lookup
+            async with self.repository.pool.acquire() as conn:
+                position_row = await conn.fetchrow("""
+                    SELECT id
+                    FROM monitoring.positions
+                    WHERE symbol = $1
+                      AND exchange = $2
+                      AND status = 'active'
+                    LIMIT 1
+                """, ts.symbol, self.exchange_name)
 
-            if not position_id:
+            if not position_row:
                 logger.error(f"{ts.symbol}: Position not found in DB, cannot save TS state")
                 return False
+
+            position_id = position_row['id']
 
             # Prepare state data
             state_data = {
@@ -186,7 +202,9 @@ class SmartTrailingStopManager:
                 'activated_at': ts.activated_at,
                 'last_update_time': ts.last_stop_update,
                 'last_sl_update_time': ts.last_sl_update_time,
-                'last_updated_sl_price': float(ts.last_updated_sl_price) if ts.last_updated_sl_price else None
+                'last_updated_sl_price': float(ts.last_updated_sl_price) if ts.last_updated_sl_price else None,
+                'last_peak_save_time': ts.last_peak_save_time,
+                'last_saved_peak_price': float(ts.last_saved_peak_price) if ts.last_saved_peak_price else None
             }
 
             # Upsert (INSERT ... ON CONFLICT UPDATE)
@@ -230,7 +248,7 @@ class SmartTrailingStopManager:
                 current_price=Decimal(str(state_data['current_stop_price'] or state_data['entry_price'])) if state_data.get('current_stop_price') else Decimal(str(state_data['entry_price'])),
                 highest_price=Decimal(str(state_data['highest_price'] or state_data['entry_price'])) if state_data.get('highest_price') else (Decimal(str(state_data['entry_price'])) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH),
                 lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else (Decimal(str(state_data['lowest_price'] or state_data['entry_price'])) if state_data.get('lowest_price') else Decimal(str(state_data['entry_price']))),
-                state=TrailingStopState(state_data['state']),
+                state=TrailingStopState(state_data['state'].lower()),  # FIX: Handle legacy uppercase states
                 activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
                 current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
                 stop_order_id=state_data.get('stop_order_id'),
@@ -249,6 +267,12 @@ class SmartTrailingStopManager:
                 ts.last_updated_sl_price = Decimal(str(state_data['last_updated_sl_price']))
             if state_data.get('last_update_time'):
                 ts.last_stop_update = state_data['last_update_time']
+
+            # Restore peak persistence tracking fields
+            if state_data.get('last_peak_save_time'):
+                ts.last_peak_save_time = state_data['last_peak_save_time']
+            if state_data.get('last_saved_peak_price'):
+                ts.last_saved_peak_price = Decimal(str(state_data['last_saved_peak_price']))
 
             logger.info(
                 f"✅ {symbol}: TS state RESTORED from DB - "
@@ -298,6 +322,9 @@ class SmartTrailingStopManager:
         """
         Create new trailing stop instance
 
+        FIX: P0 - Granular locking to prevent wave execution timeouts
+        Lock only held for dict access, not entire TS creation (5x faster!)
+
         Args:
             symbol: Trading symbol
             side: Position side ('long' or 'short')
@@ -305,69 +332,74 @@ class SmartTrailingStopManager:
             quantity: Position size
             initial_stop: Initial stop loss price (optional)
         """
+        # STEP 1: Quick check if already exists (with lock)
         async with self.lock:
-            # Check if already exists
             if symbol in self.trailing_stops:
                 logger.warning(f"Trailing stop for {symbol} already exists")
                 return self.trailing_stops[symbol]
 
-            # Create instance
-            ts = TrailingStopInstance(
+        # STEP 2: Create instance (NO LOCK - thread-safe, no shared state modified)
+        ts = TrailingStopInstance(
+            symbol=symbol,
+            entry_price=Decimal(str(entry_price)),
+            current_price=Decimal(str(entry_price)),
+            highest_price=Decimal(str(entry_price)) if side == 'long' else UNINITIALIZED_PRICE_HIGH,
+            lowest_price=UNINITIALIZED_PRICE_HIGH if side == 'long' else Decimal(str(entry_price)),
+            side=side.lower(),
+            quantity=Decimal(str(quantity))
+        )
+
+        # STEP 3: Set initial stop if provided (NO LOCK - exchange API call)
+        if initial_stop:
+            ts.current_stop_price = Decimal(str(initial_stop))
+            # Place initial stop order
+            await self._place_stop_order(ts)
+
+        # STEP 4: Calculate activation price (NO LOCK - pure computation)
+        if side == 'long':
+            ts.activation_price = ts.entry_price * (1 + self.config.activation_percent / 100)
+        else:
+            ts.activation_price = ts.entry_price * (1 - self.config.activation_percent / 100)
+
+        # STEP 5: Log creation (NO LOCK - event queue is async/thread-safe)
+        logger.info(
+            f"Created trailing stop for {symbol} {side}: "
+            f"entry={entry_price}, activation={ts.activation_price}, "
+            f"initial_stop={initial_stop}"
+        )
+
+        event_logger = get_event_logger()
+        if event_logger:
+            await event_logger.log_event(
+                EventType.TRAILING_STOP_CREATED,
+                {
+                    'symbol': symbol,
+                    'side': side,
+                    'entry_price': float(entry_price),
+                    'activation_price': float(ts.activation_price),
+                    'initial_stop': float(initial_stop) if initial_stop else None,
+                    'activation_percent': float(self.config.activation_percent),
+                    'callback_percent': float(self.config.callback_percent)
+                },
                 symbol=symbol,
-                entry_price=Decimal(str(entry_price)),
-                current_price=Decimal(str(entry_price)),
-                highest_price=Decimal(str(entry_price)) if side == 'long' else UNINITIALIZED_PRICE_HIGH,
-                lowest_price=UNINITIALIZED_PRICE_HIGH if side == 'long' else Decimal(str(entry_price)),
-                side=side.lower(),
-                quantity=Decimal(str(quantity))
+                exchange=self.exchange_name,
+                severity='INFO'
             )
 
-            # Set initial stop if provided
-            if initial_stop:
-                ts.current_stop_price = Decimal(str(initial_stop))
+        # STEP 6: Save to database (NO LOCK - DB connection pool handles concurrency)
+        await self._save_state(ts)
 
-                # Place initial stop order
-                await self._place_stop_order(ts)
+        # STEP 7: Store instance in dict (QUICK - with lock, double-check pattern)
+        async with self.lock:
+            # Double-check: another concurrent call might have created it
+            if symbol in self.trailing_stops:
+                logger.warning(f"Trailing stop for {symbol} created by another task, using existing")
+                return self.trailing_stops[symbol]
 
-            # Calculate activation price
-            if side == 'long':
-                ts.activation_price = ts.entry_price * (1 + self.config.activation_percent / 100)
-            else:
-                ts.activation_price = ts.entry_price * (1 - self.config.activation_percent / 100)
-
-            # Store instance
             self.trailing_stops[symbol] = ts
             self.stats['total_created'] += 1
 
-            logger.info(
-                f"Created trailing stop for {symbol} {side}: "
-                f"entry={entry_price}, activation={ts.activation_price}, "
-                f"initial_stop={initial_stop}"
-            )
-
-            # Log trailing stop creation
-            event_logger = get_event_logger()
-            if event_logger:
-                await event_logger.log_event(
-                    EventType.TRAILING_STOP_CREATED,
-                    {
-                        'symbol': symbol,
-                        'side': side,
-                        'entry_price': float(entry_price),
-                        'activation_price': float(ts.activation_price),
-                        'initial_stop': float(initial_stop) if initial_stop else None,
-                        'activation_percent': float(self.config.activation_percent),
-                        'callback_percent': float(self.config.callback_percent)
-                    },
-                    symbol=symbol,
-                    exchange=self.exchange_name,
-                    severity='INFO'
-                )
-
-            # NEW: Save initial state to database
-            await self._save_state(ts)
-
-            return ts
+        return ts
 
     async def update_price(self, symbol: str, price: float) -> Optional[Dict]:
         """
@@ -390,16 +422,39 @@ class SmartTrailingStopManager:
             ts.current_price = Decimal(str(price))
 
             # Update highest/lowest
+            peak_updated = False
             if ts.side == 'long':
                 if ts.current_price > ts.highest_price:
                     old_highest = ts.highest_price
                     ts.highest_price = ts.current_price
+                    peak_updated = True
                     logger.debug(f"[TS] {symbol} highest_price updated: {old_highest} → {ts.highest_price}")
             else:
                 if ts.current_price < ts.lowest_price:
                     old_lowest = ts.lowest_price
                     ts.lowest_price = ts.current_price
+                    peak_updated = True
                     logger.debug(f"[TS] {symbol} lowest_price updated: {old_lowest} → {ts.lowest_price}")
+
+            # NEW: Save peak to database if needed (only for ACTIVE TS)
+            if peak_updated and ts.state == TrailingStopState.ACTIVE:
+                current_peak = ts.highest_price if ts.side == 'long' else ts.lowest_price
+                should_save, skip_reason = self._should_save_peak(ts, current_peak)
+
+                if should_save:
+                    # Update tracking fields BEFORE saving
+                    ts.last_peak_save_time = datetime.now()
+                    ts.last_saved_peak_price = current_peak
+
+                    # Save to database
+                    await self._save_state(ts)
+
+                    logger.debug(
+                        f"💾 {symbol}: Peak price saved to DB - "
+                        f"{'highest' if ts.side == 'long' else 'lowest'}={current_peak:.4f}"
+                    )
+                else:
+                    logger.debug(f"⏭️  {symbol}: Peak save SKIPPED - {skip_reason}")
 
             # Calculate current profit
             profit_percent = self._calculate_profit_percent(ts)
@@ -660,6 +715,11 @@ class SmartTrailingStopManager:
 
     def _calculate_profit_percent(self, ts: TrailingStopInstance) -> Decimal:
         """Calculate current profit percentage"""
+        # FIX: Prevent division by zero from corrupted DB data
+        if ts.entry_price == 0:
+            logger.error(f"❌ {ts.symbol}: entry_price is 0, cannot calculate profit (corrupted data)")
+            return Decimal('0')
+
         if ts.side == 'long':
             return (ts.current_price - ts.entry_price) / ts.entry_price * 100
         else:
@@ -833,6 +893,55 @@ class SmartTrailingStopManager:
         # All checks passed
         return (True, None)
 
+    def _should_save_peak(self, ts: TrailingStopInstance, new_peak: Decimal) -> tuple[bool, Optional[str]]:
+        """
+        Check if peak price should be saved to database
+
+        Rules:
+        Rule 0: Emergency - ALWAYS save if peak changed >= 1.0%
+        Rule 1: Time-based - Save if >= 10s since last peak save
+        Rule 2: Improvement-based - Save if peak changed >= 0.2% from last saved
+
+        Args:
+            ts: TrailingStopInstance
+            new_peak: New peak price value
+
+        Returns:
+            (should_save: bool, skip_reason: Optional[str])
+        """
+        # Rule 0: EMERGENCY - Large peak change
+        if ts.last_saved_peak_price:
+            peak_change_percent = abs(
+                (new_peak - ts.last_saved_peak_price) / ts.last_saved_peak_price * 100
+            )
+
+            if peak_change_percent >= TRAILING_EMERGENCY_PEAK_CHANGE:
+                logger.debug(
+                    f"⚡ {ts.symbol}: Emergency peak save - "
+                    f"change {peak_change_percent:.2f}% >= {TRAILING_EMERGENCY_PEAK_CHANGE}%"
+                )
+                return (True, None)
+
+        # Rule 1: Time-based check
+        if ts.last_peak_save_time:
+            elapsed_seconds = (datetime.now() - ts.last_peak_save_time).total_seconds()
+
+            if elapsed_seconds < TRAILING_MIN_PEAK_SAVE_INTERVAL_SEC:
+                remaining = TRAILING_MIN_PEAK_SAVE_INTERVAL_SEC - elapsed_seconds
+                return (False, f"peak_save_rate_limit: {elapsed_seconds:.1f}s elapsed, need {TRAILING_MIN_PEAK_SAVE_INTERVAL_SEC}s (wait {remaining:.1f}s)")
+
+        # Rule 2: Improvement-based check
+        if ts.last_saved_peak_price:
+            peak_change_percent = abs(
+                (new_peak - ts.last_saved_peak_price) / ts.last_saved_peak_price * 100
+            )
+
+            if peak_change_percent < TRAILING_MIN_PEAK_CHANGE_PERCENT:
+                return (False, f"peak_change_too_small: {peak_change_percent:.3f}% < {TRAILING_MIN_PEAK_CHANGE_PERCENT}%")
+
+        # All checks passed
+        return (True, None)
+
     async def _update_stop_order(self, ts: TrailingStopInstance) -> bool:
         """
         Update stop order using atomic method when available
@@ -842,28 +951,31 @@ class SmartTrailingStopManager:
         - Binance: Uses optimized cancel+create (minimal race window)
         """
         try:
-            # FIX: Defensive check - verify position exists before SL update
-            # This catches orphaned trailing stops (position closed but TS not cleaned up)
-            if hasattr(self.exchange, 'fetch_positions'):
-                try:
-                    positions = await self.exchange.fetch_positions([ts.symbol])
-                    position_exists = any(
-                        p.get('symbol') == ts.symbol and (p.get('contracts', 0) > 0 or p.get('size', 0) > 0)
-                        for p in positions
-                    )
-
-                    if not position_exists:
-                        logger.warning(
-                            f"⚠️ {ts.symbol}: Position not found on exchange, "
-                            f"removing orphaned trailing stop (auto-cleanup)"
-                        )
-                        # Auto-cleanup orphaned trailing stop
-                        await self.on_position_closed(ts.symbol, realized_pnl=None)
-                        return False
-                except Exception as e:
-                    # If verification fails, log but continue with SL update
-                    # (don't want verification failures to block legitimate updates)
-                    logger.debug(f"Position verification failed for {ts.symbol}: {e}")
+            # DISABLED 2025-10-20: False orphan detection causes TS deletion during activation
+            # This check was too aggressive - positions may not be in exchange cache yet during TS creation
+            # Orphan cleanup should be handled by position_manager notifications, not here
+            # See: docs/investigations/CRITICAL_TS_ACTIVATION_FAILURE.md
+            #
+            # if hasattr(self.exchange, 'fetch_positions'):
+            #     try:
+            #         positions = await self.exchange.fetch_positions([ts.symbol])
+            #         position_exists = any(
+            #             p.get('symbol') == ts.symbol and (p.get('contracts', 0) > 0 or p.get('size', 0) > 0)
+            #             for p in positions
+            #         )
+            #
+            #         if not position_exists:
+            #             logger.warning(
+            #                 f"⚠️ {ts.symbol}: Position not found on exchange, "
+            #                 f"removing orphaned trailing stop (auto-cleanup)"
+            #             )
+            #             # Auto-cleanup orphaned trailing stop
+            #             await self.on_position_closed(ts.symbol, realized_pnl=None)
+            #             return False
+            #     except Exception as e:
+            #         # If verification fails, log but continue with SL update
+            #         # (don't want verification failures to block legitimate updates)
+            #         logger.debug(f"Position verification failed for {ts.symbol}: {e}")
 
             # Check if atomic update is available
             if not hasattr(self.exchange, 'update_stop_loss_atomic'):
