@@ -247,9 +247,10 @@ class SmartTrailingStopManager:
                 entry_price=Decimal(str(state_data['entry_price'])),
                 # FIX: Use entry_price for current_price on restore (will be updated on first update_price() call)
                 current_price=Decimal(str(state_data['entry_price'])),
-                # FIX: Use saved highest/lowest, but allow update_price() to extend them on first call
-                highest_price=Decimal(str(state_data['highest_price'] or state_data['entry_price'])) if state_data.get('highest_price') else (Decimal(str(state_data['entry_price'])) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH),
-                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else (Decimal(str(state_data['lowest_price'] or state_data['entry_price'])) if state_data.get('lowest_price') else Decimal(str(state_data['entry_price']))),
+                # FIX: Reset peaks to entry_price on restore - first update_price() will set correct current price
+                # This ensures peaks update correctly from current market price, not stale DB values
+                highest_price=Decimal(str(state_data['entry_price'])) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH,
+                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else Decimal(str(state_data['entry_price'])),
                 state=TrailingStopState(state_data['state'].lower()),  # FIX: Handle legacy uppercase states
                 activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
                 current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
@@ -590,9 +591,22 @@ class SmartTrailingStopManager:
         distance = self._get_trailing_distance(ts)
         new_stop_price = None
 
+        # TEMP DEBUG: Log calculation details
+        logger.info(
+            f"[TS_UPDATE] {ts.symbol} ({ts.side}): "
+            f"highest={ts.highest_price:.6f}, lowest={ts.lowest_price:.6f}, "
+            f"current_stop={ts.current_stop_price:.6f}, distance={distance:.2f}%"
+        )
+
         if ts.side == 'long':
             # For long: trail below highest price
             potential_stop = ts.highest_price * (1 - distance / 100)
+
+            # TEMP DEBUG
+            logger.info(
+                f"[TS_UPDATE] {ts.symbol} LONG: potential_stop={potential_stop:.6f}, "
+                f"check: {potential_stop:.6f} > {ts.current_stop_price:.6f} = {potential_stop > ts.current_stop_price}"
+            )
 
             # Only update if new stop is higher than current
             if potential_stop > ts.current_stop_price:
@@ -601,6 +615,12 @@ class SmartTrailingStopManager:
             # For short: trail above lowest price
             potential_stop = ts.lowest_price * (1 + distance / 100)
 
+            # TEMP DEBUG
+            logger.info(
+                f"[TS_UPDATE] {ts.symbol} SHORT: potential_stop={potential_stop:.6f}, "
+                f"check: {potential_stop:.6f} < {ts.current_stop_price:.6f} = {potential_stop < ts.current_stop_price}"
+            )
+
             # Only update if new stop is lower than current
             if potential_stop < ts.current_stop_price:
                 new_stop_price = potential_stop
@@ -608,12 +628,22 @@ class SmartTrailingStopManager:
         if new_stop_price:
             old_stop = ts.current_stop_price
 
+            # TEMP DEBUG
+            logger.info(f"[TS_UPDATE] {ts.symbol}: new_stop_price calculated = {new_stop_price:.6f}, old_stop = {old_stop:.6f}")
+
             # NEW APPROACH: Check FIRST, modify AFTER (no rollback needed)
-            should_update, skip_reason = self._should_update_stop_loss(ts, new_stop_price, old_stop)
+            try:
+                logger.info(f"[TS_UPDATE] {ts.symbol}: Calling _should_update_stop_loss...")
+                should_update, skip_reason = self._should_update_stop_loss(ts, new_stop_price, old_stop)
+                logger.info(f"[TS_UPDATE] {ts.symbol}: should_update = {should_update}, skip_reason = {skip_reason}")
+            except Exception as e:
+                logger.error(f"[TS_UPDATE] {ts.symbol}: ERROR in _should_update_stop_loss: {e}", exc_info=True)
+                return None
 
             if not should_update:
                 # Skip update - log reason
-                logger.debug(
+                # TEMP: Upgrade to INFO to see why updates are skipped
+                logger.info(
                     f"⏭️  {ts.symbol}: SL update SKIPPED - {skip_reason} "
                     f"(proposed_stop={new_stop_price:.4f})"
                 )
@@ -639,6 +669,7 @@ class SmartTrailingStopManager:
                 return None  # Don't proceed with update
 
             # All checks passed - NOW modify state
+            logger.info(f"[TS_UPDATE] {ts.symbol}: Modifying state - new_stop={new_stop_price:.6f}")
             ts.current_stop_price = new_stop_price
             ts.last_stop_update = datetime.now()
             ts.update_count += 1
@@ -648,9 +679,12 @@ class SmartTrailingStopManager:
                 self.sl_update_locks[ts.symbol] = asyncio.Lock()
 
             # Acquire symbol-specific lock before exchange update
+            logger.info(f"[TS_UPDATE] {ts.symbol}: Acquiring lock...")
             async with self.sl_update_locks[ts.symbol]:
                 # Update stop order on exchange
+                logger.info(f"[TS_UPDATE] {ts.symbol}: Calling _update_stop_order...")
                 await self._update_stop_order(ts)
+                logger.info(f"[TS_UPDATE] {ts.symbol}: _update_stop_order completed")
 
             improvement = abs((new_stop_price - old_stop) / old_stop * 100)
             logger.info(
@@ -885,7 +919,19 @@ class SmartTrailingStopManager:
 
         # Rule 1: Rate limiting - check time since last SUCCESSFUL update
         if ts.last_sl_update_time:
-            elapsed_seconds = (datetime.now() - ts.last_sl_update_time).total_seconds()
+            # FIX: Handle both naive and aware datetimes
+            now = datetime.now()
+            last_update = ts.last_sl_update_time
+
+            # If last_update is aware, convert now to aware (UTC)
+            if last_update.tzinfo is not None:
+                from datetime import timezone
+                now = datetime.now(timezone.utc)
+            # If last_update is naive but now is aware, make both naive
+            elif now.tzinfo is not None:
+                now = now.replace(tzinfo=None)
+
+            elapsed_seconds = (now - last_update).total_seconds()
             min_interval = config.trading.trailing_min_update_interval_seconds
 
             if elapsed_seconds < min_interval:
