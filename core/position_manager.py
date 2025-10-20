@@ -1028,7 +1028,7 @@ class PositionManager:
                                     side=position.side,
                                     entry_price=position.entry_price,
                                     quantity=position.quantity,
-                                    initial_stop=None  # Не создавать SL сразу - ждать активации
+                                    initial_stop=float(stop_loss_price)  # TS manages SL from start
                                 ),
                                 timeout=10.0
                             )
