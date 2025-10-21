@@ -404,7 +404,7 @@ class AtomicPositionManager:
                     'exchange': exchange,
                     'side': position_data['side'],
                     'quantity': quantity,
-                    'entry_price': exec_price,  # Use extracted execution price
+                    'entry_price': entry_price,  # FIX: Use signal entry_price for TS, not exec_price (which can be 0)
                     'stop_loss_price': stop_loss_price,
                     'state': state.value,
                     'entry_order': entry_order.raw_data,  # Return raw data for compatibility
