@@ -1,5 +1,6 @@
 import asyncpg
 import logging
+import hashlib
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -17,6 +18,27 @@ class Repository:
         """Initialize repository with database configuration"""
         self.db_config = db_config
         self.pool = None
+
+    @staticmethod
+    def _get_position_lock_id(symbol: str, exchange: str) -> int:
+        """
+        Generate deterministic lock ID for position.
+
+        Uses MD5 hash of "symbol:exchange" to get 64-bit integer.
+        Lock ID is stable across calls for same symbol+exchange.
+
+        Args:
+            symbol: Trading symbol (e.g., 'PERPUSDT')
+            exchange: Exchange name (e.g., 'binance')
+
+        Returns:
+            int: PostgreSQL bigint lock ID (-2^63 to 2^63-1)
+        """
+        key = f"{symbol}:{exchange}".encode('utf-8')
+        hash_digest = hashlib.md5(key).digest()
+        # Convert first 8 bytes to signed 64-bit integer
+        lock_id = int.from_bytes(hash_digest[:8], byteorder='big', signed=True)
+        return lock_id
 
     async def initialize(self):
         """Create optimized connection pool with better settings"""
@@ -206,7 +228,12 @@ class Repository:
             return True
 
     async def create_position(self, position_data: Dict) -> int:
-        """Create new position record"""
+        """
+        Create new position record with advisory lock to prevent race conditions.
+
+        Uses pg_advisory_xact_lock to ensure only one transaction can create
+        a position for given symbol+exchange at a time.
+        """
         import logging
         logger = logging.getLogger(__name__)
 
@@ -215,14 +242,8 @@ class Repository:
 
         logger.info(f"🔍 REPO DEBUG: create_position() called for {symbol}")
 
-        # FIX 1.1: Check if active position already exists (prevent duplicates)
-        existing = await self.get_open_position(symbol, exchange)
-        if existing:
-            logger.warning(
-                f"⚠️ Position {symbol} already exists in DB (id={existing['id']}). "
-                f"Returning existing position instead of creating duplicate."
-            )
-            return existing['id']
+        # Generate lock ID for this symbol+exchange
+        lock_id = self._get_position_lock_id(symbol, exchange)
 
         query = """
             INSERT INTO monitoring.positions (
@@ -234,42 +255,66 @@ class Repository:
 
         async with self.pool.acquire() as conn:
             logger.info(f"🔍 REPO DEBUG: Got connection from pool for {symbol}")
-            logger.info(f"🔍 REPO DEBUG: Executing INSERT for {symbol}, quantity={position_data['quantity']}")
 
-            # FIX 3.2: Handle IntegrityError (second layer of protection)
-            try:
-                position_id = await conn.fetchval(
-                    query,
-                    symbol,
-                    exchange,
-                    position_data['side'],
-                    position_data['quantity'],
-                    position_data['entry_price']
-                )
+            # CRITICAL: Use transaction with advisory lock
+            async with conn.transaction():
+                # Acquire exclusive advisory lock for this symbol+exchange
+                logger.debug(f"🔒 Acquiring position lock for {symbol}:{exchange} (lock_id={lock_id})")
+                await conn.execute("SELECT pg_advisory_xact_lock($1)", lock_id)
+                logger.debug(f"✅ Position lock acquired for {symbol}:{exchange}")
 
-                logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {symbol}")
-                return position_id
+                # Now we have exclusive access - check if position exists
+                existing = await conn.fetchrow("""
+                    SELECT id FROM monitoring.positions
+                    WHERE symbol = $1 AND exchange = $2 AND status = 'active'
+                """, symbol, exchange)
 
-            except Exception as e:
-                # Check if it's a unique constraint violation
-                error_msg = str(e)
-                if 'idx_unique_active_position' in error_msg or 'duplicate key' in error_msg.lower():
+                if existing:
                     logger.warning(
-                        f"⚠️ IntegrityError caught: Duplicate active position {symbol} on {exchange}. "
-                        f"Fetching existing position."
+                        f"⚠️ Position {symbol} already exists in DB (id={existing['id']}). "
+                        f"Returning existing position instead of creating duplicate."
                     )
-                    # Fetch and return the existing position
-                    existing = await self.get_open_position(symbol, exchange)
-                    if existing:
-                        logger.info(f"✅ Returning existing position id={existing['id']}")
-                        return existing['id']
+                    return existing['id']
+
+                # Position doesn't exist - safe to create
+                logger.info(f"🔍 REPO DEBUG: Executing INSERT for {symbol}, quantity={position_data['quantity']}")
+
+                try:
+                    position_id = await conn.fetchval(
+                        query,
+                        symbol,
+                        exchange,
+                        position_data['side'],
+                        position_data['quantity'],
+                        position_data['entry_price']
+                    )
+
+                    logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {symbol}")
+                    return position_id
+
+                except Exception as e:
+                    # Check if it's a unique constraint violation
+                    error_msg = str(e)
+                    if 'idx_unique_active_position' in error_msg or 'duplicate key' in error_msg.lower():
+                        logger.warning(
+                            f"⚠️ IntegrityError caught: Duplicate active position {symbol} on {exchange}. "
+                            f"Fetching existing position."
+                        )
+                        # Fetch and return the existing position
+                        existing_row = await conn.fetchrow("""
+                            SELECT id FROM monitoring.positions
+                            WHERE symbol = $1 AND exchange = $2 AND status = 'active'
+                        """, symbol, exchange)
+                        if existing_row:
+                            logger.info(f"✅ Returning existing position id={existing_row['id']}")
+                            return existing_row['id']
+                        else:
+                            # This shouldn't happen, but handle it gracefully
+                            logger.error(f"❌ IntegrityError but no existing position found for {symbol}")
+                            raise
                     else:
-                        # This shouldn't happen, but handle it gracefully
-                        logger.error(f"❌ IntegrityError but no existing position found for {symbol}")
-                        raise
-                else:
-                    # Re-raise if it's a different error
-                    logger.error(f"❌ Database error during INSERT for {symbol}: {e}")
+                        # Re-raise if it's a different error
+                        logger.error(f"❌ Database error during INSERT for {symbol}: {e}")
                     raise
 
     async def open_position(self, position_data: Dict) -> int:
