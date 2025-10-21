@@ -1569,6 +1569,37 @@ class PositionManager:
         # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
         formatted_qty = exchange.amount_to_precision(symbol, adjusted_quantity)
 
+        # FIX: Re-validate after precision formatting (amount_to_precision may truncate below minimum)
+        if formatted_qty < min_amount:
+            # Precision truncated below minimum - adjust UP to next valid step
+            step_size = exchange.get_step_size(symbol)
+            if step_size > 0:
+                # Calculate steps needed to reach minimum
+                steps_needed = int((min_amount - formatted_qty) / step_size) + 1
+                adjusted_qty = formatted_qty + (steps_needed * step_size)
+
+                # Re-apply precision to ensure stepSize alignment
+                formatted_qty = exchange.amount_to_precision(symbol, adjusted_qty)
+
+                # Final check: if still below minimum after adjustment, cannot trade
+                if formatted_qty < min_amount:
+                    logger.warning(
+                        f"{symbol}: quantity {formatted_qty} below minimum {min_amount} "
+                        f"after precision adjustment (stepSize={step_size})"
+                    )
+                    return None
+
+                logger.info(
+                    f"{symbol}: adjusted quantity to {formatted_qty} to meet minimum {min_amount} "
+                    f"(precision truncated by stepSize={step_size})"
+                )
+            else:
+                logger.warning(
+                    f"{symbol}: quantity {formatted_qty} below minimum {min_amount}, "
+                    f"cannot adjust (stepSize unknown)"
+                )
+                return None
+
         # Check if we can afford this position (margin/leverage validation)
         can_open, reason = await exchange.can_open_position(symbol, size_usd)
         if not can_open:

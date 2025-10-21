@@ -1252,6 +1252,32 @@ class ExchangeManager:
             return market['precision']['price']
         return 0.01  # Default
 
+    def get_step_size(self, symbol: str) -> float:
+        """Get step size (amount precision) for symbol from LOT_SIZE filter"""
+        exchange_symbol = self.find_exchange_symbol(symbol) or symbol
+        market = self.markets.get(exchange_symbol)
+        if not market:
+            return 0.001  # Default
+
+        # For Binance: parse stepSize from LOT_SIZE filter
+        if self.name == 'binance':
+            info = market.get('info', {})
+            filters = info.get('filters', [])
+            for f in filters:
+                if f.get('filterType') == 'LOT_SIZE':
+                    step_size = f.get('stepSize')
+                    if step_size:
+                        try:
+                            return float(step_size)
+                        except (ValueError, TypeError):
+                            pass
+
+        # Fallback to CCXT precision for other exchanges
+        precision = market.get('precision', {}).get('amount')
+        if precision:
+            return precision
+        return 0.001  # Default
+
     async def can_open_position(self, symbol: str, notional_usd: float, preloaded_positions: Optional[List] = None) -> Tuple[bool, str]:
         """
         Check if we can open a new position without exceeding limits
