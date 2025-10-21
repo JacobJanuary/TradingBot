@@ -1236,12 +1236,24 @@ class ExchangeManager:
                     min_qty = f.get('minQty')
                     if min_qty:
                         try:
-                            return float(min_qty)
+                            min_qty_float = float(min_qty)
+                            # Validate min_qty is positive
+                            if min_qty_float <= 0:
+                                logger.warning(f"{symbol}: Invalid minQty={min_qty_float} from exchange, using default 0.001")
+                                return 0.001
+                            return min_qty_float
                         except (ValueError, TypeError):
                             pass
 
         # Fallback to CCXT parsed value for other exchanges
-        return market.get('limits', {}).get('amount', {}).get('min', 0.001)
+        min_from_ccxt = market.get('limits', {}).get('amount', {}).get('min', 0.001)
+
+        # Validate CCXT value too
+        if min_from_ccxt <= 0:
+            logger.warning(f"{symbol}: Invalid min_amount={min_from_ccxt} from CCXT, using default 0.001")
+            return 0.001
+
+        return min_from_ccxt
 
     def get_tick_size(self, symbol: str) -> float:
         """Get price tick size for symbol"""

@@ -919,7 +919,34 @@ class PositionManager:
             )
 
             if not quantity:
-                logger.error(f"Failed to calculate position size for {symbol}")
+                logger.error(f"❌ Failed to calculate position size for {symbol}")
+                logger.error(f"   Position size USD: ${position_size_usd}")
+                logger.error(f"   Entry price: ${request.entry_price}")
+
+                # Diagnostic logging to understand WHY calculation failed
+                try:
+                    min_amount = exchange.get_min_amount(symbol)
+                    step_size = exchange.get_step_size(symbol)
+                    logger.error(f"   Market constraints: min_amount={min_amount}, step_size={step_size}")
+
+                    # Check market status
+                    exchange_symbol = exchange.find_exchange_symbol(symbol) or symbol
+                    if exchange_symbol not in exchange.markets:
+                        logger.error(f"   ⚠️ Market NOT FOUND: {exchange_symbol}")
+                    else:
+                        market = exchange.markets[exchange_symbol]
+                        logger.error(f"   Market: active={market.get('active')}, type={market.get('type')}")
+                        if 'info' in market:
+                            info = market['info']
+                            logger.error(f"   Status: {info.get('status')}, contract={info.get('contractType')}")
+
+                        # Log limits
+                        limits = market.get('limits', {})
+                        amount_limits = limits.get('amount', {})
+                        cost_limits = limits.get('cost', {})
+                        logger.error(f"   Limits: min_amount={amount_limits.get('min')}, min_cost={cost_limits.get('min')}")
+                except Exception as diag_error:
+                    logger.error(f"   Failed to get diagnostic info: {diag_error}")
 
                 # Log position creation failed
                 event_logger = get_event_logger()
