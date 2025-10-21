@@ -228,6 +228,20 @@ class AtomicPositionManager:
                 # Extract execution price from normalized order
                 exec_price = ExchangeResponseAdapter.extract_execution_price(entry_order)
 
+                # FIX: Bybit API v5 does not return avgPrice in create_order response
+                # Need to fetch order to get actual execution price
+                if exchange == 'bybit' and (not exec_price or exec_price == 0):
+                    logger.info(f"📊 Fetching order details for {symbol} to get execution price")
+                    try:
+                        fetched_order = await exchange_instance.fetch_order(entry_order.id, symbol)
+                        fetched_normalized = ExchangeResponseAdapter.normalize_order(fetched_order, exchange)
+                        exec_price = ExchangeResponseAdapter.extract_execution_price(fetched_normalized)
+                        logger.info(f"✅ Got execution price from fetch_order: {exec_price}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to fetch order for execution price: {e}")
+                        # Fallback: use signal entry price
+                        exec_price = entry_price
+
                 # FIX: Use only columns that exist in database schema
                 # CRITICAL FIX: Update current_price, NOT entry_price (entry_price is immutable)
                 await self.repository.update_position(position_id, **{
