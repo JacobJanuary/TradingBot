@@ -1016,7 +1016,7 @@ class PositionManager:
                     side=order_side,
                     quantity=quantity,
                     entry_price=float(request.entry_price),
-                    stop_loss_price=float(stop_loss_price)
+                    stop_loss_percent=float(stop_loss_percent)  # FIX: Pass percent, not price
                 )
 
                 if atomic_result:

@@ -135,7 +135,7 @@ class AtomicPositionManager:
         side: str,
         quantity: float,
         entry_price: float,
-        stop_loss_price: float
+        stop_loss_percent: float  # FIX: Changed from stop_loss_price to stop_loss_percent
     ) -> Optional[Dict[str, Any]]:
         """
         Атомарное создание позиции с гарантированным stop-loss
@@ -146,8 +146,8 @@ class AtomicPositionManager:
             exchange: Название биржи
             side: 'buy' или 'sell'
             quantity: Размер позиции
-            entry_price: Цена входа
-            stop_loss_price: Уровень stop-loss
+            entry_price: Цена входа (сигнальная, может отличаться от execution)
+            stop_loss_percent: Процент stop-loss (будет пересчитан от execution price)
 
         Returns:
             Dict с информацией о позиции или None при ошибке
@@ -241,6 +241,19 @@ class AtomicPositionManager:
                         logger.error(f"❌ Failed to fetch order for execution price: {e}")
                         # Fallback: use signal entry price
                         exec_price = entry_price
+
+                # CRITICAL FIX: Recalculate SL from REAL execution price
+                # Signal price may differ significantly from execution price
+                from utils.decimal_utils import calculate_stop_loss, to_decimal
+
+                position_side_for_sl = 'long' if side.lower() == 'buy' else 'short'
+                stop_loss_price = calculate_stop_loss(
+                    to_decimal(exec_price),  # Use REAL execution price, not signal price
+                    position_side_for_sl,
+                    to_decimal(stop_loss_percent)
+                )
+
+                logger.info(f"🛡️ SL calculated from exec_price ${exec_price}: ${stop_loss_price} ({stop_loss_percent}%)")
 
                 # FIX: Use only columns that exist in database schema
                 # CRITICAL FIX: Update current_price, NOT entry_price (entry_price is immutable)
@@ -435,15 +448,17 @@ class AtomicPositionManager:
                 if "retCode\":10001" in error_str or "exceeds minimum limit" in error_str:
                     logger.warning(f"⚠️ Order size for {symbol} doesn't meet exchange requirements: {e}")
 
-                    # Clean up: Delete position from DB if it was created
-                    if position_id:
-                        try:
-                            await self.repository.update_position(position_id, **{
-                                'status': 'canceled',
-                                'exit_reason': truncate_exit_reason('Order size below minimum limit')
-                            })
-                        except:
-                            pass  # Ignore cleanup errors
+                    # CRITICAL FIX: Call rollback to close orphan position on exchange
+                    # Without this, position may remain open without SL protection
+                    await self._rollback_position(
+                        position_id=position_id,
+                        entry_order=entry_order,
+                        symbol=symbol,
+                        exchange=exchange,
+                        state=state,
+                        quantity=quantity,
+                        error=error_str
+                    )
 
                     # Raise specific exception for minimum limit
                     raise MinimumOrderLimitError(f"Order size for {symbol} below minimum limit on {exchange}")
