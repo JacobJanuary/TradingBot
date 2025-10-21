@@ -944,9 +944,21 @@ class PositionManager:
             # Не блокируем открытие позиций из-за спреда
 
             # 6. Calculate stop-loss price first
+            # FIX: Convert order side (BUY/SELL) to position side (long/short) before SL calculation
+            # calculate_stop_loss expects 'long'/'short', not 'BUY'/'SELL'
+            if request.side.lower() in ['buy', 'long']:
+                position_side = 'long'
+                order_side = 'buy'
+            elif request.side.lower() in ['sell', 'short']:
+                position_side = 'short'
+                order_side = 'sell'
+            else:
+                position_side = request.side.lower()
+                order_side = request.side.lower()
+
             stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
             stop_loss_price = calculate_stop_loss(
-                to_decimal(request.entry_price), request.side, to_decimal(stop_loss_percent)
+                to_decimal(request.entry_price), position_side, to_decimal(stop_loss_percent)
             )
 
             logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity}")
@@ -954,14 +966,6 @@ class PositionManager:
             # For numbers < 0.0001, .4f rounds to 0.0000 which is confusing
             # Using float() for automatic formatting (scientific notation for small numbers)
             logger.info(f"Stop-loss will be set at: {float(stop_loss_price)} ({stop_loss_percent}%)")
-
-            # Convert side: long -> buy, short -> sell for Binance
-            if request.side.lower() == 'long':
-                order_side = 'buy'
-            elif request.side.lower() == 'short':
-                order_side = 'sell'
-            else:
-                order_side = request.side.lower()
 
             # ⚠️ ATOMIC OPERATION START
             # Try to use AtomicPositionManager if available
