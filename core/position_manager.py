@@ -35,6 +35,7 @@ from protection.trailing_stop import SmartTrailingStopManager
 from websocket.event_router import EventRouter
 from core.exchange_manager import ExchangeManager
 from core.event_logger import get_event_logger, EventType
+from core.atomic_position_manager import AtomicPositionManager, SymbolUnavailableError, MinimumOrderLimitError
 from utils.decimal_utils import to_decimal, calculate_stop_loss, calculate_pnl, calculate_quantity
 
 # CRITICAL FIX: Import normalize_symbol for correct position verification
@@ -997,8 +998,6 @@ class PositionManager:
             # ⚠️ ATOMIC OPERATION START
             # Try to use AtomicPositionManager if available
             try:
-                from core.atomic_position_manager import AtomicPositionManager, SymbolUnavailableError, MinimumOrderLimitError
-
                 # Initialize atomic manager
                 from core.stop_loss_manager import StopLossManager
                 sl_manager = StopLossManager(exchange.exchange, exchange_name)
@@ -1595,6 +1594,7 @@ class PositionManager:
 
         # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
         formatted_qty = exchange.amount_to_precision(symbol, adjusted_quantity)
+        formatted_qty = float(formatted_qty)
 
         # FIX: Re-validate after precision formatting (amount_to_precision may truncate below minimum)
         if formatted_qty < min_amount:
@@ -1607,6 +1607,7 @@ class PositionManager:
 
                 # Re-apply precision to ensure stepSize alignment
                 formatted_qty = exchange.amount_to_precision(symbol, adjusted_qty)
+                formatted_qty = float(formatted_qty)
 
                 # Final check: if still below minimum after adjustment, cannot trade
                 if formatted_qty < min_amount:
