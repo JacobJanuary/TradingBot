@@ -127,6 +127,65 @@ class AtomicPositionManager:
         if operation_id in self.active_operations:
             del self.active_operations[operation_id]
 
+    async def _safe_activate_position(
+        self,
+        position_id: int,
+        symbol: str,
+        exchange: str,
+        **update_fields
+    ) -> bool:
+        """
+        Safely activate position with duplicate detection (Layer 3 defense).
+
+        This is a defensive safety net that checks for duplicate active positions
+        before updating status to 'active'. If a duplicate is detected, the position
+        is rolled back instead of causing a duplicate key violation.
+
+        Added as part of duplicate position race condition fix (2025-10-23).
+        See docs/audit_duplicate_position/ for full analysis.
+
+        Args:
+            position_id: ID of position to activate
+            symbol: Trading symbol
+            exchange: Exchange name
+            **update_fields: Additional fields to update (stop_loss_price, etc.)
+
+        Returns:
+            True if activated successfully
+            False if duplicate detected (caller should rollback)
+        """
+        try:
+            # Defensive check: is there already an active position?
+            async with self.repository.pool.acquire() as conn:
+                existing_active = await conn.fetchrow("""
+                    SELECT id, created_at FROM monitoring.positions
+                    WHERE symbol = $1 AND exchange = $2
+                      AND status = 'active'
+                      AND id != $3
+                """, symbol, exchange, position_id)
+
+                if existing_active:
+                    logger.error(
+                        f"🔴 DUPLICATE ACTIVE POSITION DETECTED!\n"
+                        f"   Cannot activate position #{position_id} ({symbol} on {exchange}).\n"
+                        f"   Position #{existing_active['id']} is already active "
+                        f"(created {existing_active['created_at']}).\n"
+                        f"   This indicates a race condition occurred despite Layer 1&2 defenses.\n"
+                        f"   Position #{position_id} will NOT be updated to prevent duplicate key error."
+                    )
+                    return False
+
+            # Safe to activate - no duplicate detected
+            update_fields['status'] = PositionState.ACTIVE.value
+            await self.repository.update_position(position_id, **update_fields)
+
+            logger.info(f"✅ Position #{position_id} successfully activated")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Failed to activate position #{position_id}: {e}")
+            return False
+
     async def open_position_atomic(
         self,
         signal_id: int,
@@ -401,14 +460,22 @@ class AtomicPositionManager:
                 if not sl_placed:
                     raise AtomicPositionError("Stop-loss placement failed")
 
-                # Step 4: Активация позиции
-                state = PositionState.ACTIVE
-                # FIX: Use only columns that exist in database schema
-                await self.repository.update_position(position_id, **{
-                    'stop_loss_price': stop_loss_price,  # Setting this indicates SL is active
-                    'status': state.value
-                })
+                # Step 4: Активация позиции с defensive check (Layer 3 defense)
+                activation_successful = await self._safe_activate_position(
+                    position_id=position_id,
+                    symbol=symbol,
+                    exchange=exchange,
+                    stop_loss_price=stop_loss_price
+                )
 
+                if not activation_successful:
+                    # Duplicate detected by Layer 3 - trigger rollback
+                    raise AtomicPositionError(
+                        f"Duplicate active position detected for {symbol} on {exchange}. "
+                        f"This should not happen with Layer 1&2 in place - investigate!"
+                    )
+
+                state = PositionState.ACTIVE
                 logger.info(f"🎉 Position {symbol} is ACTIVE with protection")
 
                 return {

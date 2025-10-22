@@ -264,14 +264,18 @@ class Repository:
                 logger.debug(f"✅ Position lock acquired for {symbol}:{exchange}")
 
                 # Now we have exclusive access - check if position exists
+                # FIX: Check ALL open statuses to prevent duplicate position race condition
                 existing = await conn.fetchrow("""
-                    SELECT id FROM monitoring.positions
-                    WHERE symbol = $1 AND exchange = $2 AND status = 'active'
+                    SELECT id, status, created_at FROM monitoring.positions
+                    WHERE symbol = $1 AND exchange = $2
+                      AND status IN ('active', 'entry_placed', 'pending_sl', 'pending_entry')
+                    ORDER BY created_at DESC
+                    LIMIT 1
                 """, symbol, exchange)
 
                 if existing:
                     logger.warning(
-                        f"⚠️ Position {symbol} already exists in DB (id={existing['id']}). "
+                        f"⚠️ Position {symbol} already exists in DB (id={existing['id']}, status={existing['status']}). "
                         f"Returning existing position instead of creating duplicate."
                     )
                     return existing['id']
