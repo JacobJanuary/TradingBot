@@ -302,8 +302,11 @@ class SignalWebSocketClient:
                 }))
                 logger.debug("Requested immediate signals")
                 return True
-            except Exception as e:
+            except (websockets.exceptions.ConnectionClosed, Exception) as e:
                 logger.error(f"Failed to request signals: {e}")
+                self.state = ConnectionState.DISCONNECTED
+                if self.on_disconnect_callback:
+                    await self.on_disconnect_callback()
                 return False
         return False
 
@@ -316,8 +319,11 @@ class SignalWebSocketClient:
                 }))
                 logger.debug("Requested server stats")
                 return True
-            except Exception as e:
+            except (websockets.exceptions.ConnectionClosed, Exception) as e:
                 logger.error(f"Failed to request stats: {e}")
+                self.state = ConnectionState.DISCONNECTED
+                if self.on_disconnect_callback:
+                    await self.on_disconnect_callback()
                 return False
         return False
 
