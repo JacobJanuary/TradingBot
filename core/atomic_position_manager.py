@@ -310,9 +310,9 @@ class AtomicPositionManager:
                     logger.error(f"❌ Failed to log entry trade to DB: {e}")
 
                 # FIX: Verify position exists on exchange before SL placement
-                # Add 1s delay for order settlement
-                logger.debug(f"Waiting 1s for position settlement on {exchange}...")
-                await asyncio.sleep(1.0)
+                # Add 3s delay for order settlement (increased from 1s - Error #2 fix)
+                logger.debug(f"Waiting 3s for position settlement on {exchange}...")
+                await asyncio.sleep(3.0)
 
                 # Verify position actually exists
                 try:
@@ -510,7 +510,7 @@ class AtomicPositionManager:
                         from core.position_manager import normalize_symbol
 
                         our_position = None
-                        max_attempts = 10
+                        max_attempts = 20  # Increased from 10 (Error #2 fix)
 
                         for attempt in range(max_attempts):
                             positions = await exchange_instance.exchange.fetch_positions(
@@ -528,7 +528,7 @@ class AtomicPositionManager:
                                 break
 
                             if attempt < max_attempts - 1:
-                                await asyncio.sleep(0.5)  # Poll every 500ms
+                                await asyncio.sleep(1.0)  # Poll every 1s (increased from 0.5s - Error #2 fix)
 
                         if our_position:
                             # Закрываем market ордером
