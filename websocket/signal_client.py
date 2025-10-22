@@ -227,6 +227,7 @@ class SignalWebSocketClient:
     async def reconnect(self):
         """Переподключение к серверу"""
         if not self.auto_reconnect:
+            logger.info("Auto-reconnect disabled")
             return False
 
         if self.max_reconnect_attempts > 0 and self.reconnect_attempts >= self.max_reconnect_attempts:
@@ -237,16 +238,21 @@ class SignalWebSocketClient:
         self.reconnect_attempts += 1
         self.stats['reconnections'] += 1
 
-        logger.info(f"Reconnecting... (attempt {self.reconnect_attempts})")
+        # ENHANCEMENT: Exponential backoff
+        base_delay = self.reconnect_interval
+        max_delay = 60  # Maximum 60 seconds
 
-        await asyncio.sleep(self.reconnect_interval)
+        # Calculate delay with exponential backoff: min(base * 2^(attempts-1), max)
+        delay = min(base_delay * (2 ** (self.reconnect_attempts - 1)), max_delay)
 
-        success = await self.connect()
-        if not success and self.auto_reconnect:
-            # Увеличиваем интервал для следующей попытки
-            await asyncio.sleep(min(self.reconnect_interval * self.reconnect_attempts, 60))
+        logger.warning(
+            f"Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts or '∞'}), "
+            f"waiting {delay}s (exponential backoff)..."
+        )
 
-        return success
+        await asyncio.sleep(delay)
+
+        return await self.connect()
 
     async def run(self):
         """Основной цикл работы клиента"""
