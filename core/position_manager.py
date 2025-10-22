@@ -1058,7 +1058,7 @@ class PositionManager:
                                     side=position.side,
                                     entry_price=position.entry_price,
                                     quantity=position.quantity,
-                                    initial_stop=float(stop_loss_price)  # TS manages SL from start
+                                    initial_stop=float(atomic_result['stop_loss_price'])  # TS manages SL from start
                                 ),
                                 timeout=10.0
                             )
