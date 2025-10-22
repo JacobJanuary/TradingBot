@@ -51,6 +51,36 @@ def normalize_symbol(symbol: str) -> str:
         return base_quote.replace('/', '')  # 'HIGHUSDT'
     return symbol
 
+
+def to_exchange_symbol(db_symbol: str, exchange_id: str) -> str:
+    """
+    Convert database symbol to exchange-specific format for API calls
+
+    CRITICAL FIX (2025-10-22): Bybit requires CCXT unified format for fetch_ticker.
+    Using DB format directly causes wrong price data.
+
+    Args:
+        db_symbol: Symbol from database (e.g. 'HNTUSDT', 'BTCUSDT')
+        exchange_id: Exchange identifier ('bybit' or 'binance')
+
+    Returns:
+        Exchange-specific symbol format
+
+    Examples:
+        >>> to_exchange_symbol('HNTUSDT', 'bybit')
+        'HNT/USDT:USDT'
+        >>> to_exchange_symbol('BTCUSDT', 'binance')
+        'BTCUSDT'
+    """
+    if exchange_id == 'bybit':
+        # Bybit perpetuals require CCXT unified format: BASE/QUOTE:SETTLE
+        if db_symbol.endswith('USDT'):
+            base = db_symbol[:-4]  # Remove 'USDT' suffix
+            return f"{base}/USDT:USDT"
+
+    # Binance and others use same format as DB
+    return db_symbol
+
 logger = logging.getLogger(__name__)
 
 
@@ -2686,7 +2716,10 @@ class PositionManager:
 
                         # STEP 1: Get current market price from exchange
                         try:
-                            ticker = await exchange.fetch_ticker(position.symbol)
+                            # CRITICAL FIX (2025-10-22): Convert DB symbol to exchange format
+                            # Bybit requires 'HNT/USDT:USDT' not 'HNTUSDT'
+                            exchange_symbol = to_exchange_symbol(position.symbol, exchange.name)
+                            ticker = await exchange.fetch_ticker(exchange_symbol)
                             mark_price = ticker.get('info', {}).get('markPrice')
                             current_price = float(mark_price or ticker.get('last') or 0)
 
@@ -2701,6 +2734,17 @@ class PositionManager:
                         # STEP 2: Calculate price drift from entry
                         entry_price = float(position.entry_price)
                         price_drift_pct = abs((current_price - entry_price) / entry_price)
+
+                        # CRITICAL FIX (2025-10-22): Sanity check - reject obviously wrong price data
+                        # If price drifted >50% in short time, likely symbol mismatch or stale data
+                        MAX_REASONABLE_DRIFT = 0.50
+                        if price_drift_pct > MAX_REASONABLE_DRIFT:
+                            logger.error(
+                                f"❌ {position.symbol}: Fetched price {current_price:.6f} differs "
+                                f"{price_drift_pct*100:.1f}% from entry {entry_price:.6f}. "
+                                f"Likely data error (wrong symbol?). Skipping SL setup."
+                            )
+                            continue
 
                         # STEP 3: Choose base price for SL calculation
                         # If price drifted more than STOP_LOSS_PERCENT, use current price
