@@ -122,9 +122,9 @@ class TestDuplicatePositionFix:
         test_statuses = ['entry_placed', 'pending_sl', 'pending_entry']
 
         try:
-            for test_status in test_statuses:
-                # Unique symbol for each test
-                symbol = f'TEST{test_status.upper()}USDT'
+            for idx, test_status in enumerate(test_statuses):
+                # Unique symbol for each test (use index to keep under 20 chars)
+                symbol = f'TESTL1{idx}USDT'
 
                 position_data = {
                     'signal_id': 999,
