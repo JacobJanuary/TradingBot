@@ -637,19 +637,52 @@ class SmartTrailingStopManager:
 
                 return None  # Don't proceed with update
 
-            # All checks passed - NOW modify state
-            ts.current_stop_price = new_stop_price
-            ts.last_stop_update = datetime.now()
-            ts.update_count += 1
-
             # Get or create lock for this symbol
             if ts.symbol not in self.sl_update_locks:
                 self.sl_update_locks[ts.symbol] = asyncio.Lock()
 
-            # Acquire symbol-specific lock before exchange update
+            # PESSIMISTIC UPDATE: Try exchange FIRST, commit state ONLY if success
+            update_success = False
             async with self.sl_update_locks[ts.symbol]:
+                # Temporarily set new stop for _update_stop_order() to use
+                ts.current_stop_price = new_stop_price
+
                 # Update stop order on exchange
-                await self._update_stop_order(ts)
+                update_success = await self._update_stop_order(ts)
+
+                # ROLLBACK if exchange update failed
+                if not update_success:
+                    # Restore old stop price
+                    ts.current_stop_price = old_stop
+
+                    logger.error(
+                        f"❌ {ts.symbol}: SL update FAILED on exchange, "
+                        f"state rolled back (keeping old stop {old_stop:.4f})"
+                    )
+
+                    # Log failure event
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.TRAILING_STOP_SL_UPDATE_FAILED,
+                            {
+                                'symbol': ts.symbol,
+                                'error': 'Exchange update failed, state rolled back',
+                                'proposed_new_stop': float(new_stop_price),
+                                'kept_old_stop': float(old_stop),
+                                'update_count': ts.update_count
+                            },
+                            symbol=ts.symbol,
+                            exchange=self.exchange_name,
+                            severity='ERROR'
+                        )
+
+                    # DO NOT save to DB, DO NOT log success, DO NOT increment counter
+                    return None
+
+            # Only commit state changes if exchange succeeded
+            ts.last_stop_update = datetime.now()
+            ts.update_count += 1
 
             improvement = abs((new_stop_price - old_stop) / old_stop * 100)
             logger.info(
@@ -677,7 +710,7 @@ class SmartTrailingStopManager:
                     severity='INFO'
                 )
 
-            # NEW: Save updated state to database
+            # Save updated state to database ONLY after exchange confirmed success
             await self._save_state(ts)
 
             return {
