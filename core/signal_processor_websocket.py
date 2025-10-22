@@ -519,6 +519,25 @@ class WebSocketSignalProcessor:
             # Ждем волну с timestamp :30 текущего часа
             wave_time = now.replace(minute=30, second=0, microsecond=0)
 
+        # VALIDATION: Ensure wave_time is not too far in the past
+        # This prevents using stale timestamps after bot restart
+        time_diff = now - wave_time
+        max_allowed_age = timedelta(hours=2)
+
+        if time_diff > max_allowed_age:
+            logger.warning(
+                f"⚠️ Calculated wave timestamp is {time_diff.total_seconds()/3600:.1f} hours old! "
+                f"Wave: {wave_time.isoformat()}, Now: {now.isoformat()}"
+            )
+
+            # Recalculate from current time's 15-minute boundary
+            boundary_minute = (current_minute // 15) * 15
+            wave_time = now.replace(minute=boundary_minute, second=0, microsecond=0)
+
+            logger.info(
+                f"✅ Adjusted wave timestamp to recent boundary: {wave_time.isoformat()}"
+            )
+
         # ✅ Используем .isoformat() для формата с 'T' (как в сигналах от сервера)
         return wave_time.isoformat()
     
