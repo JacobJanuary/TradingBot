@@ -4,6 +4,7 @@ import hashlib
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from decimal import Decimal
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -1091,7 +1092,7 @@ class Repository:
             'status': status,
             'target_price': target_price,
             'breakeven_price': breakeven_price,
-            'config': Json(config) if config else None
+            'config': json.dumps(config) if config else None
         }
 
         async with self.pool.acquire() as conn:
@@ -1258,7 +1259,7 @@ class Repository:
             'action_taken': action_taken,
             'success': success,
             'error_message': error_message,
-            'event_metadata': Json(event_metadata) if event_metadata else None
+            'event_metadata': json.dumps(event_metadata) if event_metadata else None
         }
 
         async with self.pool.acquire() as conn:
