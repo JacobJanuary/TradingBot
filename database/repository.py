@@ -1030,75 +1030,60 @@ class Repository:
 
     async def create_aged_position(
         self,
-        position_id: int,
+        position_id: str,
         symbol: str,
         exchange: str,
-        side: str,
         entry_price: Decimal,
-        quantity: Decimal,
-        position_opened_at: datetime,
-        detected_at: datetime,
-        status: str,
         target_price: Decimal,
-        breakeven_price: Decimal,
-        config: Dict
+        phase: str,
+        age_hours: float,
+        loss_tolerance: Decimal = None
     ) -> Dict:
         """Create new aged position entry in database
 
         Args:
-            position_id: ID of the original position
+            position_id: ID of the original position (VARCHAR)
             symbol: Trading symbol (e.g., BTCUSDT)
             exchange: Exchange name
-            side: Position side (long/short)
             entry_price: Entry price of position
-            quantity: Position size
-            position_opened_at: When position was originally opened
-            detected_at: When position was detected as aged
-            status: Initial status (detected)
             target_price: Initial target price
-            breakeven_price: Calculated breakeven price
-            config: Configuration at detection time
+            phase: Current phase (grace, progressive, etc.)
+            age_hours: Hours aged
+            loss_tolerance: Current loss tolerance percentage
 
         Returns:
             Created aged position record
         """
         query = """
-            INSERT INTO monitoring.aged_positions (
-                position_id, symbol, exchange, side,
-                entry_price, quantity, position_opened_at,
-                detected_at, status, target_price,
-                breakeven_price, config, hours_aged,
-                current_phase, current_loss_tolerance_percent
-            ) VALUES (
-                %(position_id)s, %(symbol)s, %(exchange)s, %(side)s,
-                %(entry_price)s, %(quantity)s, %(position_opened_at)s,
-                %(detected_at)s, %(status)s, %(target_price)s,
-                %(breakeven_price)s, %(config)s,
-                EXTRACT(EPOCH FROM (%(detected_at)s - %(position_opened_at)s)) / 3600,
-                'grace', 0
-            )
+            INSERT INTO aged_positions (
+                position_id, symbol, exchange,
+                entry_price, target_price, phase,
+                hours_aged, loss_tolerance,
+                created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+            ON CONFLICT (position_id) DO UPDATE SET
+                target_price = EXCLUDED.target_price,
+                phase = EXCLUDED.phase,
+                hours_aged = EXCLUDED.hours_aged,
+                loss_tolerance = EXCLUDED.loss_tolerance,
+                updated_at = NOW()
             RETURNING *
         """
 
-        params = {
-            'position_id': position_id,
-            'symbol': symbol,
-            'exchange': exchange,
-            'side': side,
-            'entry_price': entry_price,
-            'quantity': quantity,
-            'position_opened_at': position_opened_at,
-            'detected_at': detected_at,
-            'status': status,
-            'target_price': target_price,
-            'breakeven_price': breakeven_price,
-            'config': json.dumps(config) if config else None
-        }
-
         async with self.pool.acquire() as conn:
             try:
-                row = await conn.fetchrow(query, **params)
-                logger.info(f"Created aged_position entry {row['id']} for {symbol}")
+                row = await conn.fetchrow(
+                    query,
+                    str(position_id),
+                    symbol,
+                    exchange,
+                    entry_price,
+                    target_price,
+                    phase,
+                    int(age_hours),
+                    loss_tolerance
+                )
+                logger.info(f"Created/updated aged_position {row['id']} for {symbol}")
                 return dict(row) if row else None
             except Exception as e:
                 logger.error(f"Failed to create aged_position: {e}")
