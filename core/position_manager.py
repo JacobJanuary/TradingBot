@@ -1811,7 +1811,16 @@ class PositionManager:
         logger.info(f"📊 Position update: {symbol_raw} → {symbol}, mark_price={data.get('mark_price')}")
 
         if not symbol or symbol not in self.positions:
-            logger.info(f"  → Skipped: {symbol} not in tracked positions ({list(self.positions.keys())[:5]}...)")
+            # NEW: Buffer updates for positions being created
+            if symbol and symbol in self.position_locks:
+                # Position is being created right now
+                if symbol not in self.pending_updates:
+                    self.pending_updates[symbol] = []
+                self.pending_updates[symbol].append(data)
+                logger.info(f"📦 Buffered update for {symbol} (position being created)")
+            else:
+                # Position not being created and not known - skip
+                logger.info(f"  → Skipped: {symbol} not in tracked positions ({list(self.positions.keys())[:5]}...)")
             return
 
         # Get or create lock for this symbol
