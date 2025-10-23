@@ -398,6 +398,58 @@ class AgedPositionMonitorV2:
                 except Exception as db_err:
                     logger.error(f"Failed to log error in DB: {db_err}")
 
+            # ✅ ENHANCEMENT #1E: Специальная обработка ошибок Bybit
+
+            # Check for specific error types
+            error_msg = result.error_message or ""
+
+            if '170193' in error_msg or 'price cannot be' in error_msg.lower():
+                # Bybit price validation error
+                logger.warning(
+                    f"⚠️ Bybit price error for {symbol} - may need manual intervention. "
+                    f"Error: {error_msg[:100]}"
+                )
+                # Mark position as requiring manual review
+                if self.repository:
+                    try:
+                        await self.repository.create_aged_monitoring_event(
+                            aged_position_id=target.position_id,
+                            event_type='requires_manual_review',
+                            event_metadata={
+                                'error_code': '170193',
+                                'error_message': error_msg,
+                                'reason': 'bybit_price_validation'
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to log manual review event: {e}")
+
+            elif 'no asks' in error_msg.lower() or 'no bids' in error_msg.lower():
+                # No liquidity in order book
+                logger.warning(
+                    f"⚠️ No liquidity for {symbol} - market order failed. "
+                    f"Position may need manual close or wait for liquidity."
+                )
+                if self.repository:
+                    try:
+                        await self.repository.create_aged_monitoring_event(
+                            aged_position_id=target.position_id,
+                            event_type='low_liquidity',
+                            event_metadata={
+                                'error_message': error_msg,
+                                'order_attempts': result.attempts
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to log low liquidity event: {e}")
+
+            elif '170003' in error_msg:
+                # Bybit brokerId error
+                logger.error(
+                    f"⚠️ Bybit brokerId error for {symbol}. "
+                    f"This should be fixed by exchange_manager brokerId='' patch."
+                )
+
     def _calculate_target(self, position, hours_over_limit: float):
         """Calculate target price and phase for aged position"""
 
