@@ -162,20 +162,31 @@ class AgedPositionMonitorV2:
 
         # Database tracking - create aged position entry
         if self.repository:
-            try:
-                await self.repository.create_aged_position(
-                    position_id=target.position_id,
-                    symbol=symbol,
-                    exchange=position.exchange,
-                    entry_price=target.entry_price,
-                    target_price=target_price,
-                    phase=phase,
-                    loss_tolerance=loss_tolerance,
-                    age_hours=age_hours
+            # ✅ CRITICAL FIX: Only track in DB if position has real database ID
+            # Pre-registered positions (id="pending") are skipped until they get real ID
+            if not isinstance(target.position_id, int):
+                logger.debug(
+                    f"⏳ {symbol}: Skipping DB tracking - position pending database creation "
+                    f"(id={target.position_id}). Will track after position is persisted."
                 )
-                logger.debug(f"DB: Created aged position entry for {symbol}")
-            except Exception as e:
-                logger.error(f"Failed to create aged position in DB: {e}")
+                # Target is still tracked in memory (self.aged_targets[symbol])
+                # It will be added to DB later when position gets real ID
+            else:
+                # Position has real database ID - safe to create aged_position
+                try:
+                    await self.repository.create_aged_position(
+                        position_id=target.position_id,
+                        symbol=symbol,
+                        exchange=position.exchange,
+                        entry_price=target.entry_price,
+                        target_price=target_price,
+                        phase=phase,
+                        loss_tolerance=loss_tolerance,
+                        age_hours=age_hours
+                    )
+                    logger.debug(f"✅ {symbol}: Aged position tracked in DB (position_id={target.position_id})")
+                except Exception as e:
+                    logger.error(f"Failed to create aged position in DB for {symbol}: {e}")
 
         logger.info(
             f"📍 Aged position added: {symbol} "
