@@ -232,14 +232,42 @@ class OrderExecutor:
 
                 except Exception as e:
                     last_error = str(e)
+                    error_type = self.classify_error(last_error)
+
+                    # Log with error classification
                     logger.warning(
-                        f"Order attempt failed: {order_type} "
-                        f"attempt {attempt + 1}: {e}"
+                        f"Order attempt failed [{error_type}]: {order_type} "
+                        f"attempt {attempt + 1}/{self.max_attempts}: {e}"
                     )
+
+                    # Permanent errors - stop immediately
+                    if error_type == 'permanent':
+                        logger.error(
+                            f"❌ PERMANENT ERROR detected - stopping retries: {last_error[:100]}"
+                        )
+                        break  # Exit retry loop for this order_type
 
                     # Wait before retry (except on last attempt)
                     if attempt < self.max_attempts - 1:
-                        await asyncio.sleep(self.retry_delay)
+                        # Calculate delay based on error type
+                        if error_type == 'rate_limit':
+                            delay = self.rate_limit_delay
+                            logger.warning(f"⏰ Rate limit detected - waiting {delay}s")
+                        elif error_type == 'temporary':
+                            # Exponential backoff: 0.5s → 1s → 2s
+                            delay = min(
+                                self.base_retry_delay * (2 ** attempt),
+                                self.max_retry_delay
+                            )
+                        else:
+                            # Unknown errors - conservative exponential backoff
+                            delay = min(
+                                self.base_retry_delay * (2 ** (attempt + 1)),
+                                self.max_retry_delay
+                            )
+
+                        logger.debug(f"⏳ Waiting {delay}s before retry...")
+                        await asyncio.sleep(delay)
 
         # All attempts failed
         self.stats['failed_executions'] += 1
