@@ -70,6 +70,12 @@ class AgedPositionAdapter:
 
         symbol = position.symbol
 
+        # ✅ FIX #1: Duplicate Subscription Protection
+        # Prevent multiple subscriptions for same symbol
+        if symbol in self.monitoring_positions:
+            logger.debug(f"⏭️ Skipping {symbol} - already in aged monitoring")
+            return
+
         # Check if qualifies as aged
         age_hours = self._get_position_age_hours(position)
         if age_hours < 3:
