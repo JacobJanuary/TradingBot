@@ -154,7 +154,7 @@ class AgedPositionMonitorV2:
             phase=phase,
             loss_tolerance=loss_tolerance,
             hours_aged=age_hours,
-            position_id=getattr(position, 'id', symbol)
+            position_id=str(getattr(position, 'id', symbol))
         )
 
         self.aged_targets[symbol] = target
