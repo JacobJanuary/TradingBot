@@ -73,7 +73,7 @@ class UnifiedPriceMonitor:
         # Sort by priority
         self.subscribers[symbol].sort(key=lambda x: x['priority'])
 
-        logger.debug(f"{module} subscribed to {symbol} (priority={priority})")
+        logger.info(f"✅ {module} subscribed to {symbol} (priority={priority})")
 
     async def unsubscribe(self, symbol: str, module: str):
         """Unsubscribe from price updates"""
