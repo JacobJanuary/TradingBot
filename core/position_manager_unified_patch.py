@@ -197,11 +197,14 @@ async def check_and_register_aged_positions(position_manager, unified_protection
         for symbol, position in position_manager.positions.items():
             # Check if aged
             if await aged_monitor.check_position_age(position):
-                # Add to monitoring
-                await aged_monitor.add_aged_position(position)
-                await aged_adapter.add_aged_position(position)
+                # ✅ FIX #4: Only add to monitor if NOT already tracked
+                if not aged_monitor.is_position_tracked(symbol):
+                    await aged_monitor.add_aged_position(position)
+                    logger.info(f"Position {symbol} added to aged monitor")
 
-                logger.info(f"Position {symbol} registered as aged")
+                # ALWAYS call adapter (handles duplicates via Fix #1)
+                await aged_adapter.add_aged_position(position)
+                logger.debug(f"Position {symbol} registered as aged")
 
     except Exception as e:
         logger.error(f"Failed to check aged positions: {e}")
