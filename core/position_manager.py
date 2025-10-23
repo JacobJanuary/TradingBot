@@ -3054,6 +3054,17 @@ class PositionManager:
                             position = local_positions[symbol]
                             logger.warning(f"Phantom position detected: {symbol} (in DB but not on {exchange_name})")
 
+                            # ✅ FIX: Skip pre-registered positions that haven't been committed to DB yet
+                            if position.id == "pending":
+                                logger.info(
+                                    f"⏭️ Skipping phantom cleanup for pre-registered position: {symbol} "
+                                    f"(id='pending' - not yet committed to database)"
+                                )
+                                # Remove from memory but don't attempt DB operations or event logging
+                                if symbol in self.positions:
+                                    del self.positions[symbol]
+                                continue  # Early exit prevents logging with "pending"
+
                             try:
                                 # Remove from local cache
                                 if symbol in self.positions:

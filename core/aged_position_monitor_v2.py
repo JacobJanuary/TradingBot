@@ -760,3 +760,59 @@ class AgedPositionMonitorV2:
         if self.event_emitter:
             return self.event_emitter.get_stats()
         return {}
+
+    # ============================================================
+    # CRITICAL FIX: Periodic Full Scan
+    # Defense in depth - don't rely solely on price update triggers
+    # ============================================================
+
+    async def periodic_full_scan(self):
+        """
+        Periodically scan all active positions for aged detection
+        Independent of price updates - provides additional safety layer
+
+        This catches positions that might be missed by instant detection
+        (e.g., positions created before bot restart)
+        """
+        if not self.position_manager:
+            return
+
+        scanned_count = 0
+        detected_count = 0
+
+        try:
+            for symbol, position in self.position_manager.positions.items():
+                scanned_count += 1
+
+                # Skip if already tracked
+                if symbol in self.aged_targets:
+                    continue
+
+                # Skip if trailing stop is active
+                if hasattr(position, 'trailing_activated') and position.trailing_activated:
+                    continue
+
+                # Check age
+                age_hours = self._calculate_age_hours(position)
+
+                if age_hours > self.max_age_hours:
+                    try:
+                        await self.add_aged_position(position)
+                        detected_count += 1
+
+                        logger.info(
+                            f"🔍 Periodic scan detected aged position: {symbol} "
+                            f"(age={age_hours:.1f}h, already aged for {age_hours - self.max_age_hours:.1f}h)"
+                        )
+
+                    except Exception as e:
+                        logger.error(f"Failed to add aged position {symbol} during periodic scan: {e}")
+
+            if detected_count > 0:
+                logger.info(
+                    f"🔍 Periodic aged scan complete: scanned {scanned_count} positions, "
+                    f"detected {detected_count} new aged position(s)"
+                )
+
+        except Exception as e:
+            logger.error(f"Periodic aged scan failed: {e}")

@@ -20,6 +20,7 @@ That's it! Everything else remains unchanged.
 """
 
 import os
+import asyncio
 import logging
 from typing import Optional, Dict
 from decimal import Decimal
@@ -113,10 +114,76 @@ async def handle_unified_price_update(unified_protection: Dict, symbol: str, pri
         logger.debug(f"Unified price update error for {symbol}: {e}")
 
 
+async def recover_aged_positions_state(unified_protection: Dict) -> int:
+    """
+    Recover aged positions state from database on startup
+    CRITICAL: This MUST be called after position_manager.load_positions_from_db()
+
+    Returns number of recovered aged positions
+    """
+
+    if not unified_protection:
+        return 0
+
+    try:
+        aged_monitor = unified_protection.get('aged_monitor')
+        if not aged_monitor:
+            return 0
+
+        # Recover aged positions from database
+        recovered_count = await aged_monitor.recover_state()
+
+        if recovered_count > 0:
+            logger.info(f"✅ Recovered {recovered_count} aged position(s) from database")
+        else:
+            logger.info("No aged positions to recover from database")
+
+        return recovered_count
+
+    except Exception as e:
+        logger.error(f"Failed to recover aged positions state: {e}")
+        return 0
+
+
+async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: int = 5):
+    """
+    Start background task for periodic aged position scanning
+    Provides defense in depth - catches positions missed by instant detection
+
+    Args:
+        unified_protection: Unified protection components dict
+        interval_minutes: Scan interval in minutes (default: 5)
+    """
+
+    if not unified_protection:
+        return
+
+    aged_monitor = unified_protection.get('aged_monitor')
+    if not aged_monitor:
+        return
+
+    logger.info(f"🔍 Starting periodic aged scan task (interval: {interval_minutes} minutes)")
+
+    while True:
+        try:
+            await asyncio.sleep(interval_minutes * 60)
+            await aged_monitor.periodic_full_scan()
+
+        except asyncio.CancelledError:
+            logger.info("Periodic aged scan task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic aged scan: {e}")
+            # Continue running despite errors
+            await asyncio.sleep(60)  # Wait 1 minute before retry
+
+
 async def check_and_register_aged_positions(position_manager, unified_protection: Dict):
     """
     Check all positions for aged status and register them
     This should be called periodically (e.g., every 30-60 minutes)
+
+    DEPRECATED: Use start_periodic_aged_scan() instead for automatic background scanning
     """
 
     if not unified_protection:

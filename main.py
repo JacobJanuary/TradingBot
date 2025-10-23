@@ -297,6 +297,24 @@ class TradingBot:
                 logger.info("⚡ Aged position manager disabled - using Unified Protection V2")
                 self.aged_position_manager = None
 
+                # CRITICAL FIX: Recover aged positions state from database
+                if self.position_manager.unified_protection:
+                    from core.position_manager_unified_patch import (
+                        recover_aged_positions_state,
+                        start_periodic_aged_scan
+                    )
+
+                    # Recover existing aged positions from database
+                    recovered = await recover_aged_positions_state(self.position_manager.unified_protection)
+                    logger.info(f"🔄 Aged positions recovery: {recovered} position(s) restored from database")
+
+                    # Start periodic aged scan for additional safety (defense in depth)
+                    asyncio.create_task(start_periodic_aged_scan(
+                        self.position_manager.unified_protection,
+                        interval_minutes=5  # Scan every 5 minutes
+                    ))
+                    logger.info("🔍 Periodic aged scan task started (interval: 5 minutes)")
+
             # Initialize WebSocket signal processor
             logger.info("Initializing WebSocket signal processor...")
             self.signal_processor = WebSocketSignalProcessor(

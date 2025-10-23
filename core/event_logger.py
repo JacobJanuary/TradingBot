@@ -239,13 +239,41 @@ class EventLogger:
             event_type: Type of event
             data: Event data as dict
             correlation_id: ID to correlate related events
-            position_id: Related position ID
+            position_id: Related position ID (must be int or None)
             order_id: Related order ID
             symbol: Trading symbol
             exchange: Exchange name
             severity: INFO, WARNING, ERROR, CRITICAL
             error: Exception if this is an error event
         """
+
+        # ✅ FIX: Validate position_id type before queueing
+        if position_id is not None:
+            if isinstance(position_id, str):
+                if position_id == "pending":
+                    # Special case: pre-registered position
+                    logger.warning(
+                        f"⚠️ Skipping event logging for pre-registered position: "
+                        f"event={event_type.value}, symbol={symbol} (position_id='pending'). "
+                        f"This event will not be recorded in the audit trail."
+                    )
+                    return  # Early exit - don't queue event
+
+                else:
+                    # Unexpected string value
+                    raise TypeError(
+                        f"EventLogger.log_event: position_id must be int or None, "
+                        f"got str: '{position_id}'. Event: {event_type.value}, Symbol: {symbol}"
+                    )
+
+            elif not isinstance(position_id, int):
+                # Unexpected type (float, dict, etc)
+                raise TypeError(
+                    f"EventLogger.log_event: position_id must be int or None, "
+                    f"got {type(position_id).__name__}: {position_id}. "
+                    f"Event: {event_type.value}, Symbol: {symbol}"
+                )
+
         event = {
             'event_type': event_type.value,
             'event_data': json.dumps(data, cls=DecimalEncoder),
