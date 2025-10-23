@@ -94,6 +94,14 @@ class AgedPositionAdapter:
             priority=40  # Lower priority than TrailingStop
         )
 
+        # ✅ FIX #3: Verify Subscription Registration
+        if symbol not in self.price_monitor.subscribers:
+            logger.error(
+                f"❌ CRITICAL: Subscription FAILED for {symbol}! "
+                f"Symbol NOT in price_monitor.subscribers."
+            )
+            return  # Do NOT add to monitoring_positions
+
         self.monitoring_positions[symbol] = position
         logger.info(f"Aged position {symbol} registered (age={age_hours:.1f}h)")
 
