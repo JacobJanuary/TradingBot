@@ -790,6 +790,25 @@ class ExchangeManager:
             # Format price with proper precision
             sl_price_formatted = self.exchange.price_to_precision(symbol, new_sl_price)
 
+            # ЗАЩИТНАЯ ВАЛИДАЦИЯ (после строки 791)
+            # Validate SL for SHORT positions before sending to exchange
+            if position_side in ['short', 'sell']:
+                try:
+                    ticker = await self.exchange.fetch_ticker(symbol)
+                    current_market_price = float(ticker['last'])
+
+                    if new_sl_price <= current_market_price:
+                        logger.warning(
+                            f"⚠️ SHORT {symbol}: Attempted SL {new_sl_price:.8f} <= market {current_market_price:.8f}, "
+                            f"skipping to avoid exchange rejection"
+                        )
+                        result['success'] = False
+                        result['error'] = f"Invalid SL for SHORT: {new_sl_price:.8f} must be > {current_market_price:.8f}"
+                        return result
+                except Exception as e:
+                    logger.error(f"Failed to validate SHORT SL: {e}")
+                    # Continue anyway if validation fails
+
             # ATOMIC update via trading-stop endpoint
             params = {
                 'category': 'linear',

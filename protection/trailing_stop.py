@@ -592,13 +592,22 @@ class SmartTrailingStopManager:
             # Only update if new stop is higher than current
             if potential_stop > ts.current_stop_price:
                 new_stop_price = potential_stop
-        else:
+        else:  # SHORT позиция
             # For short: trail above lowest price
             potential_stop = ts.lowest_price * (1 + distance / 100)
 
-            # Only update if new stop is lower than current
-            if potential_stop < ts.current_stop_price:
-                new_stop_price = potential_stop
+            # CRITICAL FIX: Only update SL when price is falling or at minimum
+            # Never lower SL when price is rising for SHORT!
+            price_at_or_below_minimum = ts.current_price <= ts.lowest_price
+
+            if price_at_or_below_minimum:
+                # Price is at minimum or making new low - can update SL
+                if potential_stop < ts.current_stop_price:
+                    new_stop_price = potential_stop
+                    logger.debug(f"SHORT {ts.symbol}: updating SL on new low, {ts.current_stop_price:.8f} → {potential_stop:.8f}")
+            else:
+                # Price is above minimum - SL should stay in place
+                logger.debug(f"SHORT {ts.symbol}: price {ts.current_price:.8f} > lowest {ts.lowest_price:.8f}, keeping SL at {ts.current_stop_price:.8f}")
 
         if new_stop_price:
             old_stop = ts.current_stop_price
