@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import dataclass
 import os
-from core.order_executor import OrderExecutor
+from core.order_executor import OrderExecutor, OrderResult
 
 # Phase 4 import - added for metrics, does not modify existing code
 try:
@@ -303,13 +303,31 @@ class AgedPositionMonitorV2:
         )
 
         # Use OrderExecutor for robust execution
-        result = await self.order_executor.execute_close(
-            symbol=symbol,
-            exchange_name=exchange_name,
-            position_side=position.side,
-            amount=amount,
-            reason=f'aged_{target.phase}'
-        )
+        try:
+            result = await self.order_executor.execute_close(
+                symbol=symbol,
+                exchange_name=exchange_name,
+                position_side=position.side,
+                amount=amount,
+                reason=f'aged_{target.phase}'
+            )
+        except Exception as e:
+            # Unexpected exception from execute_close
+            logger.error(
+                f"❌ CRITICAL: Unexpected error in execute_close for {symbol}: {e}",
+                exc_info=True
+            )
+            # Create OrderResult manually for error handling below
+            result = OrderResult(
+                success=False,
+                error_message=f"Unexpected exception: {str(e)}",
+                attempts=0,
+                execution_time=0.0,
+                order_id=None,
+                executed_amount=Decimal('0'),
+                order_type='unknown',
+                price=None
+            )
 
         if result.success:
             # Update statistics
@@ -379,6 +397,58 @@ class AgedPositionMonitorV2:
                     )
                 except Exception as db_err:
                     logger.error(f"Failed to log error in DB: {db_err}")
+
+            # ✅ ENHANCEMENT #1E: Специальная обработка ошибок Bybit
+
+            # Check for specific error types
+            error_msg = result.error_message or ""
+
+            if '170193' in error_msg or 'price cannot be' in error_msg.lower():
+                # Bybit price validation error
+                logger.warning(
+                    f"⚠️ Bybit price error for {symbol} - may need manual intervention. "
+                    f"Error: {error_msg[:100]}"
+                )
+                # Mark position as requiring manual review
+                if self.repository:
+                    try:
+                        await self.repository.create_aged_monitoring_event(
+                            aged_position_id=target.position_id,
+                            event_type='requires_manual_review',
+                            event_metadata={
+                                'error_code': '170193',
+                                'error_message': error_msg,
+                                'reason': 'bybit_price_validation'
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to log manual review event: {e}")
+
+            elif 'no asks' in error_msg.lower() or 'no bids' in error_msg.lower():
+                # No liquidity in order book
+                logger.warning(
+                    f"⚠️ No liquidity for {symbol} - market order failed. "
+                    f"Position may need manual close or wait for liquidity."
+                )
+                if self.repository:
+                    try:
+                        await self.repository.create_aged_monitoring_event(
+                            aged_position_id=target.position_id,
+                            event_type='low_liquidity',
+                            event_metadata={
+                                'error_message': error_msg,
+                                'order_attempts': result.attempts
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to log low liquidity event: {e}")
+
+            elif '170003' in error_msg:
+                # Bybit brokerId error
+                logger.error(
+                    f"⚠️ Bybit brokerId error for {symbol}. "
+                    f"This should be fixed by exchange_manager brokerId='' patch."
+                )
 
     def _calculate_target(self, position, hours_over_limit: float):
         """Calculate target price and phase for aged position"""
@@ -816,3 +886,28 @@ class AgedPositionMonitorV2:
 
         except Exception as e:
             logger.error(f"Periodic aged scan failed: {e}")
+
+    async def verify_subscriptions(self, aged_adapter):
+        """
+        ✅ FIX #5: Verify that all aged positions have active subscriptions
+        Re-subscribe if missing
+        """
+        if not aged_adapter:
+            return 0
+
+        resubscribed_count = 0
+
+        for symbol in list(self.aged_targets.keys()):
+            if symbol not in aged_adapter.monitoring_positions:
+                logger.warning(f"⚠️ Subscription missing for {symbol}! Re-subscribing...")
+
+                if self.position_manager and symbol in self.position_manager.positions:
+                    position = self.position_manager.positions[symbol]
+                    await aged_adapter.add_aged_position(position)
+                    resubscribed_count += 1
+                    logger.info(f"✅ Re-subscribed {symbol}")
+
+        if resubscribed_count > 0:
+            logger.warning(f"⚠️ Re-subscribed {resubscribed_count} position(s)")
+
+        return resubscribed_count

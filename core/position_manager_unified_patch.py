@@ -169,6 +169,11 @@ async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: i
             await asyncio.sleep(interval_minutes * 60)
             await aged_monitor.periodic_full_scan()
 
+            # ✅ FIX #5: Run subscription health check
+            aged_adapter = unified_protection.get('aged_adapter')
+            if aged_adapter:
+                await aged_monitor.verify_subscriptions(aged_adapter)
+
         except asyncio.CancelledError:
             logger.info("Periodic aged scan task cancelled")
             break
@@ -197,11 +202,14 @@ async def check_and_register_aged_positions(position_manager, unified_protection
         for symbol, position in position_manager.positions.items():
             # Check if aged
             if await aged_monitor.check_position_age(position):
-                # Add to monitoring
-                await aged_monitor.add_aged_position(position)
-                await aged_adapter.add_aged_position(position)
+                # ✅ FIX #4: Only add to monitor if NOT already tracked
+                if not aged_monitor.is_position_tracked(symbol):
+                    await aged_monitor.add_aged_position(position)
+                    logger.info(f"Position {symbol} added to aged monitor")
 
-                logger.info(f"Position {symbol} registered as aged")
+                # ALWAYS call adapter (handles duplicates via Fix #1)
+                await aged_adapter.add_aged_position(position)
+                logger.debug(f"Position {symbol} registered as aged")
 
     except Exception as e:
         logger.error(f"Failed to check aged positions: {e}")
