@@ -118,6 +118,63 @@ class UnifiedPriceMonitor:
                     )
                     self.error_count += 1
 
+    async def check_staleness(self, symbols_to_check: list = None) -> dict:
+        """
+        ✅ ENHANCEMENT #2B: Check if price updates are stale for given symbols
+
+        Args:
+            symbols_to_check: List of symbols to check, or None for all subscribed
+
+        Returns:
+            dict: {symbol: {'stale': bool, 'seconds_since_update': float}}
+        """
+        import time
+
+        now = time.time()
+        result = {}
+
+        # Default to all subscribed symbols
+        if symbols_to_check is None:
+            symbols_to_check = list(self.subscribers.keys())
+
+        for symbol in symbols_to_check:
+            if symbol not in self.last_update_time:
+                # Never received update
+                result[symbol] = {
+                    'stale': True,
+                    'seconds_since_update': float('inf'),
+                    'last_update': None
+                }
+                continue
+
+            last_update = self.last_update_time[symbol]
+            seconds_since = now - last_update
+            is_stale = seconds_since > self.staleness_threshold_seconds
+
+            result[symbol] = {
+                'stale': is_stale,
+                'seconds_since_update': seconds_since,
+                'last_update': last_update
+            }
+
+            # Track stale symbols
+            if is_stale:
+                self.stale_symbols.add(symbol)
+
+                # Log warning once per symbol
+                if symbol not in self.staleness_warnings_logged:
+                    logger.warning(
+                        f"⚠️ STALE PRICE: {symbol} - no updates for {seconds_since:.0f}s "
+                        f"(threshold: {self.staleness_threshold_seconds}s)"
+                    )
+                    self.staleness_warnings_logged.add(symbol)
+            else:
+                # No longer stale - clear tracking
+                self.stale_symbols.discard(symbol)
+                self.staleness_warnings_logged.discard(symbol)
+
+        return result
+
     def get_last_price(self, symbol: str) -> Optional[Decimal]:
         """Get last known price for symbol"""
         return self.last_prices.get(symbol)
