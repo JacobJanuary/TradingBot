@@ -1889,6 +1889,18 @@ class PositionManager:
         async with self.position_update_locks[symbol]:
             position = self.positions[symbol]
 
+            # ⚠️ CRITICAL FIX: Skip all operations on pre-registered positions
+            # Pre-registered positions have id="pending" and are not yet in database.
+            # They will be fully initialized after order fills and database insert completes.
+            if position.id == "pending":
+                logger.debug(
+                    f"⏳ {symbol}: Skipping WebSocket update processing - "
+                    f"position is pre-registered (waiting for database creation)"
+                )
+                # Still update the in-memory state from WebSocket
+                # but skip database operations and event logging
+                return
+
             # Update position state
             old_price = position.current_price
             position.current_price = float(data.get('mark_price', position.current_price))
