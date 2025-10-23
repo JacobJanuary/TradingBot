@@ -301,7 +301,8 @@ class TradingBot:
                 if self.position_manager.unified_protection:
                     from core.position_manager_unified_patch import (
                         recover_aged_positions_state,
-                        start_periodic_aged_scan
+                        start_periodic_aged_scan,
+                        start_websocket_health_monitor
                     )
 
                     # Recover existing aged positions from database
@@ -314,6 +315,13 @@ class TradingBot:
                         interval_minutes=5  # Scan every 5 minutes
                     ))
                     logger.info("🔍 Periodic aged scan task started (interval: 5 minutes)")
+
+                    # ✅ ENHANCEMENT #2E: Start WebSocket health monitor for aged positions
+                    asyncio.create_task(start_websocket_health_monitor(
+                        unified_protection=self.position_manager.unified_protection,
+                        check_interval_seconds=60  # Check every minute
+                    ))
+                    logger.info("✅ WebSocket health monitor started (interval: 60s)")
 
             # Initialize WebSocket signal processor
             logger.info("Initializing WebSocket signal processor...")
