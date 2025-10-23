@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from dataclasses import dataclass
 import os
-from core.order_executor import OrderExecutor
+from core.order_executor import OrderExecutor, OrderResult
 
 # Phase 4 import - added for metrics, does not modify existing code
 try:
@@ -303,13 +303,31 @@ class AgedPositionMonitorV2:
         )
 
         # Use OrderExecutor for robust execution
-        result = await self.order_executor.execute_close(
-            symbol=symbol,
-            exchange_name=exchange_name,
-            position_side=position.side,
-            amount=amount,
-            reason=f'aged_{target.phase}'
-        )
+        try:
+            result = await self.order_executor.execute_close(
+                symbol=symbol,
+                exchange_name=exchange_name,
+                position_side=position.side,
+                amount=amount,
+                reason=f'aged_{target.phase}'
+            )
+        except Exception as e:
+            # Unexpected exception from execute_close
+            logger.error(
+                f"❌ CRITICAL: Unexpected error in execute_close for {symbol}: {e}",
+                exc_info=True
+            )
+            # Create OrderResult manually for error handling below
+            result = OrderResult(
+                success=False,
+                error_message=f"Unexpected exception: {str(e)}",
+                attempts=0,
+                execution_time=0.0,
+                order_id=None,
+                executed_amount=Decimal('0'),
+                order_type='unknown',
+                price=None
+            )
 
         if result.success:
             # Update statistics
