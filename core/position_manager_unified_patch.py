@@ -183,6 +183,83 @@ async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: i
             await asyncio.sleep(60)  # Wait 1 minute before retry
 
 
+async def start_websocket_health_monitor(
+    unified_protection: Dict,
+    check_interval_seconds: int = 60
+):
+    """
+    ✅ ENHANCEMENT #2C: Monitor WebSocket health for aged positions
+
+    Periodically checks if aged positions are receiving price updates.
+    Alerts if prices are stale (> 5 minutes without update).
+
+    Args:
+        unified_protection: Unified protection components
+        check_interval_seconds: Check interval (default: 60s)
+    """
+    if not unified_protection:
+        return
+
+    aged_monitor = unified_protection.get('aged_monitor')
+    price_monitor = unified_protection.get('price_monitor')
+
+    if not aged_monitor or not price_monitor:
+        logger.warning("WebSocket health monitor disabled - missing components")
+        return
+
+    logger.info(
+        f"🔍 Starting WebSocket health monitor "
+        f"(interval: {check_interval_seconds}s, threshold: 5min)"
+    )
+
+    while True:
+        try:
+            await asyncio.sleep(check_interval_seconds)
+
+            # Get list of aged position symbols
+            aged_symbols = list(aged_monitor.aged_targets.keys())
+
+            if not aged_symbols:
+                continue  # No aged positions to monitor
+
+            # Check staleness for aged symbols only
+            staleness_report = await price_monitor.check_staleness(aged_symbols)
+
+            # Count stale aged positions
+            stale_count = sum(
+                1 for symbol, data in staleness_report.items()
+                if data['stale']
+            )
+
+            if stale_count > 0:
+                logger.warning(
+                    f"⚠️ WebSocket Health Check: {stale_count}/{len(aged_symbols)} "
+                    f"aged positions have STALE prices!"
+                )
+
+                # Log each stale position
+                for symbol, data in staleness_report.items():
+                    if data['stale']:
+                        seconds = data['seconds_since_update']
+                        logger.warning(
+                            f"  - {symbol}: no update for {seconds:.0f}s "
+                            f"({seconds/60:.1f} minutes)"
+                        )
+            else:
+                # All good
+                logger.debug(
+                    f"✅ WebSocket Health Check: all {len(aged_symbols)} "
+                    f"aged positions receiving updates"
+                )
+
+        except asyncio.CancelledError:
+            logger.info("WebSocket health monitor stopped")
+            break
+        except Exception as e:
+            logger.error(f"Error in WebSocket health monitor: {e}")
+            await asyncio.sleep(10)  # Wait before retry
+
+
 async def check_and_register_aged_positions(position_manager, unified_protection: Dict):
     """
     Check all positions for aged status and register them
