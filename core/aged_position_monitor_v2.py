@@ -175,14 +175,14 @@ class AgedPositionMonitorV2:
                 # Position has real database ID - safe to create aged_position
                 try:
                     await self.repository.create_aged_position(
-                        position_id=target.position_id,
+                        position_id=str(target.position_id),
                         symbol=symbol,
                         exchange=position.exchange,
                         entry_price=target.entry_price,
                         target_price=target_price,
                         phase=phase,
-                        loss_tolerance=loss_tolerance,
-                        age_hours=age_hours
+                        age_hours=age_hours,
+                        loss_tolerance=loss_tolerance
                     )
                     logger.debug(f"✅ {symbol}: Aged position tracked in DB (position_id={target.position_id})")
                 except Exception as e:
@@ -331,9 +331,7 @@ class AgedPositionMonitorV2:
                 try:
                     # Mark aged position as closed
                     await self.repository.mark_aged_position_closed(
-                        position_id=target.position_id,
-                        order_id=result.order_id,
-                        close_price=result.price if result.price else trigger_price,
+                        position_id=str(target.position_id),
                         close_reason=f'aged_{target.phase}'
                     )
 
