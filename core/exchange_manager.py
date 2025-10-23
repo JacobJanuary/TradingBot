@@ -109,7 +109,8 @@ class ExchangeManager:
             # CRITICAL: Bybit V5 API requires UNIFIED account
             exchange_options['options']['accountType'] = 'UNIFIED'
             exchange_options['options']['defaultType'] = 'future'  # Changed from 'unified' to fix KeyError
-            
+            exchange_options['options']['brokerId'] = ''  # Disable CCXT default brokerId to fix Error 170003
+
         self.exchange = exchange_class(exchange_options)
 
         # Set testnet if configured
