@@ -33,6 +33,62 @@ class OrderExecutor:
     Tries multiple order types in sequence until success
     """
 
+    # ==================== ERROR CLASSIFICATION ====================
+    # Постоянные ошибки - не retry
+    PERMANENT_ERROR_PATTERNS = [
+        '170003',           # Bybit: brokerId error
+        '170193',           # Bybit: price cannot be
+        '170209',           # Bybit: symbol not available in region
+        'insufficient',     # Insufficient funds/balance
+        'not available',    # Symbol/market not available
+        'delisted',         # Symbol delisted
+        'suspended',        # Trading suspended
+    ]
+
+    # Rate limit ошибки - retry с длинной задержкой
+    RATE_LIMIT_PATTERNS = [
+        '429',
+        'rate limit',
+        'too many requests',
+        'request limit exceeded',
+    ]
+
+    # Временные ошибки - retry с exponential backoff
+    TEMPORARY_ERROR_PATTERNS = [
+        'timeout',
+        'connection',
+        'network',
+        'temporary',
+    ]
+
+    @staticmethod
+    def classify_error(error_message: str) -> str:
+        """
+        Classify error type for appropriate handling
+
+        Returns:
+            'permanent' - don't retry
+            'rate_limit' - retry with long delay
+            'temporary' - retry with exponential backoff
+            'unknown' - retry with normal backoff
+        """
+        error_lower = error_message.lower()
+
+        # Check permanent errors
+        if any(pattern in error_lower for pattern in OrderExecutor.PERMANENT_ERROR_PATTERNS):
+            return 'permanent'
+
+        # Check rate limit errors
+        if any(pattern in error_lower for pattern in OrderExecutor.RATE_LIMIT_PATTERNS):
+            return 'rate_limit'
+
+        # Check temporary errors
+        if any(pattern in error_lower for pattern in OrderExecutor.TEMPORARY_ERROR_PATTERNS):
+            return 'temporary'
+
+        return 'unknown'
+    # ==============================================================
+
     def __init__(self, exchange_managers, repository=None):
         self.exchanges = exchange_managers
         self.repository = repository
