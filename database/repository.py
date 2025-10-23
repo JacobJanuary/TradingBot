@@ -1264,36 +1264,6 @@ class Repository:
                 logger.error(f"Failed to create monitoring event: {e}")
                 return False
 
-    async def create_aged_monitoring_event(
-        self,
-        aged_position_id: str,
-        event_type: str,
-        event_metadata: Dict = None,
-        **kwargs
-    ) -> bool:
-        """Simplified method for order_executor
-
-        Args:
-            aged_position_id: Aged position ID
-            event_type: Type of event
-            event_metadata: Additional event data
-            **kwargs: Ignored extra arguments
-
-        Returns:
-            True if logged successfully
-        """
-        return await self.log_aged_monitoring_event(
-            aged_position_id=aged_position_id,
-            event_type=event_type,
-            market_price=None,
-            target_price=None,
-            price_distance_percent=None,
-            action_taken=event_metadata.get('order_type') if event_metadata else None,
-            success=True,
-            error_message=None,
-            event_metadata=event_metadata
-        )
-
     async def mark_aged_position_closed(
         self,
         aged_id: str,
