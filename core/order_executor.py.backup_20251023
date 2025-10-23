@@ -1,0 +1,420 @@
+"""
+Order Executor for Aged Positions - Robust order execution with retry logic
+Part of Aged Position Manager V2
+"""
+
+import asyncio
+import logging
+from typing import Dict, Optional, Tuple, Any
+from datetime import datetime, timezone
+from decimal import Decimal
+from dataclasses import dataclass
+import time
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OrderResult:
+    """Result of order execution attempt"""
+    success: bool
+    order_id: Optional[str]
+    order_type: str  # 'market', 'limit', 'limit_maker'
+    price: Optional[Decimal]
+    executed_amount: Optional[Decimal]
+    error_message: Optional[str]
+    attempts: int
+    execution_time: float
+
+
+class OrderExecutor:
+    """
+    Robust order executor with retry logic and fallback mechanisms
+    Tries multiple order types in sequence until success
+    """
+
+    def __init__(self, exchange_managers, repository=None):
+        self.exchanges = exchange_managers
+        self.repository = repository
+
+        # Configuration
+        self.max_attempts = 3
+        self.retry_delay = 1.0  # seconds
+        self.slippage_percent = Decimal('0.1')  # 0.1% slippage for limit orders
+
+        # Order type priority sequence
+        self.order_sequence = [
+            'market',        # Try market order first (fastest)
+            'limit_aggressive',  # Limit with slippage (likely to fill)
+            'limit_maker'    # Limit as maker (best price but may not fill)
+        ]
+
+        # Statistics
+        self.stats = {
+            'total_executions': 0,
+            'successful_market': 0,
+            'successful_limit': 0,
+            'failed_executions': 0,
+            'retries_needed': 0
+        }
+
+    async def execute_close(
+        self,
+        symbol: str,
+        exchange_name: str,
+        position_side: str,
+        amount: float,
+        reason: str = 'aged_close'
+    ) -> OrderResult:
+        """
+        Execute position close with robust retry logic
+
+        Args:
+            symbol: Trading pair symbol
+            exchange_name: Exchange name (binance, bybit)
+            position_side: Position side (long, short)
+            amount: Amount to close
+            reason: Reason for closing
+
+        Returns:
+            OrderResult with execution details
+        """
+
+        start_time = time.time()
+        self.stats['total_executions'] += 1
+
+        exchange = self.exchanges.get(exchange_name)
+        if not exchange:
+            error_msg = f"Exchange {exchange_name} not found"
+            logger.error(error_msg)
+            return OrderResult(
+                success=False,
+                order_id=None,
+                order_type='none',
+                price=None,
+                executed_amount=None,
+                error_message=error_msg,
+                attempts=0,
+                execution_time=time.time() - start_time
+            )
+
+        # Determine close side (opposite of position)
+        close_side = 'sell' if position_side in ['long', 'buy'] else 'buy'
+
+        # Try each order type in sequence
+        total_attempts = 0
+        last_error = None
+
+        for order_type in self.order_sequence:
+            for attempt in range(self.max_attempts):
+                total_attempts += 1
+
+                try:
+                    logger.info(
+                        f"📤 Executing {order_type} close for {symbol}: "
+                        f"attempt {attempt + 1}/{self.max_attempts}"
+                    )
+
+                    # Execute based on order type
+                    if order_type == 'market':
+                        result = await self._execute_market_order(
+                            exchange, symbol, close_side, amount
+                        )
+                    elif order_type == 'limit_aggressive':
+                        result = await self._execute_limit_aggressive(
+                            exchange, symbol, close_side, amount
+                        )
+                    elif order_type == 'limit_maker':
+                        result = await self._execute_limit_maker(
+                            exchange, symbol, close_side, amount
+                        )
+                    else:
+                        continue
+
+                    # Check if successful
+                    if result and result.get('id'):
+                        execution_time = time.time() - start_time
+
+                        # Update statistics
+                        if order_type == 'market':
+                            self.stats['successful_market'] += 1
+                        else:
+                            self.stats['successful_limit'] += 1
+
+                        if total_attempts > 1:
+                            self.stats['retries_needed'] += 1
+
+                        logger.info(
+                            f"✅ Order executed successfully: "
+                            f"id={result['id']}, type={order_type}, "
+                            f"attempts={total_attempts}, time={execution_time:.2f}s"
+                        )
+
+                        # Log to database if available
+                        if self.repository and reason.startswith('aged_'):
+                            await self._log_order_execution(
+                                symbol, result['id'], order_type,
+                                total_attempts, execution_time, reason
+                            )
+
+                        return OrderResult(
+                            success=True,
+                            order_id=result['id'],
+                            order_type=order_type,
+                            price=Decimal(str(result.get('price', 0))),
+                            executed_amount=Decimal(str(result.get('amount', amount))),
+                            error_message=None,
+                            attempts=total_attempts,
+                            execution_time=execution_time
+                        )
+
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(
+                        f"Order attempt failed: {order_type} "
+                        f"attempt {attempt + 1}: {e}"
+                    )
+
+                    # Wait before retry (except on last attempt)
+                    if attempt < self.max_attempts - 1:
+                        await asyncio.sleep(self.retry_delay)
+
+        # All attempts failed
+        self.stats['failed_executions'] += 1
+        execution_time = time.time() - start_time
+
+        logger.error(
+            f"❌ Failed to execute order after {total_attempts} attempts: "
+            f"{last_error}"
+        )
+
+        return OrderResult(
+            success=False,
+            order_id=None,
+            order_type='failed',
+            price=None,
+            executed_amount=None,
+            error_message=last_error,
+            attempts=total_attempts,
+            execution_time=execution_time
+        )
+
+    async def _execute_market_order(
+        self,
+        exchange,
+        symbol: str,
+        side: str,
+        amount: float
+    ) -> Dict:
+        """Execute market order"""
+
+        params = {'reduceOnly': True}
+
+        # Exchange-specific parameters
+        if exchange.exchange.id == 'bybit':
+            params['positionIdx'] = 0
+        elif exchange.exchange.id == 'binance':
+            params['type'] = 'MARKET'
+
+        return await exchange.exchange.create_order(
+            symbol=symbol,
+            type='market',
+            side=side,
+            amount=amount,
+            params=params
+        )
+
+    async def _execute_limit_aggressive(
+        self,
+        exchange,
+        symbol: str,
+        side: str,
+        amount: float
+    ) -> Dict:
+        """Execute limit order with aggressive pricing for quick fill"""
+
+        # Get current market price
+        ticker = await exchange.exchange.fetch_ticker(symbol)
+        current_price = Decimal(str(ticker['last']))
+
+        # Calculate aggressive price (with slippage)
+        if side == 'buy':
+            # For buy, use higher price
+            limit_price = current_price * (Decimal('1') + self.slippage_percent / Decimal('100'))
+        else:
+            # For sell, use lower price
+            limit_price = current_price * (Decimal('1') - self.slippage_percent / Decimal('100'))
+
+        # Round to exchange precision
+        limit_price = self._round_price(limit_price, symbol)
+
+        params = {
+            'reduceOnly': True,
+            'timeInForce': 'IOC'  # Immediate or Cancel
+        }
+
+        if exchange.exchange.id == 'bybit':
+            params['positionIdx'] = 0
+
+        logger.debug(
+            f"Limit aggressive: {side} {amount} @ {limit_price} "
+            f"(market: {current_price})"
+        )
+
+        return await exchange.exchange.create_order(
+            symbol=symbol,
+            type='limit',
+            side=side,
+            amount=amount,
+            price=float(limit_price),
+            params=params
+        )
+
+    async def _execute_limit_maker(
+        self,
+        exchange,
+        symbol: str,
+        side: str,
+        amount: float
+    ) -> Dict:
+        """Execute limit order as maker (post-only)"""
+
+        # Get order book for best price
+        order_book = await exchange.exchange.fetch_order_book(symbol, limit=5)
+
+        # Use best bid/ask for maker order
+        if side == 'buy':
+            # Place at top of bid
+            limit_price = Decimal(str(order_book['bids'][0][0]))
+        else:
+            # Place at top of ask
+            limit_price = Decimal(str(order_book['asks'][0][0]))
+
+        params = {
+            'reduceOnly': True,
+            'postOnly': True  # Maker only
+        }
+
+        if exchange.exchange.id == 'bybit':
+            params['positionIdx'] = 0
+            params['timeInForce'] = 'PostOnly'
+        elif exchange.exchange.id == 'binance':
+            params['timeInForce'] = 'GTX'  # Good Till Crossing (Post-Only)
+
+        logger.debug(
+            f"Limit maker: {side} {amount} @ {limit_price}"
+        )
+
+        return await exchange.exchange.create_order(
+            symbol=symbol,
+            type='limit',
+            side=side,
+            amount=amount,
+            price=float(limit_price),
+            params=params
+        )
+
+    def _round_price(self, price: Decimal, symbol: str) -> Decimal:
+        """Round price to appropriate precision for symbol"""
+
+        # Simple rounding to 2 decimals for most pairs
+        # In production, should use exchange's market info
+        if 'BTC' in symbol:
+            return price.quantize(Decimal('0.01'))
+        else:
+            return price.quantize(Decimal('0.0001'))
+
+    async def _log_order_execution(
+        self,
+        symbol: str,
+        order_id: str,
+        order_type: str,
+        attempts: int,
+        execution_time: float,
+        reason: str
+    ):
+        """Log order execution to database"""
+
+        if not self.repository:
+            return
+
+        try:
+            await self.repository.create_aged_monitoring_event(
+                aged_position_id=symbol,  # Use symbol as ID for now
+                event_type='order_executed',
+                details={
+                    'order_id': order_id,
+                    'order_type': order_type,
+                    'attempts': attempts,
+                    'execution_time': execution_time,
+                    'reason': reason
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to log order execution: {e}")
+
+    async def cancel_open_orders(self, symbol: str, exchange_name: str) -> int:
+        """
+        Cancel all open orders for symbol
+        Used for cleanup before placing new orders
+        """
+
+        exchange = self.exchanges.get(exchange_name)
+        if not exchange:
+            return 0
+
+        try:
+            # Fetch open orders
+            open_orders = await exchange.exchange.fetch_open_orders(symbol)
+
+            if not open_orders:
+                return 0
+
+            cancelled_count = 0
+            for order in open_orders:
+                try:
+                    await exchange.exchange.cancel_order(order['id'], symbol)
+                    cancelled_count += 1
+                    logger.info(f"Cancelled order {order['id']} for {symbol}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel order {order['id']}: {e}")
+
+            return cancelled_count
+
+        except Exception as e:
+            logger.error(f"Failed to fetch/cancel open orders: {e}")
+            return 0
+
+    def get_stats(self) -> Dict:
+        """Get execution statistics"""
+
+        success_rate = 0
+        if self.stats['total_executions'] > 0:
+            success_rate = (
+                (self.stats['successful_market'] + self.stats['successful_limit']) /
+                self.stats['total_executions'] * 100
+            )
+
+        return {
+            'total_executions': self.stats['total_executions'],
+            'successful_market': self.stats['successful_market'],
+            'successful_limit': self.stats['successful_limit'],
+            'failed_executions': self.stats['failed_executions'],
+            'retries_needed': self.stats['retries_needed'],
+            'success_rate': f"{success_rate:.1f}%"
+        }
+
+    async def test_connectivity(self, exchange_name: str) -> bool:
+        """Test exchange connectivity before execution"""
+
+        exchange = self.exchanges.get(exchange_name)
+        if not exchange:
+            return False
+
+        try:
+            # Simple connectivity test
+            await exchange.exchange.fetch_time()
+            return True
+        except Exception as e:
+            logger.error(f"Exchange connectivity test failed: {e}")
+            return False

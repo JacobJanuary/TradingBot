@@ -216,9 +216,6 @@ class PositionManager:
         # Per-symbol locks for WebSocket position updates
         self.position_update_locks: Dict[str, asyncio.Lock] = {}
 
-        # Locks for trailing stop operations
-        self.trailing_stop_locks: Dict[str, asyncio.Lock] = {}
-
         # Buffer for WebSocket updates for positions being created
         self.pending_updates = {}  # symbol -> list of updates
 
@@ -1500,22 +1497,6 @@ class PositionManager:
             )
             logger.info(f"⚡ Pre-registered {symbol} for WebSocket updates")
 
-    def _calculate_position_age_hours(self, position) -> float:
-        """Calculate position age in hours for aged detection"""
-        if not hasattr(position, 'opened_at') or not position.opened_at:
-            return 0.0
-
-        current_time = datetime.now(timezone.utc)
-
-        # Handle timezone awareness
-        if hasattr(position.opened_at, 'tzinfo') and position.opened_at.tzinfo:
-            position_age = current_time - position.opened_at
-        else:
-            opened_at_utc = position.opened_at.replace(tzinfo=timezone.utc)
-            position_age = current_time - opened_at_utc
-
-        return position_age.total_seconds() / 3600
-
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
         """
         Check if position already exists (thread-safe)
@@ -1929,10 +1910,10 @@ class PositionManager:
             # Update trailing stop
             # LOCK: Acquire lock for trailing stop update
             trailing_lock_key = f"trailing_stop_{symbol}"
-            if trailing_lock_key not in self.trailing_stop_locks:
-                self.trailing_stop_locks[trailing_lock_key] = asyncio.Lock()
+            if trailing_lock_key not in self.position_locks:
+                self.position_locks[trailing_lock_key] = asyncio.Lock()
 
-            async with self.trailing_stop_locks[trailing_lock_key]:
+            async with self.position_locks[trailing_lock_key]:
                 trailing_manager = self.trailing_managers.get(position.exchange)
 
                 if trailing_manager and position.has_trailing_stop:
@@ -2100,38 +2081,6 @@ class PositionManager:
                         exchange=position.exchange,
                         severity='ERROR'
                     )
-
-            # INSTANT AGED DETECTION - Fix for 2-minute delay
-            if self.unified_protection and symbol in self.positions:
-                position = self.positions[symbol]
-
-                # Skip if trailing stop is already active
-                if not (hasattr(position, 'trailing_activated') and position.trailing_activated):
-                    age_hours = self._calculate_position_age_hours(position)
-
-                    # Check if position just became aged
-                    if age_hours > self.max_position_age_hours:
-                        aged_monitor = self.unified_protection.get('aged_monitor')
-
-                        if aged_monitor:
-                            # Check if not already tracked
-                            if not hasattr(aged_monitor, 'aged_targets') or symbol not in aged_monitor.aged_targets:
-                                try:
-                                    # Add to monitoring immediately
-                                    await aged_monitor.add_aged_position(position)
-
-                                    logger.info(
-                                        f"⚡ INSTANT AGED DETECTION: {symbol} "
-                                        f"(age={age_hours:.1f}h) added to monitoring immediately"
-                                    )
-
-                                    # Track instant detection in stats
-                                    if not hasattr(self, 'instant_aged_detections'):
-                                        self.instant_aged_detections = 0
-                                    self.instant_aged_detections += 1
-
-                                except Exception as e:
-                                    logger.error(f"Failed to add aged position {symbol}: {e}")
 
     async def _on_order_filled(self, data: Dict):
         """Handle order filled event"""

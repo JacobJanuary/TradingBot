@@ -242,13 +242,10 @@ class AgedPositionMonitorV2:
                 await self.repository.create_aged_monitoring_event(
                     aged_position_id=target.position_id,
                     event_type='price_check',
-                    market_price=current_price,
+                    current_price=current_price,
                     target_price=target.target_price,
-                    price_distance_percent=abs((current_price - target.target_price) / target.target_price * Decimal('100')),
-                    event_metadata={
-                        'pnl_percent': str(pnl_percent),
-                        'phase': target.phase
-                    }
+                    pnl_percent=pnl_percent,
+                    phase=target.phase
                 )
             except Exception as e:
                 logger.error(f"Failed to log monitoring event: {e}")
@@ -337,7 +334,7 @@ class AgedPositionMonitorV2:
                     await self.repository.create_aged_monitoring_event(
                         aged_position_id=target.position_id,
                         event_type='closed',
-                        event_metadata={
+                        details={
                             'order_id': result.order_id,
                             'order_type': result.order_type,
                             'close_price': str(result.price if result.price else trigger_price),
@@ -362,7 +359,7 @@ class AgedPositionMonitorV2:
                     await self.repository.create_aged_monitoring_event(
                         aged_position_id=target.position_id,
                         event_type='close_failed',
-                        event_metadata={
+                        details={
                             'error': result.error_message,
                             'attempts': result.attempts,
                             'execution_time': result.execution_time
@@ -474,7 +471,7 @@ class AgedPositionMonitorV2:
                     await self.repository.create_aged_monitoring_event(
                         aged_position_id=target.position_id,
                         event_type='phase_change',
-                        event_metadata={
+                        details={
                             'old_phase': old_phase,
                             'new_phase': new_phase,
                             'age_hours': current_age_hours

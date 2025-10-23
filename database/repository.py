@@ -1025,5 +1025,394 @@ class Repository:
             return 0
 
 
+    # ==================== AGED POSITIONS ====================
+
+    async def create_aged_position(
+        self,
+        position_id: int,
+        symbol: str,
+        exchange: str,
+        side: str,
+        entry_price: Decimal,
+        quantity: Decimal,
+        position_opened_at: datetime,
+        detected_at: datetime,
+        status: str,
+        target_price: Decimal,
+        breakeven_price: Decimal,
+        config: Dict
+    ) -> Dict:
+        """Create new aged position entry in database
+
+        Args:
+            position_id: ID of the original position
+            symbol: Trading symbol (e.g., BTCUSDT)
+            exchange: Exchange name
+            side: Position side (long/short)
+            entry_price: Entry price of position
+            quantity: Position size
+            position_opened_at: When position was originally opened
+            detected_at: When position was detected as aged
+            status: Initial status (detected)
+            target_price: Initial target price
+            breakeven_price: Calculated breakeven price
+            config: Configuration at detection time
+
+        Returns:
+            Created aged position record
+        """
+        query = """
+            INSERT INTO monitoring.aged_positions (
+                position_id, symbol, exchange, side,
+                entry_price, quantity, position_opened_at,
+                detected_at, status, target_price,
+                breakeven_price, config, hours_aged,
+                current_phase, current_loss_tolerance_percent
+            ) VALUES (
+                %(position_id)s, %(symbol)s, %(exchange)s, %(side)s,
+                %(entry_price)s, %(quantity)s, %(position_opened_at)s,
+                %(detected_at)s, %(status)s, %(target_price)s,
+                %(breakeven_price)s, %(config)s,
+                EXTRACT(EPOCH FROM (%(detected_at)s - %(position_opened_at)s)) / 3600,
+                'grace', 0
+            )
+            RETURNING *
+        """
+
+        params = {
+            'position_id': position_id,
+            'symbol': symbol,
+            'exchange': exchange,
+            'side': side,
+            'entry_price': entry_price,
+            'quantity': quantity,
+            'position_opened_at': position_opened_at,
+            'detected_at': detected_at,
+            'status': status,
+            'target_price': target_price,
+            'breakeven_price': breakeven_price,
+            'config': Json(config) if config else None
+        }
+
+        async with self.pool.acquire() as conn:
+            try:
+                row = await conn.fetchrow(query, **params)
+                logger.info(f"Created aged_position entry {row['id']} for {symbol}")
+                return dict(row) if row else None
+            except Exception as e:
+                logger.error(f"Failed to create aged_position: {e}")
+                raise
+
+    async def get_active_aged_positions(
+        self,
+        statuses: List[str] = None
+    ) -> List[Dict]:
+        """Get all active aged positions from database
+
+        Args:
+            statuses: List of statuses to filter by
+
+        Returns:
+            List of active aged position records
+        """
+        if not statuses:
+            statuses = ['detected', 'grace_active', 'progressive_active', 'monitoring']
+
+        query = """
+            SELECT
+                ap.*,
+                EXTRACT(EPOCH FROM (NOW() - ap.position_opened_at)) / 3600 as current_age_hours,
+                EXTRACT(EPOCH FROM (NOW() - ap.detected_at)) / 3600 as hours_since_detection
+            FROM monitoring.aged_positions ap
+            WHERE ap.status = ANY(%(statuses)s)
+                AND ap.closed_at IS NULL
+            ORDER BY ap.detected_at DESC
+        """
+
+        params = {'statuses': statuses}
+
+        async with self.pool.acquire() as conn:
+            try:
+                rows = await conn.fetch(query, **params)
+                return [dict(row) for row in rows]
+            except Exception as e:
+                logger.error(f"Failed to get active aged positions: {e}")
+                return []
+
+    async def update_aged_position_status(
+        self,
+        aged_id: str,
+        new_status: str,
+        target_price: Decimal = None,
+        current_phase: str = None,
+        current_loss_tolerance_percent: Decimal = None,
+        hours_aged: float = None,
+        last_error_message: str = None
+    ) -> bool:
+        """Update aged position status and optional fields
+
+        Args:
+            aged_id: Aged position ID
+            new_status: New status
+            target_price: Updated target price
+            current_phase: Current phase (grace/progressive)
+            current_loss_tolerance_percent: Current loss tolerance
+            hours_aged: Current age in hours
+            last_error_message: Error message if any
+
+        Returns:
+            True if updated successfully
+        """
+        # Build dynamic update query
+        fields = ['status = %(new_status)s', 'updated_at = NOW()']
+        params = {'aged_id': aged_id, 'new_status': new_status}
+
+        if target_price is not None:
+            fields.append('target_price = %(target_price)s')
+            params['target_price'] = target_price
+
+        if current_phase is not None:
+            fields.append('current_phase = %(current_phase)s')
+            params['current_phase'] = current_phase
+
+        if current_loss_tolerance_percent is not None:
+            fields.append('current_loss_tolerance_percent = %(current_loss_tolerance_percent)s')
+            params['current_loss_tolerance_percent'] = current_loss_tolerance_percent
+
+        if hours_aged is not None:
+            fields.append('hours_aged = %(hours_aged)s')
+            params['hours_aged'] = hours_aged
+
+        if last_error_message is not None:
+            fields.append('last_error_message = %(last_error_message)s')
+            params['last_error_message'] = last_error_message
+
+        query = f"""
+            UPDATE monitoring.aged_positions
+            SET {', '.join(fields)}
+            WHERE id = %(aged_id)s
+            RETURNING id
+        """
+
+        async with self.pool.acquire() as conn:
+            try:
+                result = await conn.fetchval(query, **params)
+                if result:
+                    logger.info(f"Updated aged position {aged_id} status to {new_status}")
+                    return True
+                else:
+                    logger.warning(f"Aged position {aged_id} not found")
+                    return False
+            except Exception as e:
+                logger.error(f"Failed to update aged position status: {e}")
+                return False
+
+    async def create_aged_monitoring_event(
+        self,
+        aged_position_id: str,
+        event_type: str,
+        market_price: Decimal = None,
+        target_price: Decimal = None,
+        price_distance_percent: Decimal = None,
+        action_taken: str = None,
+        success: bool = None,
+        error_message: str = None,
+        event_metadata: Dict = None
+    ) -> bool:
+        """Log aged position monitoring event
+
+        Args:
+            aged_position_id: Aged position ID
+            event_type: Type of event (price_check, phase_change, close_triggered, etc.)
+            market_price: Current market price
+            target_price: Target price at time of event
+            price_distance_percent: Distance from target in percent
+            action_taken: What action was taken
+            success: Whether action was successful
+            error_message: Error message if failed
+            event_metadata: Additional event data
+
+        Returns:
+            True if logged successfully
+        """
+        query = """
+            INSERT INTO monitoring.aged_positions_monitoring (
+                aged_position_id, event_type, market_price,
+                target_price, price_distance_percent,
+                action_taken, success, error_message,
+                event_metadata, created_at
+            ) VALUES (
+                %(aged_position_id)s, %(event_type)s, %(market_price)s,
+                %(target_price)s, %(price_distance_percent)s,
+                %(action_taken)s, %(success)s, %(error_message)s,
+                %(event_metadata)s, NOW()
+            )
+        """
+
+        params = {
+            'aged_position_id': aged_position_id,
+            'event_type': event_type,
+            'market_price': market_price,
+            'target_price': target_price,
+            'price_distance_percent': price_distance_percent,
+            'action_taken': action_taken,
+            'success': success,
+            'error_message': error_message,
+            'event_metadata': Json(event_metadata) if event_metadata else None
+        }
+
+        async with self.pool.acquire() as conn:
+            try:
+                await conn.execute(query, **params)
+                return True
+            except Exception as e:
+                logger.error(f"Failed to create monitoring event: {e}")
+                return False
+
+    async def mark_aged_position_closed(
+        self,
+        aged_id: str,
+        close_price: Decimal,
+        close_order_id: str,
+        actual_pnl: Decimal,
+        actual_pnl_percent: Decimal,
+        close_reason: str,
+        close_attempts: int = 1
+    ) -> bool:
+        """Mark aged position as closed
+
+        Args:
+            aged_id: Aged position ID
+            close_price: Price at which position was closed
+            close_order_id: Exchange order ID
+            actual_pnl: Actual PnL amount
+            actual_pnl_percent: Actual PnL percentage
+            close_reason: Reason for closure (target_reached, grace_period, progressive, etc.)
+            close_attempts: Number of attempts it took
+
+        Returns:
+            True if updated successfully
+        """
+        query = """
+            UPDATE monitoring.aged_positions
+            SET
+                status = 'closed',
+                closed_at = NOW(),
+                close_price = %(close_price)s,
+                close_order_id = %(close_order_id)s,
+                actual_pnl = %(actual_pnl)s,
+                actual_pnl_percent = %(actual_pnl_percent)s,
+                close_reason = %(close_reason)s,
+                close_attempts = %(close_attempts)s,
+                updated_at = NOW()
+            WHERE id = %(aged_id)s
+            RETURNING id
+        """
+
+        params = {
+            'aged_id': aged_id,
+            'close_price': close_price,
+            'close_order_id': close_order_id,
+            'actual_pnl': actual_pnl,
+            'actual_pnl_percent': actual_pnl_percent,
+            'close_reason': close_reason,
+            'close_attempts': close_attempts
+        }
+
+        async with self.pool.acquire() as conn:
+            try:
+                result = await conn.fetchval(query, **params)
+                if result:
+                    logger.info(f"Marked aged position {aged_id} as closed (reason: {close_reason})")
+                    return True
+                else:
+                    logger.warning(f"Aged position {aged_id} not found")
+                    return False
+            except Exception as e:
+                logger.error(f"Failed to mark aged position as closed: {e}")
+                return False
+
+    async def get_aged_positions_statistics(
+        self,
+        from_date: datetime = None,
+        to_date: datetime = None
+    ) -> Dict:
+        """Get aged positions statistics
+
+        Args:
+            from_date: Start date for statistics
+            to_date: End date for statistics
+
+        Returns:
+            Dictionary with various statistics
+        """
+        if not from_date:
+            from_date = datetime.now() - timedelta(days=7)
+        if not to_date:
+            to_date = datetime.now()
+
+        query = """
+            WITH stats AS (
+                SELECT
+                    COUNT(*) as total_count,
+                    COUNT(CASE WHEN status = 'closed' THEN 1 END) as closed_count,
+                    COUNT(CASE WHEN status = 'error' THEN 1 END) as error_count,
+                    AVG(hours_aged) as avg_age_hours,
+                    AVG(actual_pnl_percent) as avg_pnl_percent,
+                    AVG(close_attempts) as avg_close_attempts,
+                    AVG(EXTRACT(EPOCH FROM (closed_at - detected_at))) as avg_close_duration
+                FROM monitoring.aged_positions
+                WHERE detected_at BETWEEN %(from_date)s AND %(to_date)s
+            ),
+            close_reasons AS (
+                SELECT
+                    close_reason,
+                    COUNT(*) as count
+                FROM monitoring.aged_positions
+                WHERE detected_at BETWEEN %(from_date)s AND %(to_date)s
+                    AND close_reason IS NOT NULL
+                GROUP BY close_reason
+            )
+            SELECT
+                s.*,
+                COALESCE(
+                    json_object_agg(cr.close_reason, cr.count),
+                    '{}'::json
+                ) as by_close_reason
+            FROM stats s
+            CROSS JOIN close_reasons cr
+            GROUP BY s.total_count, s.closed_count, s.error_count,
+                     s.avg_age_hours, s.avg_pnl_percent,
+                     s.avg_close_attempts, s.avg_close_duration
+        """
+
+        params = {
+            'from_date': from_date,
+            'to_date': to_date
+        }
+
+        async with self.pool.acquire() as conn:
+            try:
+                row = await conn.fetchrow(query, **params)
+                if row:
+                    result = dict(row)
+                    # Calculate success rate
+                    if result['total_count'] > 0:
+                        result['success_rate'] = (result['closed_count'] / result['total_count']) * 100
+                    else:
+                        result['success_rate'] = 0
+                    return result
+                else:
+                    return {
+                        'total_count': 0,
+                        'closed_count': 0,
+                        'error_count': 0,
+                        'success_rate': 0,
+                        'by_close_reason': {}
+                    }
+            except Exception as e:
+                logger.error(f"Failed to get aged statistics: {e}")
+                return {}
+
 # Add alias for compatibility
 TradingRepository = Repository
