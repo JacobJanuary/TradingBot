@@ -216,6 +216,9 @@ class PositionManager:
         # Per-symbol locks for WebSocket position updates
         self.position_update_locks: Dict[str, asyncio.Lock] = {}
 
+        # Buffer for WebSocket updates for positions being created
+        self.pending_updates = {}  # symbol -> list of updates
+
         # Risk management
         self.total_exposure = Decimal('0')
         self.position_count = 0
