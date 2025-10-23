@@ -249,6 +249,11 @@ class AtomicPositionManager:
                     symbol, side, quantity
                 )
 
+                # Pre-register position for WebSocket updates (fix race condition)
+                if hasattr(self, 'position_manager') and self.position_manager:
+                    await self.position_manager.pre_register_position(symbol, exchange)
+                    logger.info(f"✅ Pre-registered {symbol} for immediate WebSocket tracking")
+
                 # Check if order was created
                 if raw_order is None:
                     raise AtomicPositionError(f"Failed to create order for {symbol}: order returned None")
