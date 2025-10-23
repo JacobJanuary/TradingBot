@@ -911,3 +911,44 @@ class AgedPositionMonitorV2:
             logger.warning(f"⚠️ Re-subscribed {resubscribed_count} position(s)")
 
         return resubscribed_count
+
+    async def check_websocket_health(self) -> dict:
+        """
+        ✅ ENHANCEMENT #2D: Check WebSocket health for aged positions
+
+        Returns:
+            dict: Health report with stale symbols
+        """
+        if not hasattr(self, 'price_monitor') or not self.price_monitor:
+            logger.warning("Price monitor not available for health check")
+            return {'healthy': False, 'reason': 'no_price_monitor'}
+
+        # Get aged symbols
+        aged_symbols = list(self.aged_targets.keys())
+
+        if not aged_symbols:
+            return {'healthy': True, 'aged_count': 0}
+
+        # Check staleness
+        staleness_report = await self.price_monitor.check_staleness(aged_symbols)
+
+        stale_symbols = [
+            symbol for symbol, data in staleness_report.items()
+            if data['stale']
+        ]
+
+        health_report = {
+            'healthy': len(stale_symbols) == 0,
+            'aged_count': len(aged_symbols),
+            'stale_count': len(stale_symbols),
+            'stale_symbols': stale_symbols,
+            'staleness_details': staleness_report
+        }
+
+        if stale_symbols:
+            logger.warning(
+                f"⚠️ {len(stale_symbols)} aged positions have stale WebSocket prices: "
+                f"{', '.join(stale_symbols)}"
+            )
+
+        return health_report
