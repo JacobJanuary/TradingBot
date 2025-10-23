@@ -1237,38 +1237,62 @@ class Repository:
             True if logged successfully
         """
         query = """
-            INSERT INTO monitoring.aged_positions_monitoring (
+            INSERT INTO aged_monitoring_events (
                 aged_position_id, event_type, market_price,
                 target_price, price_distance_percent,
                 action_taken, success, error_message,
                 event_metadata, created_at
-            ) VALUES (
-                %(aged_position_id)s, %(event_type)s, %(market_price)s,
-                %(target_price)s, %(price_distance_percent)s,
-                %(action_taken)s, %(success)s, %(error_message)s,
-                %(event_metadata)s, NOW()
-            )
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
         """
-
-        params = {
-            'aged_position_id': aged_position_id,
-            'event_type': event_type,
-            'market_price': market_price,
-            'target_price': target_price,
-            'price_distance_percent': price_distance_percent,
-            'action_taken': action_taken,
-            'success': success,
-            'error_message': error_message,
-            'event_metadata': json.dumps(event_metadata) if event_metadata else None
-        }
 
         async with self.pool.acquire() as conn:
             try:
-                await conn.execute(query, **params)
+                await conn.execute(
+                    query,
+                    aged_position_id,
+                    event_type,
+                    market_price,
+                    target_price,
+                    price_distance_percent,
+                    action_taken,
+                    success,
+                    error_message,
+                    json.dumps(event_metadata) if event_metadata else None
+                )
                 return True
             except Exception as e:
                 logger.error(f"Failed to create monitoring event: {e}")
                 return False
+
+    async def create_aged_monitoring_event(
+        self,
+        aged_position_id: str,
+        event_type: str,
+        event_metadata: Dict = None,
+        **kwargs
+    ) -> bool:
+        """Simplified method for order_executor
+
+        Args:
+            aged_position_id: Aged position ID
+            event_type: Type of event
+            event_metadata: Additional event data
+            **kwargs: Ignored extra arguments
+
+        Returns:
+            True if logged successfully
+        """
+        return await self.log_aged_monitoring_event(
+            aged_position_id=aged_position_id,
+            event_type=event_type,
+            market_price=None,
+            target_price=None,
+            price_distance_percent=None,
+            action_taken=event_metadata.get('order_type') if event_metadata else None,
+            success=True,
+            error_message=None,
+            event_metadata=event_metadata
+        )
 
     async def mark_aged_position_closed(
         self,

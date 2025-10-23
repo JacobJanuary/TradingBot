@@ -157,12 +157,16 @@ class OrderExecutor:
                                 total_attempts, execution_time, reason
                             )
 
+                        # Safely convert price and amount to Decimal
+                        price_value = result.get('price')
+                        amount_value = result.get('amount')
+
                         return OrderResult(
                             success=True,
                             order_id=result['id'],
                             order_type=order_type,
-                            price=Decimal(str(result.get('price', 0))),
-                            executed_amount=Decimal(str(result.get('amount', amount))),
+                            price=Decimal(str(price_value)) if price_value else Decimal('0'),
+                            executed_amount=Decimal(str(amount_value)) if amount_value else Decimal(str(amount)),
                             error_message=None,
                             attempts=total_attempts,
                             execution_time=execution_time
@@ -211,9 +215,7 @@ class OrderExecutor:
         params = {'reduceOnly': True}
 
         # Exchange-specific parameters
-        if exchange.exchange.id == 'bybit':
-            params['positionIdx'] = 0
-        elif exchange.exchange.id == 'binance':
+        if exchange.exchange.id == 'binance':
             params['type'] = 'MARKET'
 
         return await exchange.exchange.create_order(
@@ -256,9 +258,6 @@ class OrderExecutor:
             'reduceOnly': True,
             'timeInForce': 'IOC'  # Immediate or Cancel
         }
-
-        if exchange.exchange.id == 'bybit':
-            params['positionIdx'] = 0
 
         logger.debug(
             f"Limit aggressive: {side} {amount} @ {limit_price} "
@@ -318,7 +317,6 @@ class OrderExecutor:
         }
 
         if exchange.exchange.id == 'bybit':
-            params['positionIdx'] = 0
             params['timeInForce'] = 'PostOnly'
         elif exchange.exchange.id == 'binance':
             params['timeInForce'] = 'GTX'  # Good Till Crossing (Post-Only)
