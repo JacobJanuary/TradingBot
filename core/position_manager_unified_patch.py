@@ -169,6 +169,11 @@ async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: i
             await asyncio.sleep(interval_minutes * 60)
             await aged_monitor.periodic_full_scan()
 
+            # ✅ FIX #5: Run subscription health check
+            aged_adapter = unified_protection.get('aged_adapter')
+            if aged_adapter:
+                await aged_monitor.verify_subscriptions(aged_adapter)
+
         except asyncio.CancelledError:
             logger.info("Periodic aged scan task cancelled")
             break

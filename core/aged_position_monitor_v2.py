@@ -816,3 +816,28 @@ class AgedPositionMonitorV2:
 
         except Exception as e:
             logger.error(f"Periodic aged scan failed: {e}")
+
+    async def verify_subscriptions(self, aged_adapter):
+        """
+        ✅ FIX #5: Verify that all aged positions have active subscriptions
+        Re-subscribe if missing
+        """
+        if not aged_adapter:
+            return 0
+
+        resubscribed_count = 0
+
+        for symbol in list(self.aged_targets.keys()):
+            if symbol not in aged_adapter.monitoring_positions:
+                logger.warning(f"⚠️ Subscription missing for {symbol}! Re-subscribing...")
+
+                if self.position_manager and symbol in self.position_manager.positions:
+                    position = self.position_manager.positions[symbol]
+                    await aged_adapter.add_aged_position(position)
+                    resubscribed_count += 1
+                    logger.info(f"✅ Re-subscribed {symbol}")
+
+        if resubscribed_count > 0:
+            logger.warning(f"⚠️ Re-subscribed {resubscribed_count} position(s)")
+
+        return resubscribed_count
