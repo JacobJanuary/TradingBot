@@ -283,14 +283,19 @@ class TradingBot:
             logger.info("Loading positions from database...")
             await self.position_manager.load_positions_from_db()
 
-            # Initialize aged position manager
-            logger.info("Initializing aged position manager...")
-            self.aged_position_manager = AgedPositionManager(
-                settings.trading,
-                self.position_manager,
-                self.exchanges  # Pass exchanges dict directly
-            )
-            logger.info("✅ Aged position manager ready")
+            # Initialize aged position manager (only if unified protection is disabled)
+            use_unified_protection = os.getenv('USE_UNIFIED_PROTECTION', 'false').lower() == 'true'
+            if not use_unified_protection:
+                logger.info("Initializing aged position manager (legacy)...")
+                self.aged_position_manager = AgedPositionManager(
+                    settings.trading,
+                    self.position_manager,
+                    self.exchanges  # Pass exchanges dict directly
+                )
+                logger.info("✅ Aged position manager ready (legacy)")
+            else:
+                logger.info("⚡ Aged position manager disabled - using Unified Protection V2")
+                self.aged_position_manager = None
 
             # Initialize WebSocket signal processor
             logger.info("Initializing WebSocket signal processor...")

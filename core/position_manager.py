@@ -38,6 +38,13 @@ from core.event_logger import get_event_logger, EventType
 from core.atomic_position_manager import AtomicPositionManager, SymbolUnavailableError, MinimumOrderLimitError
 from utils.decimal_utils import to_decimal, calculate_stop_loss, calculate_pnl, calculate_quantity
 
+# UNIFIED PROTECTION PATCH (minimal integration)
+from core.position_manager_unified_patch import (
+    init_unified_protection,
+    handle_unified_price_update,
+    check_and_register_aged_positions
+)
+
 # CRITICAL FIX: Import normalize_symbol for correct position verification
 def normalize_symbol(symbol: str) -> str:
     """
@@ -192,6 +199,9 @@ class PositionManager:
             )
             for name, exchange in exchanges.items()
         }
+
+        # UNIFIED PROTECTION (if enabled via env)
+        self.unified_protection = init_unified_protection(self)
 
         # Active positions tracking
         self.positions: Dict[str, PositionState] = {}  # symbol -> position
@@ -823,6 +833,13 @@ class PositionManager:
         """Start periodic position synchronization"""
         logger.info(f"🔄 Starting periodic sync every {self.sync_interval} seconds")
 
+        # Start unified price monitor if enabled
+        if self.unified_protection and 'price_monitor' in self.unified_protection:
+            price_monitor = self.unified_protection['price_monitor']
+            if not price_monitor.running:
+                await price_monitor.start()
+                logger.info("✅ Unified price monitor started")
+
         while True:
             try:
                 await asyncio.sleep(self.sync_interval)
@@ -842,6 +859,10 @@ class PositionManager:
 
                 # CRITICAL FIX: Re-check SL protection after zombie cleanup
                 await self.check_positions_protection()
+
+                # Check aged positions for unified protection
+                if self.unified_protection:
+                    await check_and_register_aged_positions(self, self.unified_protection)
 
                 logger.info("✅ Periodic sync completed")
 
@@ -1803,6 +1824,14 @@ class PositionManager:
             position.current_price = float(data.get('mark_price', position.current_price))
             logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
 
+            # UNIFIED PRICE UPDATE (if enabled)
+            if self.unified_protection:
+                await handle_unified_price_update(
+                    self.unified_protection,
+                    symbol,
+                    position.current_price
+                )
+
             position.unrealized_pnl = data.get('unrealized_pnl', 0)
 
             # Calculate PnL percent
@@ -1848,6 +1877,14 @@ class PositionManager:
                         if action == 'activated':
                             position.trailing_activated = True
                             logger.info(f"Trailing stop activated for {symbol}")
+
+                            # Register with unified protection if enabled
+                            if self.unified_protection and 'ts_adapters' in self.unified_protection:
+                                exchange_name = position.exchange
+                                if exchange_name in self.unified_protection['ts_adapters']:
+                                    adapter = self.unified_protection['ts_adapters'][exchange_name]
+                                    await adapter.register_position(position)
+                                    logger.info(f"Position {symbol} registered with unified protection")
 
                             # Log trailing stop activation
                             event_logger = get_event_logger()
