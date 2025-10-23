@@ -1099,6 +1099,16 @@ class PositionManager:
                     logger.info(f"✅ Position #{atomic_result['position_id']} for {symbol} opened ATOMICALLY at ${atomic_result['entry_price']:.4f}")
                     logger.info(f"✅ Added {symbol} to tracked positions (total: {len(self.positions)})")
 
+                    # Apply any buffered WebSocket updates
+                    if symbol in self.pending_updates:
+                        logger.info(f"📤 Applying {len(self.pending_updates[symbol])} buffered updates for {symbol}")
+                        for update in self.pending_updates[symbol]:
+                            try:
+                                await self._on_position_update(update)
+                            except Exception as e:
+                                logger.error(f"Failed to apply buffered update: {e}")
+                        del self.pending_updates[symbol]
+
                     # 10. Initialize trailing stop (ATOMIC path)
                     # NOTE: initial_stop НЕ передается - Protection SL уже создан StopLossManager
                     # Trailing создаст свой SL только при активации (когда позиция в прибыли)
@@ -1430,6 +1440,16 @@ class PositionManager:
             self.position_count += 1
             self.total_exposure += Decimal(str(position.quantity * position.entry_price))
             self.stats['positions_opened'] += 1
+
+            # Apply any buffered WebSocket updates
+            if symbol in self.pending_updates:
+                logger.info(f"📤 Applying {len(self.pending_updates[symbol])} buffered updates for {symbol}")
+                for update in self.pending_updates[symbol]:
+                    try:
+                        await self._on_position_update(update)
+                    except Exception as e:
+                        logger.error(f"Failed to apply buffered update: {e}")
+                del self.pending_updates[symbol]
 
             # Position already saved to database in steps 8-9 above
             logger.info(f"💾 Position saved to database with ID: {position.id}")
