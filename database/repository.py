@@ -1251,62 +1251,32 @@ class Repository:
 
     async def mark_aged_position_closed(
         self,
-        aged_id: str,
-        close_price: Decimal,
-        close_order_id: str,
-        actual_pnl: Decimal,
-        actual_pnl_percent: Decimal,
-        close_reason: str,
-        close_attempts: int = 1
+        position_id: str,
+        close_reason: str
     ) -> bool:
         """Mark aged position as closed
 
         Args:
-            aged_id: Aged position ID
-            close_price: Price at which position was closed
-            close_order_id: Exchange order ID
-            actual_pnl: Actual PnL amount
-            actual_pnl_percent: Actual PnL percentage
-            close_reason: Reason for closure (target_reached, grace_period, progressive, etc.)
-            close_attempts: Number of attempts it took
+            position_id: Position ID (matches position_id column)
+            close_reason: Reason for closure
 
         Returns:
-            True if updated successfully
+            True if deleted successfully
         """
         query = """
-            UPDATE monitoring.aged_positions
-            SET
-                status = 'closed',
-                closed_at = NOW(),
-                close_price = %(close_price)s,
-                close_order_id = %(close_order_id)s,
-                actual_pnl = %(actual_pnl)s,
-                actual_pnl_percent = %(actual_pnl_percent)s,
-                close_reason = %(close_reason)s,
-                close_attempts = %(close_attempts)s,
-                updated_at = NOW()
-            WHERE id = %(aged_id)s
+            DELETE FROM aged_positions
+            WHERE position_id = $1
             RETURNING id
         """
 
-        params = {
-            'aged_id': aged_id,
-            'close_price': close_price,
-            'close_order_id': close_order_id,
-            'actual_pnl': actual_pnl,
-            'actual_pnl_percent': actual_pnl_percent,
-            'close_reason': close_reason,
-            'close_attempts': close_attempts
-        }
-
         async with self.pool.acquire() as conn:
             try:
-                result = await conn.fetchval(query, **params)
+                result = await conn.fetchval(query, str(position_id))
                 if result:
-                    logger.info(f"Marked aged position {aged_id} as closed (reason: {close_reason})")
+                    logger.info(f"Marked aged position {position_id} as closed (reason: {close_reason})")
                     return True
                 else:
-                    logger.warning(f"Aged position {aged_id} not found")
+                    logger.warning(f"Aged position {position_id} not found")
                     return False
             except Exception as e:
                 logger.error(f"Failed to mark aged position as closed: {e}")
