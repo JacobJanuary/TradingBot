@@ -81,10 +81,11 @@ class AtomicPositionManager:
     3. Recovery для незавершенных операций
     """
 
-    def __init__(self, repository, exchange_manager, stop_loss_manager):
+    def __init__(self, repository, exchange_manager, stop_loss_manager, position_manager=None):
         self.repository = repository
         self.exchange_manager = exchange_manager
         self.stop_loss_manager = stop_loss_manager
+        self.position_manager = position_manager  # NEW
         self.active_operations = {}  # Track ongoing operations
 
     @asynccontextmanager

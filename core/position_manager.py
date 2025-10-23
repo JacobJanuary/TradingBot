@@ -1059,7 +1059,8 @@ class PositionManager:
                 atomic_manager = AtomicPositionManager(
                     repository=self.repository,
                     exchange_manager=self.exchanges,  # FIX: Use self.exchanges instead of dict
-                    stop_loss_manager=sl_manager
+                    stop_loss_manager=sl_manager,
+                    position_manager=self  # NEW: pass position_manager reference
                 )
 
                 # Execute atomic creation
