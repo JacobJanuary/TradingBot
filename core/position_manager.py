@@ -1458,6 +1458,24 @@ class PositionManager:
         finally:
             self.position_locks.discard(lock_key)
 
+    async def pre_register_position(self, symbol: str, exchange: str):
+        """Pre-register position for WebSocket updates before it's fully created"""
+        if symbol not in self.positions:
+            # Create temporary placeholder
+            self.positions[symbol] = PositionState(
+                id="pending",
+                symbol=symbol,
+                exchange=exchange,
+                side="pending",
+                quantity=0,
+                entry_price=0,
+                current_price=0,
+                unrealized_pnl=0,
+                unrealized_pnl_percent=0,
+                opened_at=datetime.now(timezone.utc)
+            )
+            logger.info(f"⚡ Pre-registered {symbol} for WebSocket updates")
+
     async def _position_exists(self, symbol: str, exchange: str) -> bool:
         """
         Check if position already exists (thread-safe)
