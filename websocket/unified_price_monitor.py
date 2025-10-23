@@ -35,6 +35,11 @@ class UnifiedPriceMonitor:
         self.last_update_time = defaultdict(float)
         self.min_update_interval = 0.1  # 100ms between updates per symbol
 
+        # ✅ ENHANCEMENT #2A: Staleness tracking
+        self.staleness_threshold_seconds = 300  # 5 minutes
+        self.stale_symbols = set()  # Symbols with stale prices
+        self.staleness_warnings_logged = set()  # Prevent spam
+
         # Simple stats
         self.update_count = 0
         self.error_count = 0
