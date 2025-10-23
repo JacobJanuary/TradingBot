@@ -95,7 +95,9 @@ class OrderExecutor:
 
         # Configuration
         self.max_attempts = 3
-        self.retry_delay = 1.0  # seconds
+        self.base_retry_delay = 0.5      # Base delay: 500ms
+        self.max_retry_delay = 5.0       # Max delay: 5s
+        self.rate_limit_delay = 15.0     # Delay for rate limit: 15s
         self.slippage_percent = Decimal('0.1')  # 0.1% slippage for limit orders
 
         # Order type priority sequence
