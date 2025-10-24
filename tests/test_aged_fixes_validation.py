@@ -70,10 +70,9 @@ def test_fix_2_mark_aged_position_closed():
     assert '%(name)s' not in source, "❌ SQL НЕ должен использовать %(name)s"
     print("✅ SQL использует $1 (asyncpg)")
 
-    # Check SQL targets aged_positions (not monitoring.aged_positions)
-    assert 'DELETE FROM aged_positions' in source, "❌ SQL должен удалять из aged_positions"
-    assert 'monitoring.aged_positions' not in source, "❌ SQL НЕ должен использовать monitoring.aged_positions"
-    print("✅ SQL удаляет из aged_positions")
+    # Check SQL targets monitoring.aged_positions (after UTC migration)
+    assert 'DELETE FROM monitoring.aged_positions' in source, "❌ SQL должен удалять из monitoring.aged_positions"
+    print("✅ SQL удаляет из monitoring.aged_positions")
 
     print("✅ ФИК 2 КОРРЕКТЕН")
     return True

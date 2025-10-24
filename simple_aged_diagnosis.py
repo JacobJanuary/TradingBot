@@ -86,7 +86,7 @@ async def main():
     try:
         aged_records = await conn.fetch("""
             SELECT symbol, phase, status, created_at
-            FROM public.aged_positions
+            FROM monitoring.aged_positions
             WHERE status = 'active'
             ORDER BY created_at DESC
         """)
