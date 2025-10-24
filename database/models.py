@@ -1,6 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, Boolean,
-    JSON, ForeignKey, Index, Enum as SQLEnum
+    Column, Integer, String, Float, Boolean,
+    JSON, ForeignKey, Index, Enum as SQLEnum, TIMESTAMP
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -61,8 +61,8 @@ class Trade(Base):
     fee = Column(Float, default=0)
     fee_currency = Column(String(10))
 
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    executed_at = Column(DateTime)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    executed_at = Column(TIMESTAMP(timezone=True))
 
     # Relationships
     # position = relationship("Position", back_populates="open_trade", uselist=False)  # Commented for tests
@@ -85,8 +85,8 @@ class Order(Base):
     filled = Column(Float, default=0)
     remaining = Column(Float)
     status = Column(String(20), nullable=False)  # open, filled, cancelled, rejected
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, onupdate=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), onupdate=func.now())
     
     # Relationships
     # position = relationship("Position", back_populates="orders")  # Commented for tests
@@ -140,12 +140,12 @@ class Position(Base):
     fees = Column(Float, default=0.0)  # Trading fees
     exit_reason = Column(String(100))  # 'stop_loss', 'take_profit', 'manual', etc
 
-    opened_at = Column(DateTime, default=func.now(), nullable=False)
-    closed_at = Column(DateTime)
+    opened_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    closed_at = Column(TIMESTAMP(timezone=True))
 
     # WebSocket tracking
     ws_position_id = Column(String(100))
-    last_update = Column(DateTime)
+    last_update = Column(TIMESTAMP(timezone=True))
 
     # Relationships
     # open_trade = relationship("Trade", back_populates="position")  # Commented for tests
@@ -177,8 +177,8 @@ class StopLossConfig(Base):
     use_partial_closes = Column(Boolean, default=False)
     use_time_stop = Column(Boolean, default=False)
     max_position_hours = Column(Integer, default=24)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, onupdate=func.now())
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(TIMESTAMP(timezone=True), onupdate=func.now())
 
 
 class RiskEvent(Base):
@@ -191,7 +191,7 @@ class RiskEvent(Base):
     event_type = Column(String(50), nullable=False)
     risk_level = Column(String(20))
     details = Column(JSON)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Alert(Base):
@@ -205,8 +205,8 @@ class Alert(Base):
     message = Column(String(500))
     details = Column(JSON)
     acknowledged = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    acknowledged_at = Column(DateTime)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    acknowledged_at = Column(TIMESTAMP(timezone=True))
 
 
 class Performance(Base):
@@ -216,7 +216,7 @@ class Performance(Base):
 
     id = Column(Integer, primary_key=True)
 
-    timestamp = Column(DateTime, default=func.now(), nullable=False, index=True)
+    timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     # Account metrics
     total_balance = Column(Float, nullable=False)

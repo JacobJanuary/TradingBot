@@ -2,9 +2,10 @@ import asyncpg
 import logging
 import hashlib
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
+from utils.datetime_helpers import now_utc, ensure_utc
 
 logger = logging.getLogger(__name__)
 
@@ -774,7 +775,7 @@ class Repository:
                     float(order_data.get('amount', 0)),
                     float(order_data.get('filled', 0)),
                     order_data.get('status'),
-                    order_data.get('timestamp') if order_data.get('timestamp') else datetime.now(),
+                    order_data.get('timestamp') if order_data.get('timestamp') else now_utc(),
                     json.dumps(order_data)  # Store full order data as JSONB
                 )
             return True
@@ -1055,7 +1056,7 @@ class Repository:
             Created aged position record
         """
         query = """
-            INSERT INTO aged_positions (
+            INSERT INTO monitoring.aged_positions (
                 position_id, symbol, exchange,
                 entry_price, target_price, phase,
                 hours_aged, loss_tolerance,
@@ -1222,7 +1223,7 @@ class Repository:
             True if logged successfully
         """
         query = """
-            INSERT INTO aged_monitoring_events (
+            INSERT INTO monitoring.aged_monitoring_events (
                 aged_position_id, event_type, market_price,
                 target_price, price_distance_percent,
                 action_taken, success, error_message,
@@ -1264,7 +1265,7 @@ class Repository:
             True if deleted successfully
         """
         query = """
-            DELETE FROM aged_positions
+            DELETE FROM monitoring.aged_positions
             WHERE position_id = $1
             RETURNING id
         """
@@ -1297,9 +1298,9 @@ class Repository:
             Dictionary with various statistics
         """
         if not from_date:
-            from_date = datetime.now() - timedelta(days=7)
+            from_date = now_utc() - timedelta(days=7)
         if not to_date:
-            to_date = datetime.now()
+            to_date = now_utc()
 
         query = """
             WITH stats AS (
