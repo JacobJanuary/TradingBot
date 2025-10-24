@@ -451,7 +451,9 @@ class TradingBot:
             atomic_manager = AtomicPositionManager(
                 repository=self.repository,
                 exchange_manager=self.exchanges,
-                stop_loss_manager=sl_manager
+                stop_loss_manager=sl_manager,
+                position_manager=None,
+                config=settings.trading  # RESTORED 2025-10-25: pass config for leverage
             )
 
             await atomic_manager.recover_incomplete_positions()

@@ -1085,7 +1085,8 @@ class PositionManager:
                     repository=self.repository,
                     exchange_manager=self.exchanges,  # FIX: Use self.exchanges instead of dict
                     stop_loss_manager=sl_manager,
-                    position_manager=self  # NEW: pass position_manager reference
+                    position_manager=self,  # NEW: pass position_manager reference
+                    config=self.config  # RESTORED 2025-10-25: pass config for leverage
                 )
 
                 # Execute atomic creation
