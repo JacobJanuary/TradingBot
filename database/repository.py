@@ -1111,16 +1111,14 @@ class Repository:
                 EXTRACT(EPOCH FROM (NOW() - ap.position_opened_at)) / 3600 as current_age_hours,
                 EXTRACT(EPOCH FROM (NOW() - ap.detected_at)) / 3600 as hours_since_detection
             FROM monitoring.aged_positions ap
-            WHERE ap.status = ANY(%(statuses)s)
+            WHERE ap.status = ANY($1)
                 AND ap.closed_at IS NULL
             ORDER BY ap.detected_at DESC
         """
 
-        params = {'statuses': statuses}
-
         async with self.pool.acquire() as conn:
             try:
-                rows = await conn.fetch(query, **params)
+                rows = await conn.fetch(query, statuses)
                 return [dict(row) for row in rows]
             except Exception as e:
                 logger.error(f"Failed to get active aged positions: {e}")
