@@ -60,7 +60,7 @@ END $$;
 ALTER TABLE public.aged_positions
     SET SCHEMA monitoring;
 
-RAISE NOTICE 'Moved aged_positions to monitoring schema';
+DO $$ BEGIN RAISE NOTICE 'Moved aged_positions to monitoring schema'; END $$;
 
 -- =====================================================================
 -- 4. Перенос aged_monitoring_events: public → monitoring
@@ -68,7 +68,7 @@ RAISE NOTICE 'Moved aged_positions to monitoring schema';
 ALTER TABLE public.aged_monitoring_events
     SET SCHEMA monitoring;
 
-RAISE NOTICE 'Moved aged_monitoring_events to monitoring schema';
+DO $$ BEGIN RAISE NOTICE 'Moved aged_monitoring_events to monitoring schema'; END $$;
 
 -- =====================================================================
 -- 5. Верификация после переноса
@@ -121,5 +121,7 @@ COMMENT ON TABLE monitoring.aged_monitoring_events IS
 -- Коммит транзакции
 COMMIT;
 
-RAISE NOTICE 'Migration 001 completed successfully!';
-RAISE NOTICE 'Tables moved: public.aged_* → monitoring.aged_*';
+DO $$ BEGIN
+    RAISE NOTICE 'Migration 001 completed successfully!';
+    RAISE NOTICE 'Tables moved: public.aged_* → monitoring.aged_*';
+END $$;
