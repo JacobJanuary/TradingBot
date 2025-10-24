@@ -28,6 +28,7 @@ from typing import Dict, Optional, List
 from decimal import Decimal
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from utils.datetime_helpers import now_utc, ensure_utc
 
 from config.settings import TradingConfig
 from database.repository import Repository as TradingRepository
@@ -1975,7 +1976,7 @@ class PositionManager:
 
                 if trailing_manager and position.has_trailing_stop:
                     # NEW: Update TS health timestamp before calling TS Manager
-                    position.ts_last_update_time = datetime.now()
+                    position.ts_last_update_time = now_utc()
 
                     update_result = await trailing_manager.update_price(symbol, position.current_price)
 
@@ -2803,7 +2804,7 @@ class PositionManager:
                         ts_last_update = position.ts_last_update_time
 
                         if ts_last_update:
-                            ts_inactive_seconds = (datetime.now() - ts_last_update).total_seconds()
+                            ts_inactive_seconds = (now_utc() - ts_last_update).total_seconds()
                             ts_inactive_minutes = ts_inactive_seconds / 60
 
                             # TS inactive for > 5 minutes → TAKE OVER
@@ -3199,7 +3200,7 @@ class PositionManager:
                                     'side': side,
                                     'size': size,
                                     'entry_price': entry_price,
-                                    'detected_at': datetime.now(),
+                                    'detected_at': now_utc(),
                                     'raw_data': ex_pos
                                 })
 

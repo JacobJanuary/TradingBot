@@ -8,6 +8,7 @@ import logging
 import asyncio
 from typing import Dict, Optional, List
 from datetime import datetime, timezone
+from utils.datetime_helpers import now_utc, ensure_utc
 from decimal import Decimal
 from dataclasses import dataclass
 import os
@@ -489,16 +490,17 @@ class AgedPositionMonitorV2:
         return phase, target_price, loss_tolerance
 
     def _calculate_age_hours(self, position) -> float:
-        """Calculate position age in hours"""
+        """
+        Calculate position age in hours.
 
+        After UTC migration, all timestamps from DB are timezone-aware (timestamptz).
+        Uses ensure_utc() to handle any edge cases.
+        """
         if not hasattr(position, 'opened_at'):
             return 0.0
 
-        now = datetime.now(timezone.utc)
-        opened_at = position.opened_at
-
-        if not hasattr(opened_at, 'tzinfo') or opened_at.tzinfo is None:
-            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        now = now_utc()
+        opened_at = ensure_utc(position.opened_at)
 
         age = now - opened_at
         return age.total_seconds() / 3600

@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any
 from enum import Enum
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from utils.datetime_helpers import now_utc, ensure_utc
 from decimal import Decimal
 import uuid
 from database.transactional_repository import TransactionalRepository
@@ -215,7 +216,7 @@ class AtomicPositionManager:
         Raises:
             AtomicPositionError: При нарушении атомарности
         """
-        operation_id = f"pos_{symbol}_{datetime.now().timestamp()}"
+        operation_id = f"pos_{symbol}_{now_utc().timestamp()}"
 
         position_id = None
         entry_order = None

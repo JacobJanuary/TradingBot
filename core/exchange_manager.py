@@ -15,6 +15,7 @@ import time
 from utils.crypto_manager import decrypt_env_value
 from utils.decimal_utils import to_decimal
 from utils.rate_limiter import get_rate_limiter
+from utils.datetime_helpers import now_utc, ensure_utc
 
 logger = logging.getLogger(__name__)
 
@@ -713,7 +714,7 @@ class ExchangeManager:
         Returns:
             dict with success, execution_time_ms, method_used
         """
-        start_time = datetime.now()
+        start_time = now_utc()
 
         result = {
             'success': False,
@@ -743,7 +744,7 @@ class ExchangeManager:
             else:
                 raise NotImplementedError(f"Atomic SL update not implemented for {self.name}")
 
-            execution_time = (datetime.now() - start_time).total_seconds() * 1000
+            execution_time = (now_utc() - start_time).total_seconds() * 1000
             result['execution_time_ms'] = execution_time
 
             if result['success']:
@@ -757,7 +758,7 @@ class ExchangeManager:
             return result
 
         except Exception as e:
-            execution_time = (datetime.now() - start_time).total_seconds() * 1000
+            execution_time = (now_utc() - start_time).total_seconds() * 1000
             result['execution_time_ms'] = execution_time
             result['error'] = str(e)
             logger.error(f"❌ SL update failed: {e}", exc_info=True)
@@ -886,7 +887,7 @@ class ExchangeManager:
                     reduce_only):
                     sl_orders.append(order)  # Collect ALL SL orders
 
-            unprotected_start = datetime.now()
+            unprotected_start = now_utc()
             total_cancel_time = 0
 
             # Step 1: Cancel ALL old SL orders (handle orphans)
@@ -898,7 +899,7 @@ class ExchangeManager:
                     )
 
                 for sl_order in sl_orders:
-                    cancel_start = datetime.now()
+                    cancel_start = now_utc()
 
                     try:
                         await self.rate_limiter.execute_request(
@@ -906,7 +907,7 @@ class ExchangeManager:
                             sl_order['id'], symbol
                         )
 
-                        cancel_duration = (datetime.now() - cancel_start).total_seconds() * 1000
+                        cancel_duration = (now_utc() - cancel_start).total_seconds() * 1000
                         total_cancel_time += cancel_duration
 
                         logger.info(
@@ -927,7 +928,7 @@ class ExchangeManager:
                 )
 
             # Step 2: Create new SL IMMEDIATELY (NO SLEEP!)
-            create_start = datetime.now()
+            create_start = now_utc()
 
             # Get position size
             positions = await self.fetch_positions([symbol])
@@ -976,8 +977,8 @@ class ExchangeManager:
                 }
             )
 
-            result['create_time_ms'] = (datetime.now() - create_start).total_seconds() * 1000
-            result['unprotected_window_ms'] = (datetime.now() - unprotected_start).total_seconds() * 1000
+            result['create_time_ms'] = (now_utc() - create_start).total_seconds() * 1000
+            result['unprotected_window_ms'] = (now_utc() - unprotected_start).total_seconds() * 1000
 
             result['success'] = True
 
