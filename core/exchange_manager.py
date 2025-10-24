@@ -259,7 +259,21 @@ class ExchangeManager:
                 accounts = result.get('list', [])
                 if accounts:
                     account = accounts[0]
-                    return float(account.get('totalAvailableBalance', 0))
+
+                    # FIX: totalAvailableBalance is often empty string "" for UNIFIED accounts
+                    # Use coin[].walletBalance instead
+                    coins = account.get('coin', [])
+                    for coin_data in coins:
+                        if coin_data.get('coin') == 'USDT':
+                            # walletBalance - locked = available for new positions
+                            wallet_balance = float(coin_data.get('walletBalance', 0) or 0)
+                            locked = float(coin_data.get('locked', 0) or 0)
+                            free_balance = wallet_balance - locked
+                            logger.debug(f"Bybit USDT: wallet={wallet_balance:.2f}, locked={locked:.2f}, free={free_balance:.2f}")
+                            return free_balance
+
+                    logger.warning("No USDT found in Bybit coin list")
+                    return 0.0
                 else:
                     logger.warning("No Bybit account data, returning 0")
                     return 0.0
