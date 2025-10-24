@@ -474,6 +474,56 @@ class ExchangeManager:
             logger.error(f"Limit order failed for {symbol}: {e}")
             raise
 
+    async def set_leverage(self, symbol: str, leverage: int) -> bool:
+        """
+        Set leverage for a trading pair
+
+        CRITICAL: Must be called BEFORE opening position!
+        For Bybit: automatically adds params={'category': 'linear'}
+
+        Args:
+            symbol: Trading symbol (exchange format)
+            leverage: Leverage multiplier (e.g., 10 for 10x)
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Convert to exchange format if needed
+            exchange_symbol = self.find_exchange_symbol(symbol)
+            if not exchange_symbol:
+                logger.error(f"Symbol {symbol} not found on {self.name}")
+                return False
+
+            # Bybit requires 'category' parameter
+            if self.name.lower() == 'bybit':
+                await self.rate_limiter.execute_request(
+                    self.exchange.set_leverage,
+                    leverage=leverage,
+                    symbol=exchange_symbol,
+                    params={'category': 'linear'}
+                )
+            else:
+                # Binance and others
+                await self.rate_limiter.execute_request(
+                    self.exchange.set_leverage,
+                    leverage=leverage,
+                    symbol=exchange_symbol
+                )
+
+            logger.info(f"✅ Leverage set to {leverage}x for {symbol} on {self.name}")
+            return True
+
+        except Exception as e:
+            # Bybit specific: error 110043 means "leverage not modified" (already at requested value)
+            error_str = str(e)
+            if self.name.lower() == 'bybit' and '"retCode":110043' in error_str:
+                logger.info(f"✅ Leverage already at {leverage}x for {symbol} on {self.name}")
+                return True
+
+            logger.error(f"❌ Failed to set leverage for {symbol}: {e}")
+            return False
+
     async def create_stop_loss_order_split(self, symbol: str, side: str, amount: Decimal,
                                            stop_price: Decimal, reduce_only: bool = True):
         """
