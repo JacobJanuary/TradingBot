@@ -422,7 +422,7 @@ class PositionManager:
                     unrealized_pnl_percent=pos['pnl_percentage'] or 0,
                     has_stop_loss=pos['stop_loss'] is not None,
                     stop_loss_price=pos['stop_loss'],
-                    has_trailing_stop=pos['has_trailing_stop'] or False,
+                    has_trailing_stop=pos['trailing_activated'] or False,
                     trailing_activated=pos['trailing_activated'] or False,
                     opened_at=opened_at,
                     age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
@@ -768,9 +768,9 @@ class PositionManager:
                             current_price=entry_price,
                             unrealized_pnl=0,
                             unrealized_pnl_percent=0,
-                            has_stop_loss=db_position.get('has_stop_loss', True),
+                            has_stop_loss=db_position.get('has_stop_loss', False),
                             stop_loss_price=to_decimal(db_position.get('stop_loss_price')) if db_position.get('stop_loss_price') else None,
-                            has_trailing_stop=db_position.get('has_trailing_stop', True),
+                            has_trailing_stop=db_position.get('has_trailing_stop', False),
                             trailing_activated=False,
                             opened_at=db_position.get('opened_at') or datetime.now(timezone.utc),
                             age_hours=0
@@ -812,7 +812,7 @@ class PositionManager:
                             unrealized_pnl_percent=0,
                             has_stop_loss=False,
                             stop_loss_price=None,
-                            has_trailing_stop=True,
+                            has_trailing_stop=False,
                             trailing_activated=False,
                             opened_at=datetime.now(timezone.utc),
                             age_hours=0
@@ -820,27 +820,6 @@ class PositionManager:
 
                         self.positions[symbol] = position_state
                         logger.info(f"➕ Added new position: {symbol}")
-
-                        # ВАЖНО: Инициализировать trailing stop для новой позиции
-                        trailing_manager = self.trailing_managers.get(exchange_name)
-                        if trailing_manager:
-                            try:
-                                await trailing_manager.create_trailing_stop(
-                                    symbol=symbol,
-                                    side=side,
-                                    entry_price=entry_price,
-                                    quantity=quantity,
-                                    initial_stop=stop_loss_price  # Использовать Protection SL как initial
-                                )
-                                position_state.has_trailing_stop = True
-                                await self.repository.update_position(
-                                    position_id,
-                                    has_trailing_stop=True
-                                )
-                                logger.info(f"✅ Trailing stop initialized for synced position {symbol}")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to initialize TS for synced {symbol}: {e}")
-                                # ВОПРОС: Закрыть позицию или оставить с Protection SL?
 
                         # Set stop loss for new position
                         stop_loss_percent = to_decimal(self.config.stop_loss_percent)
@@ -1910,18 +1889,6 @@ class PositionManager:
         async with self.position_update_locks[symbol]:
             position = self.positions[symbol]
 
-            # ⚠️ CRITICAL FIX: Skip all operations on pre-registered positions
-            # Pre-registered positions have id="pending" and are not yet in database.
-            # They will be fully initialized after order fills and database insert completes.
-            if position.id == "pending":
-                logger.debug(
-                    f"⏳ {symbol}: Skipping WebSocket update processing - "
-                    f"position is pre-registered (waiting for database creation)"
-                )
-                # Still update the in-memory state from WebSocket
-                # but skip database operations and event logging
-                return
-
             # Update position state
             old_price = position.current_price
             position.current_price = float(data.get('mark_price', position.current_price))
@@ -1967,11 +1934,6 @@ class PositionManager:
 
             async with self.trailing_stop_locks[trailing_lock_key]:
                 trailing_manager = self.trailing_managers.get(position.exchange)
-
-                # В position_manager.py, метод _on_position_update, после строки 1969
-                logger.info(f"[TS_DEBUG] Exchange: {position.exchange}, "
-                            f"Trailing manager exists: {trailing_manager is not None}, "
-                            f"TS symbols in memory: {list(trailing_manager.trailing_stops.keys()) if trailing_manager else []}")
 
                 if trailing_manager and position.has_trailing_stop:
                     # NEW: Update TS health timestamp before calling TS Manager
@@ -2814,15 +2776,15 @@ class PositionManager:
                                 )
 
                                 # Reset TS flags to allow Protection Manager control
-                                position.has_trailing_stop = True
-                                position.trailing_activated = True
+                                position.has_trailing_stop = False
+                                position.trailing_activated = False
                                 position.sl_managed_by = 'protection'  # Mark ownership
 
                                 # Save to DB
                                 await self.repository.update_position(
                                     position.id,
-                                    has_trailing_stop=True,
-                                    trailing_activated=True
+                                    has_trailing_stop=False,
+                                    trailing_activated=False
                                 )
 
                                 # Now add to unprotected list (will set Protection SL)
@@ -3079,17 +3041,6 @@ class PositionManager:
                         for symbol in phantom_symbols:
                             position = local_positions[symbol]
                             logger.warning(f"Phantom position detected: {symbol} (in DB but not on {exchange_name})")
-
-                            # ✅ FIX: Skip pre-registered positions that haven't been committed to DB yet
-                            if position.id == "pending":
-                                logger.info(
-                                    f"⏭️ Skipping phantom cleanup for pre-registered position: {symbol} "
-                                    f"(id='pending' - not yet committed to database)"
-                                )
-                                # Remove from memory but don't attempt DB operations or event logging
-                                if symbol in self.positions:
-                                    del self.positions[symbol]
-                                continue  # Early exit prevents logging with "pending"
 
                             try:
                                 # Remove from local cache

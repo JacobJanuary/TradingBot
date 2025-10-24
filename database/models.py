@@ -124,7 +124,7 @@ class Position(Base):
     take_profit_order_id = Column(String(100))
 
     # Trailing stop
-    has_trailing_stop = Column(Boolean, default=False)
+    has_trailing_stop = Column(Boolean, default=True, nullable=False)
     trailing_activated = Column(Boolean, default=False)
     trailing_activation_price = Column(Float)
     trailing_callback_rate = Column(Float)

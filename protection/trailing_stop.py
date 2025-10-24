@@ -449,9 +449,12 @@ class SmartTrailingStopManager:
                     # Save to database
                     await self._save_state(ts)
 
-                    logger.debug(
-                        f"💾 {symbol}: Peak price saved to DB - "
-                        f"{'highest' if ts.side == 'long' else 'lowest'}={current_peak:.4f}"
+                    # trailing_stop.py:465 - изменить с debug на info
+                    logger.info(  # было: logger.debug
+                        f"[TS] {symbol} @ {ts.current_price:.4f} | "
+                        f"profit: {profit_percent:.2f}% | "
+                        f"activation: {ts.activation_price:.4f} | "
+                        f"state: {ts.state.name}"
                     )
                 else:
                     logger.debug(f"⏭️  {symbol}: Peak save SKIPPED - {skip_reason}")

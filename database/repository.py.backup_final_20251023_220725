@@ -249,8 +249,8 @@ class Repository:
         query = """
             INSERT INTO monitoring.positions (
                 symbol, exchange, side, quantity,
-                entry_price, status, has_trailing_stop
-            ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE)
+                entry_price, status
+            ) VALUES ($1, $2, $3, $4, $5, 'active')
             RETURNING id
         """
 
@@ -1030,60 +1030,75 @@ class Repository:
 
     async def create_aged_position(
         self,
-        position_id: str,
+        position_id: int,
         symbol: str,
         exchange: str,
+        side: str,
         entry_price: Decimal,
+        quantity: Decimal,
+        position_opened_at: datetime,
+        detected_at: datetime,
+        status: str,
         target_price: Decimal,
-        phase: str,
-        age_hours: float,
-        loss_tolerance: Decimal = None
+        breakeven_price: Decimal,
+        config: Dict
     ) -> Dict:
         """Create new aged position entry in database
 
         Args:
-            position_id: ID of the original position (VARCHAR)
+            position_id: ID of the original position
             symbol: Trading symbol (e.g., BTCUSDT)
             exchange: Exchange name
+            side: Position side (long/short)
             entry_price: Entry price of position
+            quantity: Position size
+            position_opened_at: When position was originally opened
+            detected_at: When position was detected as aged
+            status: Initial status (detected)
             target_price: Initial target price
-            phase: Current phase (grace, progressive, etc.)
-            age_hours: Hours aged
-            loss_tolerance: Current loss tolerance percentage
+            breakeven_price: Calculated breakeven price
+            config: Configuration at detection time
 
         Returns:
             Created aged position record
         """
         query = """
-            INSERT INTO aged_positions (
-                position_id, symbol, exchange,
-                entry_price, target_price, phase,
-                hours_aged, loss_tolerance,
-                created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-            ON CONFLICT (position_id) DO UPDATE SET
-                target_price = EXCLUDED.target_price,
-                phase = EXCLUDED.phase,
-                hours_aged = EXCLUDED.hours_aged,
-                loss_tolerance = EXCLUDED.loss_tolerance,
-                updated_at = NOW()
+            INSERT INTO monitoring.aged_positions (
+                position_id, symbol, exchange, side,
+                entry_price, quantity, position_opened_at,
+                detected_at, status, target_price,
+                breakeven_price, config, hours_aged,
+                current_phase, current_loss_tolerance_percent
+            ) VALUES (
+                %(position_id)s, %(symbol)s, %(exchange)s, %(side)s,
+                %(entry_price)s, %(quantity)s, %(position_opened_at)s,
+                %(detected_at)s, %(status)s, %(target_price)s,
+                %(breakeven_price)s, %(config)s,
+                EXTRACT(EPOCH FROM (%(detected_at)s - %(position_opened_at)s)) / 3600,
+                'grace', 0
+            )
             RETURNING *
         """
 
+        params = {
+            'position_id': position_id,
+            'symbol': symbol,
+            'exchange': exchange,
+            'side': side,
+            'entry_price': entry_price,
+            'quantity': quantity,
+            'position_opened_at': position_opened_at,
+            'detected_at': detected_at,
+            'status': status,
+            'target_price': target_price,
+            'breakeven_price': breakeven_price,
+            'config': json.dumps(config) if config else None
+        }
+
         async with self.pool.acquire() as conn:
             try:
-                row = await conn.fetchrow(
-                    query,
-                    str(position_id),
-                    symbol,
-                    exchange,
-                    entry_price,
-                    target_price,
-                    phase,
-                    int(age_hours),
-                    loss_tolerance
-                )
-                logger.info(f"Created/updated aged_position {row['id']} for {symbol}")
+                row = await conn.fetchrow(query, **params)
+                logger.info(f"Created aged_position entry {row['id']} for {symbol}")
                 return dict(row) if row else None
             except Exception as e:
                 logger.error(f"Failed to create aged_position: {e}")
@@ -1249,34 +1264,94 @@ class Repository:
                 logger.error(f"Failed to create monitoring event: {e}")
                 return False
 
+    async def create_aged_monitoring_event(
+        self,
+        aged_position_id: str,
+        event_type: str,
+        event_metadata: Dict = None,
+        **kwargs
+    ) -> bool:
+        """Simplified method for order_executor
+
+        Args:
+            aged_position_id: Aged position ID
+            event_type: Type of event
+            event_metadata: Additional event data
+            **kwargs: Ignored extra arguments
+
+        Returns:
+            True if logged successfully
+        """
+        return await self.log_aged_monitoring_event(
+            aged_position_id=aged_position_id,
+            event_type=event_type,
+            market_price=None,
+            target_price=None,
+            price_distance_percent=None,
+            action_taken=event_metadata.get('order_type') if event_metadata else None,
+            success=True,
+            error_message=None,
+            event_metadata=event_metadata
+        )
+
     async def mark_aged_position_closed(
         self,
-        position_id: str,
-        close_reason: str
+        aged_id: str,
+        close_price: Decimal,
+        close_order_id: str,
+        actual_pnl: Decimal,
+        actual_pnl_percent: Decimal,
+        close_reason: str,
+        close_attempts: int = 1
     ) -> bool:
         """Mark aged position as closed
 
         Args:
-            position_id: Position ID (matches position_id column)
-            close_reason: Reason for closure
+            aged_id: Aged position ID
+            close_price: Price at which position was closed
+            close_order_id: Exchange order ID
+            actual_pnl: Actual PnL amount
+            actual_pnl_percent: Actual PnL percentage
+            close_reason: Reason for closure (target_reached, grace_period, progressive, etc.)
+            close_attempts: Number of attempts it took
 
         Returns:
-            True if deleted successfully
+            True if updated successfully
         """
         query = """
-            DELETE FROM aged_positions
-            WHERE position_id = $1
+            UPDATE monitoring.aged_positions
+            SET
+                status = 'closed',
+                closed_at = NOW(),
+                close_price = %(close_price)s,
+                close_order_id = %(close_order_id)s,
+                actual_pnl = %(actual_pnl)s,
+                actual_pnl_percent = %(actual_pnl_percent)s,
+                close_reason = %(close_reason)s,
+                close_attempts = %(close_attempts)s,
+                updated_at = NOW()
+            WHERE id = %(aged_id)s
             RETURNING id
         """
 
+        params = {
+            'aged_id': aged_id,
+            'close_price': close_price,
+            'close_order_id': close_order_id,
+            'actual_pnl': actual_pnl,
+            'actual_pnl_percent': actual_pnl_percent,
+            'close_reason': close_reason,
+            'close_attempts': close_attempts
+        }
+
         async with self.pool.acquire() as conn:
             try:
-                result = await conn.fetchval(query, str(position_id))
+                result = await conn.fetchval(query, **params)
                 if result:
-                    logger.info(f"Marked aged position {position_id} as closed (reason: {close_reason})")
+                    logger.info(f"Marked aged position {aged_id} as closed (reason: {close_reason})")
                     return True
                 else:
-                    logger.warning(f"Aged position {position_id} not found")
+                    logger.warning(f"Aged position {aged_id} not found")
                     return False
             except Exception as e:
                 logger.error(f"Failed to mark aged position as closed: {e}")
