@@ -48,6 +48,11 @@ class TradingConfig:
     trailing_activation_percent: Decimal = Decimal('1.5')
     trailing_callback_percent: Decimal = Decimal('0.5')
 
+    # Leverage control (RESTORED 2025-10-25)
+    leverage: int = 10                    # Default leverage for all positions
+    max_leverage: int = 20                # Maximum allowed leverage (safety limit)
+    auto_set_leverage: bool = True        # Auto-set leverage before opening position
+
     # Trailing Stop SL Update settings (Freqtrade-inspired)
     trailing_min_update_interval_seconds: int = 60  # Min 60s between SL updates
     trailing_min_improvement_percent: Decimal = Decimal('0.1')  # Update only if >= 0.1% improvement
@@ -186,6 +191,14 @@ class Config:
         if val := os.getenv('TRAILING_ALERT_IF_UNPROTECTED_WINDOW_MS'):
             config.trailing_alert_if_unprotected_window_ms = int(val)
 
+        # Leverage control (RESTORED 2025-10-25)
+        if val := os.getenv('LEVERAGE'):
+            config.leverage = int(val)
+        if val := os.getenv('MAX_LEVERAGE'):
+            config.max_leverage = int(val)
+        if val := os.getenv('AUTO_SET_LEVERAGE'):
+            config.auto_set_leverage = val.lower() == 'true'
+
         # Aged positions
         if val := os.getenv('MAX_POSITION_AGE_HOURS'):
             config.max_position_age_hours = int(val)
@@ -218,6 +231,7 @@ class Config:
 
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
         logger.info(f"Wave limits: max_trades={config.max_trades_per_15min}, buffer={getattr(config, 'signal_buffer_percent', 33)}%")
+        logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
         return config
 
     def _init_database(self) -> DatabaseConfig:

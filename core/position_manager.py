@@ -1085,7 +1085,8 @@ class PositionManager:
                     repository=self.repository,
                     exchange_manager=self.exchanges,  # FIX: Use self.exchanges instead of dict
                     stop_loss_manager=sl_manager,
-                    position_manager=self  # NEW: pass position_manager reference
+                    position_manager=self,  # NEW: pass position_manager reference
+                    config=self.config  # RESTORED 2025-10-25: pass config for leverage
                 )
 
                 # Execute atomic creation
@@ -1239,6 +1240,18 @@ class PositionManager:
             except ImportError:
                 # Fallback to non-atomic creation (old logic)
                 logger.warning("⚠️ AtomicPositionManager not available, using legacy approach")
+
+                # RESTORED 2025-10-25: Set leverage before opening position (legacy path)
+                if self.config.auto_set_leverage:
+                    leverage = self.config.leverage
+                    logger.info(f"🎚️ Setting {leverage}x leverage for {symbol} (legacy path)")
+                    leverage_set = await exchange.set_leverage(symbol, leverage)
+                    if not leverage_set:
+                        logger.warning(
+                            f"⚠️ Could not set leverage for {symbol}, "
+                            f"using exchange default"
+                        )
+                        # Continue anyway - leverage might already be set correctly
 
                 order = await exchange.create_market_order(symbol, order_side, quantity)
 

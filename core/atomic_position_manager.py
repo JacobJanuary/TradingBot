@@ -82,11 +82,12 @@ class AtomicPositionManager:
     3. Recovery для незавершенных операций
     """
 
-    def __init__(self, repository, exchange_manager, stop_loss_manager, position_manager=None):
+    def __init__(self, repository, exchange_manager, stop_loss_manager, position_manager=None, config=None):
         self.repository = repository
         self.exchange_manager = exchange_manager
         self.stop_loss_manager = stop_loss_manager
         self.position_manager = position_manager  # NEW
+        self.config = config  # RESTORED 2025-10-25: for leverage control
         self.active_operations = {}  # Track ongoing operations
 
     @asynccontextmanager
@@ -246,6 +247,18 @@ class AtomicPositionManager:
                 exchange_instance = self.exchange_manager.get(exchange)
                 if not exchange_instance:
                     raise AtomicPositionError(f"Exchange {exchange} not available")
+
+                # RESTORED 2025-10-25: Set leverage before opening position
+                if self.config and self.config.auto_set_leverage:
+                    leverage = self.config.leverage
+                    logger.info(f"🎚️ Setting {leverage}x leverage for {symbol}")
+                    leverage_set = await exchange_instance.set_leverage(symbol, leverage)
+                    if not leverage_set:
+                        logger.warning(
+                            f"⚠️ Could not set leverage for {symbol}, "
+                            f"using exchange default"
+                        )
+                        # Continue anyway - leverage might already be set correctly
 
                 raw_order = await exchange_instance.create_market_order(
                     symbol, side, quantity
