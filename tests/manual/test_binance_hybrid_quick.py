@@ -61,6 +61,10 @@ async def test_quick():
             status = stream.get_status()
             logger.info(f"⏱️  T+{i}s | Status: {status}")
 
+    # Check status BEFORE stopping
+    final_user_connected = stream.user_connected
+    final_mark_connected = stream.mark_connected
+
     # Stop
     await stream.stop()
 
@@ -69,10 +73,10 @@ async def test_quick():
     logger.info("📊 TEST SUMMARY")
     logger.info("=" * 80)
     logger.info(f"Events received: {len(events_received)}")
-    logger.info(f"Final status: {stream.get_status()}")
+    logger.info(f"Final status (before stop): user_connected={final_user_connected}, mark_connected={final_mark_connected}")
 
-    if stream.user_connected and stream.mark_connected:
-        logger.info("✅ QUICK TEST PASSED")
+    if final_user_connected and final_mark_connected:
+        logger.info("✅ QUICK TEST PASSED - Both WebSockets connected successfully")
     else:
         logger.error("❌ QUICK TEST FAILED - Not fully connected")
 
