@@ -399,13 +399,16 @@ class BinanceHybridStream:
                 # Connect
                 self.mark_ws = await self.mark_session.ws_connect(
                     url,
-                    heartbeat=None,
-                    autoping=False,
+                    heartbeat=20,
+                    autoping=True,
                     autoclose=False
                 )
 
                 self.mark_connected = True
                 logger.info("✅ [MARK] Connected")
+
+                # Restore subscriptions after reconnect
+                await self._restore_subscriptions()
 
                 # Reset reconnect delay
                 reconnect_delay = 5
@@ -541,6 +544,33 @@ class BinanceHybridStream:
 
         except Exception as e:
             logger.error(f"[MARK] Subscription error for {symbol}: {e}")
+
+    async def _restore_subscriptions(self):
+        """Restore all mark price subscriptions after reconnect"""
+        if not self.subscribed_symbols:
+            logger.debug("[MARK] No subscriptions to restore")
+            return
+
+        symbols_to_restore = list(self.subscribed_symbols)
+        logger.info(f"🔄 [MARK] Restoring {len(symbols_to_restore)} subscriptions...")
+
+        # Clear subscribed set to allow resubscribe
+        self.subscribed_symbols.clear()
+
+        restored = 0
+        for symbol in symbols_to_restore:
+            try:
+                await self._subscribe_mark_price(symbol)
+                restored += 1
+
+                # Small delay to avoid overwhelming the connection
+                if restored < len(symbols_to_restore):
+                    await asyncio.sleep(0.1)
+
+            except Exception as e:
+                logger.error(f"❌ [MARK] Failed to restore subscription for {symbol}: {e}")
+
+        logger.info(f"✅ [MARK] Restored {restored}/{len(symbols_to_restore)} subscriptions")
 
     async def _unsubscribe_mark_price(self, symbol: str):
         """Unsubscribe from mark price stream"""
