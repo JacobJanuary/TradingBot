@@ -293,6 +293,27 @@ class TradingBot:
             logger.info("Loading positions from database...")
             await self.position_manager.load_positions_from_db()
 
+            # CRITICAL FIX: Sync positions with Bybit Hybrid WebSocket
+            # Private WS may not send position snapshot on startup,
+            # so we need to explicitly subscribe to tickers for existing positions
+            bybit_ws = self.websockets.get('bybit_hybrid')
+            if bybit_ws:
+                # Get active Bybit positions
+                bybit_positions = [
+                    p for p in self.position_manager.positions.values()
+                    if p.get('exchange') == 'bybit' and p.get('status') == 'active'
+                ]
+
+                if bybit_positions:
+                    logger.info(f"🔄 Syncing {len(bybit_positions)} Bybit positions with WebSocket...")
+                    try:
+                        await bybit_ws.sync_positions(bybit_positions)
+                        logger.info(f"✅ Bybit WebSocket synced with {len(bybit_positions)} positions")
+                    except Exception as e:
+                        logger.error(f"Failed to sync Bybit positions: {e}")
+                else:
+                    logger.info("No active Bybit positions to sync")
+
             # Initialize aged position manager (only if unified protection is disabled)
             use_unified_protection = os.getenv('USE_UNIFIED_PROTECTION', 'false').lower() == 'true'
             if not use_unified_protection:
