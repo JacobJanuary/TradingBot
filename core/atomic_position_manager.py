@@ -267,7 +267,8 @@ class AtomicPositionManager:
                 elif exchange == 'binance':
                     # CRITICAL FIX: Request FULL response to get avgPrice and fills
                     # Default newOrderRespType=ACK returns avgPrice="0.00000"
-                    # FULL waits for fill and returns complete execution details
+                    # NOTE: FULL returns immediately with status='NEW', executedQty='0'
+                    # We fetch order afterwards to get actual filled status and avgPrice
                     params['newOrderRespType'] = 'FULL'
                     logger.debug(f"Setting newOrderRespType=FULL for Binance market order")
 
@@ -301,6 +302,38 @@ class AtomicPositionManager:
                         # Other Bybit errors
                         logger.error(f"❌ Bybit order failed for {symbol}: retCode={ret_code}, {ret_msg}")
                         raise AtomicPositionError(f"Bybit order creation failed: {ret_msg}")
+
+                # CRITICAL FIX: For Binance with FULL response type,
+                # market orders return status='NEW' immediately before execution.
+                # Fetch order to get actual filled status and avgPrice.
+                if exchange == 'binance' and raw_order and raw_order.id:
+                    order_id = raw_order.id
+                    try:
+                        # Brief wait for market order to execute
+                        await asyncio.sleep(0.1)
+
+                        # Fetch actual order status
+                        fetched_order = await exchange_instance.fetch_order(order_id, symbol)
+
+                        if fetched_order:
+                            logger.info(
+                                f"✅ Fetched Binance order status: "
+                                f"id={order_id}, status={fetched_order.status}, "
+                                f"filled={fetched_order.filled}/{fetched_order.amount}, "
+                                f"avgPrice={fetched_order.price}"
+                            )
+
+                            # Use fetched order data (has correct status and avgPrice)
+                            raw_order = fetched_order
+                        else:
+                            logger.warning(f"⚠️ Fetch order returned None for {order_id}")
+
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ Failed to fetch order {order_id} status, "
+                            f"using create response: {e}"
+                        )
+                        # Fallback: use original create_order response
 
                 # Normalize order response
                 entry_order = ExchangeResponseAdapter.normalize_order(raw_order, exchange)
