@@ -264,6 +264,12 @@ class AtomicPositionManager:
                 params = {}
                 if exchange == 'bybit':
                     params['positionIdx'] = 0  # One-way mode (required by Bybit V5 API)
+                elif exchange == 'binance':
+                    # CRITICAL FIX: Request FULL response to get avgPrice and fills
+                    # Default newOrderRespType=ACK returns avgPrice="0.00000"
+                    # FULL waits for fill and returns complete execution details
+                    params['newOrderRespType'] = 'FULL'
+                    logger.debug(f"Setting newOrderRespType=FULL for Binance market order")
 
                 raw_order = await exchange_instance.create_market_order(
                     symbol, side, quantity, params=params if params else None
@@ -312,6 +318,20 @@ class AtomicPositionManager:
                 # Extract execution price from normalized order
                 exec_price = ExchangeResponseAdapter.extract_execution_price(entry_order)
 
+                # DIAGNOSTIC: Log price comparison for monitoring
+                if exec_price and exec_price > 0:
+                    diff_pct = ((exec_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+                    logger.info(
+                        f"💰 Entry Price - Signal: ${entry_price:.8f}, "
+                        f"Execution: ${exec_price:.8f}, "
+                        f"Diff: {diff_pct:.4f}%"
+                    )
+                else:
+                    logger.info(
+                        f"💰 Entry Price - Signal: ${entry_price:.8f}, "
+                        f"Execution: N/A (will use fallback)"
+                    )
+
                 # FIX: Bybit API v5 does not return avgPrice in create_order response
                 # Use fetch_positions to get actual execution price (fetch_order has 500 limit)
                 if exchange == 'bybit' and (not exec_price or exec_price == 0):
@@ -341,6 +361,37 @@ class AtomicPositionManager:
                         # Fallback: use signal entry price
                         exec_price = entry_price
 
+                # BINANCE FALLBACK: If avgPrice still 0, fetch position for execution price
+                elif exchange == 'binance' and (not exec_price or exec_price == 0):
+                    logger.info(f"📊 Binance: avgPrice not in response, fetching position for {symbol}")
+                    try:
+                        # Small delay to ensure position is updated on exchange
+                        await asyncio.sleep(1.0)
+
+                        # Fetch positions to get actual entry price
+                        positions = await exchange_instance.fetch_positions([symbol])
+
+                        # Find our position
+                        for pos in positions:
+                            if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                                exec_price = float(pos.get('entryPrice', 0))
+                                if exec_price > 0:
+                                    logger.info(f"✅ Got execution price from Binance position: ${exec_price:.8f}")
+                                    break
+
+                        # If still no execution price, use signal price as fallback
+                        if not exec_price or exec_price == 0:
+                            logger.warning(
+                                f"⚠️ Could not get execution price from Binance position for {symbol}, "
+                                f"using signal price: ${entry_price:.8f}"
+                            )
+                            exec_price = entry_price
+
+                    except Exception as e:
+                        logger.error(f"❌ Failed to fetch Binance position for execution price: {e}")
+                        # Fallback to signal price
+                        exec_price = entry_price
+
                 # CRITICAL FIX: Recalculate SL from REAL execution price
                 # Signal price may differ significantly from execution price
                 from utils.decimal_utils import calculate_stop_loss, to_decimal
@@ -354,13 +405,20 @@ class AtomicPositionManager:
 
                 logger.info(f"🛡️ SL calculated from exec_price ${exec_price}: ${stop_loss_price} ({stop_loss_percent}%)")
 
-                # FIX: Use only columns that exist in database schema
-                # CRITICAL FIX: Update current_price, NOT entry_price (entry_price is immutable)
+                # CRITICAL FIX: Update BOTH entry_price and current_price with execution price
+                # entry_price should reflect ACTUAL fill price from exchange, not signal price
+                # This fixes PnL calculations and historical analysis
                 await self.repository.update_position(position_id, **{
-                    'current_price': exec_price,  # Update current price with execution price
+                    'entry_price': exec_price,      # ← NEW: Set actual execution price
+                    'current_price': exec_price,     # Keep existing behavior (will be updated by WebSocket)
                     'status': state.value,
-                    'exchange_order_id': entry_order.id  # Track order ID
+                    'exchange_order_id': entry_order.id
                 })
+
+                logger.debug(
+                    f"📝 Updated position #{position_id} with execution price: ${exec_price:.8f} "
+                    f"(signal was ${entry_price:.8f})"
+                )
 
                 # Log entry order to database for audit trail
                 logger.info(f"🔍 About to log entry order for {symbol}")
@@ -524,7 +582,8 @@ class AtomicPositionManager:
                     'exchange': exchange,
                     'side': position_data['side'],
                     'quantity': quantity,
-                    'entry_price': entry_price,  # FIX: Use signal entry_price for TS, not exec_price (which can be 0)
+                    'entry_price': exec_price,  # ← FIXED: Return actual execution price
+                    'signal_price': entry_price,  # ← NEW: Keep signal price for reference
                     'stop_loss_price': stop_loss_price,
                     'state': state.value,
                     'entry_order': entry_order.raw_data,  # Return raw data for compatibility
