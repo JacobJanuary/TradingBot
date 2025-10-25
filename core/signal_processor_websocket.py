@@ -309,7 +309,18 @@ class WebSocketSignalProcessor:
                             signal = signal_result.get('signal_data')
                             if signal:
                                 symbol = signal.get('symbol')
-                                size_usd = signal.get('size_usd', 200.0)
+
+                                # FIX: Use config value instead of hardcoded 200.0
+                                # Phase 1: Critical magic number removal
+                                size_usd = signal.get('size_usd')
+                                if not size_usd or size_usd <= 0:
+                                    # Fallback to config (not hardcoded 200.0!)
+                                    size_usd = float(self.config.position_size_usd)
+                                    logger.debug(
+                                        f"Signal {symbol} missing size_usd, "
+                                        f"using config: ${size_usd} (was hardcoded 200.0)"
+                                    )
+
                                 exchange_name = signal.get('exchange', 'binance')  # Get exchange from signal
 
                                 # Get the correct exchange manager
