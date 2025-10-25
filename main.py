@@ -293,6 +293,39 @@ class TradingBot:
             logger.info("Loading positions from database...")
             await self.position_manager.load_positions_from_db()
 
+            # CRITICAL FIX: Sync positions with Binance Hybrid WebSocket
+            # User WS may not send position snapshot on startup,
+            # so we need to explicitly subscribe to mark prices for existing positions
+            binance_ws = self.websockets.get('binance_hybrid')
+            if binance_ws:
+                # Get active Binance positions (PositionState objects)
+                binance_position_states = [
+                    p for p in self.position_manager.positions.values()
+                    if p.exchange == 'binance'
+                ]
+
+                if binance_position_states:
+                    # Convert PositionState objects to dicts for sync_positions()
+                    binance_positions = [
+                        {
+                            'symbol': p.symbol,
+                            'side': p.side,
+                            'quantity': p.quantity,
+                            'entry_price': p.entry_price,
+                            'current_price': p.current_price
+                        }
+                        for p in binance_position_states
+                    ]
+
+                    logger.info(f"🔄 Syncing {len(binance_positions)} Binance positions with WebSocket...")
+                    try:
+                        await binance_ws.sync_positions(binance_positions)
+                        logger.info(f"✅ Binance WebSocket synced with {len(binance_positions)} positions")
+                    except Exception as e:
+                        logger.error(f"Failed to sync Binance positions: {e}")
+                else:
+                    logger.info("No active Binance positions to sync")
+
             # CRITICAL FIX: Sync positions with Bybit Hybrid WebSocket
             # Private WS may not send position snapshot on startup,
             # so we need to explicitly subscribe to tickers for existing positions

@@ -172,6 +172,56 @@ class BinanceHybridStream:
 
         logger.info("✅ Binance Hybrid WebSocket stopped")
 
+    async def sync_positions(self, positions: list):
+        """
+        Sync existing positions with WebSocket subscriptions
+
+        Called after loading positions from DB to ensure
+        Mark WS subscribes to all active positions.
+
+        This fixes the cold start problem where positions exist
+        but User WS doesn't send snapshot, so Mark WS never
+        subscribes to tickers.
+
+        Args:
+            positions: List of position dicts with 'symbol' key
+        """
+        if not positions:
+            logger.debug("No positions to sync")
+            return
+
+        logger.info(f"🔄 [MARK] Syncing {len(positions)} positions with WebSocket...")
+
+        synced = 0
+        for position in positions:
+            symbol = position.get('symbol')
+            if not symbol:
+                logger.warning(f"Position missing symbol: {position}")
+                continue
+
+            try:
+                # Store position data (minimal set for mark price subscription)
+                self.positions[symbol] = {
+                    'symbol': symbol,
+                    'side': position.get('side', 'LONG'),
+                    'size': str(position.get('quantity', 0)),
+                    'entry_price': str(position.get('entry_price', 0)),
+                    'mark_price': str(position.get('current_price', 0)),
+                }
+
+                # Request mark price subscription
+                await self._request_mark_subscription(symbol, subscribe=True)
+                synced += 1
+
+                # Small delay to avoid overwhelming the connection
+                if synced < len(positions):
+                    await asyncio.sleep(0.1)
+
+            except Exception as e:
+                logger.error(f"Failed to sync position {symbol}: {e}")
+
+        logger.info(f"✅ [MARK] Synced {synced}/{len(positions)} positions with WebSocket")
+
     # ==================== LISTEN KEY MANAGEMENT ====================
 
     async def _create_listen_key(self):
