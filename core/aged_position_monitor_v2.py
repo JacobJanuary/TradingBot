@@ -63,11 +63,17 @@ class AgedPositionMonitorV2:
         self.position_manager = position_manager
 
         # Configuration from env/config
-        self.max_age_hours = int(os.getenv('MAX_POSITION_AGE_HOURS', 3))
-        self.grace_period_hours = int(os.getenv('AGED_GRACE_PERIOD_HOURS', 8))
-        self.loss_step_percent = Decimal(os.getenv('AGED_LOSS_STEP_PERCENT', '0.5'))
-        self.max_loss_percent = Decimal(os.getenv('AGED_MAX_LOSS_PERCENT', '10.0'))
-        self.commission_percent = Decimal(os.getenv('COMMISSION_PERCENT', '0.1')) / Decimal('100')
+        # Phase 2: Use config instead of os.getenv() with defaults
+        if config is None:
+            from config.settings import config as global_config
+            config = global_config.trading
+
+        self.max_age_hours = config.max_position_age_hours
+        self.grace_period_hours = config.aged_grace_period_hours
+        self.loss_step_percent = config.aged_loss_step_percent
+        self.max_loss_percent = config.aged_max_loss_percent
+        # Note: config.commission_percent is already in percent, divide by 100
+        self.commission_percent = config.commission_percent / Decimal('100')
 
         # Tracked aged positions
         self.aged_targets: Dict[str, AgedPositionTarget] = {}

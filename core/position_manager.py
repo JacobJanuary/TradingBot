@@ -1708,7 +1708,8 @@ class PositionManager:
             return None
 
         # Check against maximum allowed
-        max_position_usd = float(os.getenv('MAX_POSITION_SIZE_USD', 5000))
+        # Phase 2: Use config value instead of os.getenv()
+        max_position_usd = float(self.config.max_position_size_usd)
         if size_usd > max_position_usd:
             logger.warning(f"Position size ${size_usd} exceeds maximum ${max_position_usd}")
             # Use maximum instead of failing
