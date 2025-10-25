@@ -1716,7 +1716,9 @@ class PositionManager:
             size_usd = max_position_usd
 
         # Simple calculation: size_usd / price
-        quantity = size_usd / Decimal(str(price))
+        # CRITICAL FIX: Ensure size_usd is Decimal to support both float and Decimal inputs
+        # Python 3 doesn't support float / Decimal mixed-type arithmetic
+        quantity = Decimal(str(size_usd)) / Decimal(str(price))
 
         logger.debug(f"Position sizing for {symbol}:")
         logger.debug(f"  Fixed size: ${size_usd} USD")
