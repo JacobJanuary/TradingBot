@@ -294,7 +294,11 @@ class EnhancedExchangeManager:
                         current_price = float(order.get('price', 0))
                         price_diff_pct = abs(target_price - current_price) / current_price * 100
 
-                        if price_diff_pct > 0.5:  # More than 0.5% difference
+                        # Phase 3: Use config threshold instead of hardcoded 0.5
+                        from config.settings import config as global_config
+                        threshold = float(global_config.safety.PRICE_UPDATE_THRESHOLD_PERCENT)
+
+                        if price_diff_pct > threshold:  # Configurable threshold
                             logger.info(
                                 f"📊 Existing order {order['id']} has {price_diff_pct:.1f}% "
                                 f"price difference, may need update"
@@ -546,15 +550,16 @@ class EnhancedExchangeManager:
         NOTE: This method is kept for backward compatibility.
         New code should use aged_position_manager directly.
         """
-        import os
+        # Phase 2: Use config instead of os.getenv() with defaults
+        from config.settings import config as global_config
 
-        # Load parameters from environment
-        max_position_age = float(os.getenv('MAX_POSITION_AGE_HOURS', max_age_hours))
-        grace_period = float(os.getenv('AGED_GRACE_PERIOD_HOURS', 8))
-        loss_step = float(os.getenv('AGED_LOSS_STEP_PERCENT', 0.5))
-        max_loss = float(os.getenv('AGED_MAX_LOSS_PERCENT', 10.0))
-        acceleration = float(os.getenv('AGED_ACCELERATION_FACTOR', 1.2))
-        commission = float(os.getenv('COMMISSION_PERCENT', 0.1)) / 100
+        # Load parameters from config
+        max_position_age = float(global_config.trading.max_position_age_hours if max_age_hours == 24 else max_age_hours)
+        grace_period = float(global_config.trading.aged_grace_period_hours)
+        loss_step = float(global_config.trading.aged_loss_step_percent)
+        max_loss = float(global_config.trading.aged_max_loss_percent)
+        acceleration = float(global_config.trading.aged_acceleration_factor)
+        commission = float(global_config.trading.commission_percent) / 100
 
         # Calculate hours over limit
         if hours_open < max_position_age:

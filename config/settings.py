@@ -37,47 +37,76 @@ class ExchangeConfig:
 class TradingConfig:
     """Trading parameters from .env ONLY"""
     # Position sizing
-    position_size_usd: Decimal = Decimal('200')
-    min_position_size_usd: Decimal = Decimal('10')
+    position_size_usd: Decimal = Decimal('6')
+    min_position_size_usd: Decimal = Decimal('5')
     max_position_size_usd: Decimal = Decimal('5000')
-    max_positions: int = 10
-    max_exposure_usd: Decimal = Decimal('30000')
+    max_positions: int = 150
+    max_exposure_usd: Decimal = Decimal('99000')
 
     # Risk management
     stop_loss_percent: Decimal = Decimal('2.0')
-    trailing_activation_percent: Decimal = Decimal('1.5')
+    trailing_activation_percent: Decimal = Decimal('2.0')
     trailing_callback_percent: Decimal = Decimal('0.5')
 
     # Leverage control (RESTORED 2025-10-25)
-    leverage: int = 10                    # Default leverage for all positions
-    max_leverage: int = 20                # Maximum allowed leverage (safety limit)
+    leverage: int = 1                     # Default leverage for all positions
+    max_leverage: int = 2                 # Maximum allowed leverage (safety limit)
     auto_set_leverage: bool = True        # Auto-set leverage before opening position
 
     # Trailing Stop SL Update settings (Freqtrade-inspired)
-    trailing_min_update_interval_seconds: int = 60  # Min 60s between SL updates
-    trailing_min_improvement_percent: Decimal = Decimal('0.1')  # Update only if >= 0.1% improvement
-    trailing_alert_if_unprotected_window_ms: int = 500  # Alert if unprotected window > 500ms
+    trailing_min_update_interval_seconds: int = 30  # Min 30s between SL updates
+    trailing_min_improvement_percent: Decimal = Decimal('0.05')  # Update only if >= 0.05% improvement
+    trailing_alert_if_unprotected_window_ms: int = 300  # Alert if unprotected window > 300ms
 
     # Aged positions
     max_position_age_hours: int = 3
-    aged_grace_period_hours: int = 8
+    aged_grace_period_hours: int = 1
     aged_loss_step_percent: Decimal = Decimal('0.5')
     aged_max_loss_percent: Decimal = Decimal('10.0')
     aged_acceleration_factor: Decimal = Decimal('1.2')
     aged_check_interval_minutes: int = 60
-    commission_percent: Decimal = Decimal('0.1')
+    commission_percent: Decimal = Decimal('0.05')
 
     # Signal filtering
-    min_score_week: int = 0
-    min_score_month: int = 50
+    min_score_week: int = 62
+    min_score_month: int = 58
     max_spread_percent: Decimal = Decimal('2.0')
 
     # Execution
     signal_time_window_minutes: int = 10
-    max_trades_per_15min: int = 20
+    max_trades_per_15min: int = 5
 
     # Wave processing - FIX: 2025-10-03 - Добавлено поле для SIGNAL_BUFFER_PERCENT
-    signal_buffer_percent: float = 33.0
+    signal_buffer_percent: float = 50.0
+
+
+@dataclass
+class TradingSafetyConstants:
+    """
+    Trading safety constants - configurable safety margins
+
+    These are technical constants that rarely change but should be
+    configurable for advanced users.
+    """
+    # Stop Loss Safety Margins
+    STOP_LOSS_SAFETY_MARGIN_PERCENT: Decimal = Decimal('0.5')  # 0.5% margin
+
+    # Position Size Tolerance
+    POSITION_SIZE_TOLERANCE_PERCENT: Decimal = Decimal('10.0')  # 10% over budget allowed
+
+    # Price Update Thresholds
+    PRICE_UPDATE_THRESHOLD_PERCENT: Decimal = Decimal('0.5')  # 0.5% price change to update
+
+    # Minimum Balance Threshold
+    MINIMUM_ACTIVE_BALANCE_USD: Decimal = Decimal('10.0')  # $10 minimum to consider active
+
+    # Price Precision
+    DEFAULT_PRICE_PRECISION: int = 8  # Default decimal precision for prices
+
+    # Tick Size Defaults
+    DEFAULT_MIN_QUANTITY: Decimal = Decimal('0.001')
+    DEFAULT_TICK_SIZE: Decimal = Decimal('0.01')
+    DEFAULT_STEP_SIZE: Decimal = Decimal('0.001')
 
 
 @dataclass
@@ -106,6 +135,7 @@ class Config:
         # Initialize configs
         self.exchanges = self._init_exchanges()
         self.trading = self._init_trading()
+        self.safety = TradingSafetyConstants()  # Phase 3: Safety constants
         self.database = self._init_database()
 
         # System settings

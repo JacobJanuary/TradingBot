@@ -37,16 +37,14 @@ class AgedPositionManager:
         self.exchanges = exchanges  # Dict of exchange instances
 
         # Age parameters from environment/config
-        # Use int for age hours to be compatible with Decimal arithmetic
-        self.max_position_age_hours = int(os.getenv('MAX_POSITION_AGE_HOURS',
-                                                     getattr(config, 'max_position_age_hours', 3)))
-        self.grace_period_hours = int(os.getenv('AGED_GRACE_PERIOD_HOURS', 8))
+        # Phase 2: Use config values instead of os.getenv()
+        self.max_position_age_hours = config.max_position_age_hours
+        self.grace_period_hours = config.aged_grace_period_hours
         # Use Decimal for all calculations to avoid float/Decimal type errors
-        self.loss_step_percent = Decimal(str(os.getenv('AGED_LOSS_STEP_PERCENT', 0.5)))
-        self.max_loss_percent = Decimal(str(os.getenv('AGED_MAX_LOSS_PERCENT', 10.0)))
-        self.acceleration_factor = Decimal(str(os.getenv('AGED_ACCELERATION_FACTOR', 1.2)))
-        self.commission_percent = Decimal(str(os.getenv('COMMISSION_PERCENT',
-                                               getattr(config, 'commission_percent', 0.1)))) / 100
+        self.loss_step_percent = config.aged_loss_step_percent
+        self.max_loss_percent = config.aged_max_loss_percent
+        self.acceleration_factor = config.aged_acceleration_factor
+        self.commission_percent = config.commission_percent / 100
 
         # Track managed positions to avoid duplicate processing
         self.managed_positions = {}  # position_id: {'last_update': datetime, 'order_id': str}
