@@ -313,16 +313,31 @@ class AtomicPositionManager:
                 exec_price = ExchangeResponseAdapter.extract_execution_price(entry_order)
 
                 # FIX: Bybit API v5 does not return avgPrice in create_order response
-                # Need to fetch order to get actual execution price
+                # Use fetch_positions to get actual execution price (fetch_order has 500 limit)
                 if exchange == 'bybit' and (not exec_price or exec_price == 0):
-                    logger.info(f"📊 Fetching order details for {symbol} to get execution price")
+                    logger.info(f"📊 Fetching position for {symbol} to get execution price")
                     try:
-                        fetched_order = await exchange_instance.fetch_order(entry_order.id, symbol)
-                        fetched_normalized = ExchangeResponseAdapter.normalize_order(fetched_order, exchange)
-                        exec_price = ExchangeResponseAdapter.extract_execution_price(fetched_normalized)
-                        logger.info(f"✅ Got execution price from fetch_order: {exec_price}")
+                        # Use fetch_positions instead of fetch_order (Bybit V5 best practice)
+                        positions = await exchange_instance.fetch_positions(
+                            symbols=[symbol],
+                            params={'category': 'linear'}
+                        )
+
+                        # Find our position
+                        for pos in positions:
+                            if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                                exec_price = float(pos.get('entryPrice', 0))
+                                if exec_price > 0:
+                                    logger.info(f"✅ Got execution price from position: {exec_price}")
+                                    break
+
+                        if not exec_price or exec_price == 0:
+                            # Fallback to signal entry price if position not found
+                            logger.warning(f"⚠️ Could not get execution price from position, using signal price")
+                            exec_price = entry_price
+
                     except Exception as e:
-                        logger.error(f"❌ Failed to fetch order for execution price: {e}")
+                        logger.error(f"❌ Failed to fetch position for execution price: {e}")
                         # Fallback: use signal entry price
                         exec_price = entry_price
 
