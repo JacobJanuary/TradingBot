@@ -298,13 +298,25 @@ class TradingBot:
             # so we need to explicitly subscribe to tickers for existing positions
             bybit_ws = self.websockets.get('bybit_hybrid')
             if bybit_ws:
-                # Get active Bybit positions
-                bybit_positions = [
+                # Get active Bybit positions (PositionState objects)
+                bybit_position_states = [
                     p for p in self.position_manager.positions.values()
-                    if p.get('exchange') == 'bybit' and p.get('status') == 'active'
+                    if p.exchange == 'bybit'
                 ]
 
-                if bybit_positions:
+                if bybit_position_states:
+                    # Convert PositionState objects to dicts for sync_positions()
+                    bybit_positions = [
+                        {
+                            'symbol': p.symbol,
+                            'side': p.side,
+                            'quantity': p.quantity,
+                            'entry_price': p.entry_price,
+                            'current_price': p.current_price
+                        }
+                        for p in bybit_position_states
+                    ]
+
                     logger.info(f"🔄 Syncing {len(bybit_positions)} Bybit positions with WebSocket...")
                     try:
                         await bybit_ws.sync_positions(bybit_positions)
