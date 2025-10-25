@@ -260,8 +260,13 @@ class AtomicPositionManager:
                         )
                         # Continue anyway - leverage might already be set correctly
 
+                # Prepare params for exchange-specific requirements
+                params = {}
+                if exchange == 'bybit':
+                    params['positionIdx'] = 0  # One-way mode (required by Bybit V5 API)
+
                 raw_order = await exchange_instance.create_market_order(
-                    symbol, side, quantity
+                    symbol, side, quantity, params=params if params else None
                 )
 
                 # Pre-register position for WebSocket updates (fix race condition)
