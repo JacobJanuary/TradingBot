@@ -530,8 +530,36 @@ class BinanceHybridStream:
             position_data = self.positions[symbol].copy()
             position_data['mark_price'] = mark_price
 
+            # ========== Calculate unrealized_pnl ==========
+            try:
+                entry_price = float(position_data.get('entry_price', 0))
+                size = float(position_data.get('size', 0))
+                side = position_data.get('side', 'LONG')
+                mark_price_float = float(mark_price)
+
+                if entry_price > 0 and size > 0:
+                    if side == 'LONG':
+                        unrealized_pnl = (mark_price_float - entry_price) * size
+                    else:  # SHORT
+                        unrealized_pnl = (entry_price - mark_price_float) * size
+
+                    position_data['unrealized_pnl'] = str(unrealized_pnl)
+
+                    logger.debug(
+                        f"💰 [MARK] {symbol} PnL recalculated: "
+                        f"${unrealized_pnl:.4f} (entry={entry_price}, mark={mark_price_float}, size={size})"
+                    )
+                else:
+                    position_data['unrealized_pnl'] = '0'
+
+            except (ValueError, TypeError) as e:
+                logger.error(f"Failed to calculate unrealized_pnl for {symbol}: {e}")
+                position_data['unrealized_pnl'] = '0'
+            # ==============================================
+
             # Update position cache
             self.positions[symbol]['mark_price'] = mark_price
+            self.positions[symbol]['unrealized_pnl'] = position_data['unrealized_pnl']
 
             # Emit combined event
             await self._emit_combined_event(symbol, position_data)
