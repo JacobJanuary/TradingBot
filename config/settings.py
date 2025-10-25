@@ -81,6 +81,35 @@ class TradingConfig:
 
 
 @dataclass
+class TradingSafetyConstants:
+    """
+    Trading safety constants - configurable safety margins
+
+    These are technical constants that rarely change but should be
+    configurable for advanced users.
+    """
+    # Stop Loss Safety Margins
+    STOP_LOSS_SAFETY_MARGIN_PERCENT: Decimal = Decimal('0.5')  # 0.5% margin
+
+    # Position Size Tolerance
+    POSITION_SIZE_TOLERANCE_PERCENT: Decimal = Decimal('10.0')  # 10% over budget allowed
+
+    # Price Update Thresholds
+    PRICE_UPDATE_THRESHOLD_PERCENT: Decimal = Decimal('0.5')  # 0.5% price change to update
+
+    # Minimum Balance Threshold
+    MINIMUM_ACTIVE_BALANCE_USD: Decimal = Decimal('10.0')  # $10 minimum to consider active
+
+    # Price Precision
+    DEFAULT_PRICE_PRECISION: int = 8  # Default decimal precision for prices
+
+    # Tick Size Defaults
+    DEFAULT_MIN_QUANTITY: Decimal = Decimal('0.001')
+    DEFAULT_TICK_SIZE: Decimal = Decimal('0.01')
+    DEFAULT_STEP_SIZE: Decimal = Decimal('0.001')
+
+
+@dataclass
 class DatabaseConfig:
     """Database configuration from .env ONLY"""
     host: str = 'localhost'
@@ -106,6 +135,7 @@ class Config:
         # Initialize configs
         self.exchanges = self._init_exchanges()
         self.trading = self._init_trading()
+        self.safety = TradingSafetyConstants()  # Phase 3: Safety constants
         self.database = self._init_database()
 
         # System settings

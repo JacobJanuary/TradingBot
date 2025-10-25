@@ -1731,7 +1731,10 @@ class PositionManager:
         if to_decimal(quantity) < to_decimal(min_amount):
             # Fallback: check if we can use minimum quantity
             min_cost = float(min_amount) * float(price)
-            tolerance = size_usd * 1.1  # 10% over budget allowed
+            # Phase 3: Use config tolerance instead of hardcoded 1.1
+            from config.settings import config as global_config
+            tolerance_factor = 1 + (float(global_config.safety.POSITION_SIZE_TOLERANCE_PERCENT) / 100)
+            tolerance = size_usd * tolerance_factor  # 10% over budget allowed
 
             if min_cost <= tolerance:
                 logger.info(f"Using minimum quantity {min_amount} for {symbol} (cost: ${min_cost:.2f}, tolerance: ${tolerance:.2f})")

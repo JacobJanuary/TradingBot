@@ -571,10 +571,14 @@ class StopLossManager:
                             f"retrying with adjusted price..."
                         )
                         # Aggressive adjustment for next attempt
+                        # Phase 3: Use config safety margin instead of hardcoded 0.995/1.005
+                        from config.settings import config as global_config
+                        safety_margin = global_config.safety.STOP_LOSS_SAFETY_MARGIN_PERCENT / Decimal('100')
+
                         if side == 'sell':
-                            stop_price_decimal *= Decimal('0.995')  # 0.5% lower
+                            stop_price_decimal *= (Decimal('1') - safety_margin)  # 0.5% lower
                         else:
-                            stop_price_decimal *= Decimal('1.005')  # 0.5% higher
+                            stop_price_decimal *= (Decimal('1') + safety_margin)  # 0.5% higher
                         continue
                     else:
                         self.logger.error(

@@ -294,7 +294,11 @@ class EnhancedExchangeManager:
                         current_price = float(order.get('price', 0))
                         price_diff_pct = abs(target_price - current_price) / current_price * 100
 
-                        if price_diff_pct > 0.5:  # More than 0.5% difference
+                        # Phase 3: Use config threshold instead of hardcoded 0.5
+                        from config.settings import config as global_config
+                        threshold = float(global_config.safety.PRICE_UPDATE_THRESHOLD_PERCENT)
+
+                        if price_diff_pct > threshold:  # Configurable threshold
                             logger.info(
                                 f"📊 Existing order {order['id']} has {price_diff_pct:.1f}% "
                                 f"price difference, may need update"
