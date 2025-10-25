@@ -1240,20 +1240,40 @@ class ExchangeManager:
             # Round to correct precision (with safe precision limits)
             from decimal import Decimal, ROUND_DOWN, InvalidOperation
 
-            # Limit precision to safe range to prevent decimal.InvalidOperation
-            safe_precision = max(0, min(int(amount_precision), 18))
-            if safe_precision != amount_precision:
-                logger.debug(f"Limited precision from {amount_precision} to {safe_precision} for {symbol}")
+            # CRITICAL FIX: Handle both precision types (decimal places vs step size)
+            # CCXT can return either:
+            # 1. int/high float (decimal places): precision['amount'] = 3 or 8.0
+            # 2. float < 1.0 (step size): precision['amount'] = 0.001
+            #
+            # Bug: int(0.001) = 0 → step_size = 10**-0 = 1.0 → quantize(0.021, 1.0) = 0.0
+            # Fix: Check if precision is already step size (float < 1.0) and use directly
+
+            if isinstance(amount_precision, float) and amount_precision < 1.0:
+                # Precision is already step size (e.g., 0.001 for ZECUSDT)
+                step_size = amount_precision
+                logger.debug(f"{symbol}: Using step size precision: {step_size}")
+            else:
+                # Precision is decimal places (e.g., 3 or 8)
+                safe_precision = max(0, min(int(amount_precision), 18))
+                if safe_precision != amount_precision:
+                    logger.debug(f"Limited precision from {amount_precision} to {safe_precision} for {symbol}")
+                step_size = 10 ** -safe_precision
+                logger.debug(f"{symbol}: Using decimal places precision: {safe_precision} → step_size: {step_size}")
 
             try:
-                step_size = 10 ** -safe_precision
                 amount_decimal = Decimal(str(amount))
                 step_decimal = Decimal(str(step_size))
                 amount = float(amount_decimal.quantize(step_decimal, rounding=ROUND_DOWN))
             except (InvalidOperation, OverflowError) as e:
                 # Fallback to simple rounding if decimal operations fail
                 logger.debug(f"Decimal operation failed for {symbol}, using simple rounding: {e}")
-                amount = round(amount, safe_precision)
+                # Use safe fallback based on precision type
+                if isinstance(amount_precision, float) and amount_precision < 1.0:
+                    # For step size, just return original amount (already validated)
+                    amount = amount
+                else:
+                    safe_precision = max(0, min(int(amount_precision), 18))
+                    amount = round(amount, safe_precision)
 
             logger.debug(f"✅ {symbol}: Amount validated: {amount}")
             return amount
