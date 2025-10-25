@@ -1967,11 +1967,17 @@ class PositionManager:
                     )
 
                 # Persist price and PnL to database
-                logger.info(f"[DB_UPDATE] {symbol}: id={position.id}, price={position.current_price}, pnl%={position.unrealized_pnl_percent:.2f}")
+                logger.info(
+                    f"[DB_UPDATE] {symbol}: id={position.id}, "
+                    f"price={position.current_price}, "
+                    f"pnl=${float(position.unrealized_pnl):.4f}, "
+                    f"pnl%={position.unrealized_pnl_percent:.2f}"
+                )
                 try:
                     await self.repository.update_position(
                         position.id,
                         current_price=position.current_price,
+                        unrealized_pnl=position.unrealized_pnl,
                         pnl_percentage=position.unrealized_pnl_percent
                     )
                 except Exception as e:
