@@ -175,16 +175,33 @@ class TradingBot:
                             self.websockets[name] = stream
                             logger.info(f"✅ {name.capitalize()} AdaptiveStream ready (testnet)")
                     else:
-                        # Use normal stream for mainnet
-                        stream = BinancePrivateStream(
-                            config.__dict__,
-                            os.getenv('BINANCE_API_KEY'),
-                            os.getenv('BINANCE_API_SECRET'),
-                            self._handle_stream_event
-                        )
-                        await stream.start()
-                        self.websockets[name] = stream
-                        logger.info(f"✅ {name.capitalize()} WebSocket ready (mainnet)")
+                        # Use Hybrid WebSocket for Binance mainnet
+                        logger.info("🚀 Using Hybrid WebSocket for Binance mainnet")
+                        from websocket.binance_hybrid_stream import BinanceHybridStream
+
+                        # Get API credentials
+                        api_key = os.getenv('BINANCE_API_KEY')
+                        api_secret = os.getenv('BINANCE_API_SECRET')
+
+                        if api_key and api_secret:
+                            try:
+                                hybrid_stream = BinanceHybridStream(
+                                    api_key=api_key,
+                                    api_secret=api_secret,
+                                    event_handler=self._handle_stream_event,
+                                    testnet=False
+                                )
+                                await hybrid_stream.start()
+                                self.websockets[f'{name}_hybrid'] = hybrid_stream
+                                logger.info(f"✅ {name.capitalize()} Hybrid WebSocket ready (mainnet)")
+                                logger.info(f"   → User WS: Position lifecycle (ACCOUNT_UPDATE)")
+                                logger.info(f"   → Mark WS: Price updates (1-3s)")
+                            except Exception as e:
+                                logger.error(f"Failed to start Binance hybrid stream: {e}")
+                                raise
+                        else:
+                            logger.error(f"❌ Binance mainnet requires API credentials")
+                            raise ValueError("Binance API credentials required for mainnet")
 
                 elif name == 'bybit':
                     # Check if we're on testnet
@@ -216,41 +233,34 @@ class TradingBot:
                             self.websockets[name] = stream
                             logger.info(f"✅ {name.capitalize()} AdaptiveStream ready (testnet)")
                     else:
-                        # Use normal streams for mainnet
-                        # Import Bybit streams
-                        from websocket.bybit_stream import BybitPrivateStream, BybitMarketStream
+                        # Use Hybrid WebSocket for mainnet
+                        # Combines private (position) + public (tickers) streams
+                        logger.info("🚀 Using Hybrid WebSocket for Bybit mainnet")
+                        from websocket.bybit_hybrid_stream import BybitHybridStream
 
-                        # Market data stream (always available, works on testnet and mainnet)
-                        market_symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']  # Top symbols for market data
-                        market_stream = BybitMarketStream(
-                            config.__dict__,
-                            symbols=market_symbols,
-                            event_handler=self._handle_stream_event
-                        )
-                        await market_stream.start()
-                        self.websockets[f'{name}_market'] = market_stream
-                        logger.info(f"✅ {name.capitalize()} Market WebSocket ready (mainnet)")
-
-                        # Private stream (only for mainnet with API keys)
+                        # Get API credentials
                         api_key = os.getenv('BYBIT_API_KEY')
                         api_secret = os.getenv('BYBIT_API_SECRET')
 
                         if api_key and api_secret:
                             try:
-                                private_stream = BybitPrivateStream(
-                                    config.__dict__,
+                                hybrid_stream = BybitHybridStream(
                                     api_key=api_key,
                                     api_secret=api_secret,
-                                    event_handler=self._handle_stream_event
+                                    event_handler=self._handle_stream_event,
+                                    testnet=False
                                 )
-                                await private_stream.start()
-                                self.websockets[f'{name}_private'] = private_stream
-                                logger.info(f"✅ {name.capitalize()} Private WebSocket ready (mainnet)")
+                                await hybrid_stream.start()
+                                self.websockets[f'{name}_hybrid'] = hybrid_stream
+                                logger.info(f"✅ {name.capitalize()} Hybrid WebSocket ready (mainnet)")
+                                logger.info(f"   → Private WS: Position lifecycle")
+                                logger.info(f"   → Public WS: Mark price updates (100ms)")
                             except Exception as e:
-                                logger.warning(f"Failed to start Bybit private stream: {e}")
-                                logger.info("Continuing with public stream only")
+                                logger.error(f"Failed to start Bybit hybrid stream: {e}")
+                                raise
                         else:
-                            logger.info(f"ℹ️ Bybit private stream skipped (no API credentials)")
+                            logger.error(f"❌ Bybit mainnet requires API credentials")
+                            raise ValueError("Bybit API credentials required for mainnet")
 
             # Initialize position manager
             logger.info("Initializing position manager...")
