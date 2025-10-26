@@ -8,10 +8,43 @@ import time
 from typing import Dict, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
+from dataclasses import dataclass
 from prometheus_client import Counter, Gauge, Histogram, Summary
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SubscriptionMetrics:
+    """✅ PHASE 3: Metrics for WebSocket subscription health"""
+    total_subscriptions: int = 0
+    active_subscriptions: int = 0
+    failed_subscriptions: int = 0
+    resubscription_count: int = 0
+    stale_detection_count: int = 0
+    verification_success_count: int = 0
+    verification_failure_count: int = 0
+    max_stale_duration_seconds: float = 0
+    reconnection_count: int = 0
+    last_stale_detected_at: Optional[datetime] = None
+    last_resubscription_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """Convert metrics to dictionary for logging/monitoring"""
+        return {
+            'total_subscriptions': self.total_subscriptions,
+            'active_subscriptions': self.active_subscriptions,
+            'failed_subscriptions': self.failed_subscriptions,
+            'resubscription_count': self.resubscription_count,
+            'stale_detection_count': self.stale_detection_count,
+            'verification_success_count': self.verification_success_count,
+            'verification_failure_count': self.verification_failure_count,
+            'max_stale_duration_seconds': self.max_stale_duration_seconds,
+            'reconnection_count': self.reconnection_count,
+            'last_stale_detected_at': self.last_stale_detected_at.isoformat() if self.last_stale_detected_at else None,
+            'last_resubscription_at': self.last_resubscription_at.isoformat() if self.last_resubscription_at else None
+        }
 
 
 class AgedPositionMetrics:
