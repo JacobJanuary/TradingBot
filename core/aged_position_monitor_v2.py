@@ -86,7 +86,11 @@ class AgedPositionMonitorV2:
             'positions_monitored': 0,
             'market_closes_triggered': 0,
             'grace_closes': 0,
-            'progressive_closes': 0
+            'progressive_closes': 0,
+            'ghost_positions_detected': 0,
+            'ghost_positions_handled': 0,
+            'position_validation_failures': 0,
+            'quantity_mismatches': 0,
         }
 
         logger.info(
@@ -122,6 +126,147 @@ class AgedPositionMonitorV2:
                 logger.info("Events initialized for aged positions")
             except Exception as e:
                 logger.warning(f"Events initialization failed (non-critical): {e}")
+
+    async def _validate_position_on_exchange(self, position) -> tuple:
+        """
+        Validate position exists on exchange and get current quantity.
+
+        Args:
+            position: Position object from database
+
+        Returns:
+            tuple: (exists: bool, quantity: float, error_msg: str)
+                exists=True if position found on exchange
+                quantity=actual quantity from exchange (0 if not found)
+                error_msg=error description if validation failed
+        """
+        symbol = position.symbol
+        exchange_name = position.exchange
+
+        try:
+            # Get exchange manager
+            exchange = self.position_manager.exchange_managers.get(exchange_name)
+            if not exchange:
+                error_msg = f"Exchange {exchange_name} not found in managers"
+                logger.error(f"❌ {symbol}: {error_msg}")
+                return (False, 0.0, error_msg)
+
+            # Fetch positions from exchange
+            try:
+                positions = await exchange.exchange.fetch_positions([symbol])
+            except Exception as fetch_error:
+                # If fetch fails, log but don't block close attempt
+                error_msg = f"Failed to fetch positions: {fetch_error}"
+                logger.warning(f"⚠️ {symbol}: {error_msg}")
+                # Return None to indicate "unknown" state
+                return (None, 0.0, error_msg)
+
+            # Find active position (non-zero contracts)
+            active_position = None
+            for p in positions:
+                contracts = float(p.get('contracts', 0))
+                if contracts != 0:
+                    active_position = p
+                    break
+
+            if not active_position:
+                # Position NOT found on exchange
+                logger.warning(
+                    f"🔍 {symbol}: Position NOT FOUND on exchange "
+                    f"(DB shows {position.quantity}, but exchange shows 0)"
+                )
+                return (False, 0.0, "Position not found on exchange")
+
+            # Position exists, get quantity
+            exchange_qty = abs(float(active_position.get('contracts', 0)))
+            db_qty = abs(float(position.quantity))
+
+            # Check quantity mismatch
+            qty_diff = abs(exchange_qty - db_qty)
+            if qty_diff > 0.01:  # Allow 0.01 difference for rounding
+                logger.warning(
+                    f"⚠️ {symbol}: Quantity MISMATCH detected!\n"
+                    f"   Exchange: {exchange_qty}\n"
+                    f"   Database: {db_qty}\n"
+                    f"   Difference: {qty_diff}\n"
+                    f"   → Will use EXCHANGE quantity for close"
+                )
+                self.stats['quantity_mismatches'] = self.stats.get('quantity_mismatches', 0) + 1
+            else:
+                logger.debug(
+                    f"✅ {symbol}: Position validated on exchange "
+                    f"(qty={exchange_qty})"
+                )
+
+            return (True, exchange_qty, "")
+
+        except Exception as e:
+            error_msg = f"Unexpected error during validation: {e}"
+            logger.error(
+                f"❌ {symbol}: {error_msg}",
+                exc_info=True
+            )
+            self.stats['position_validation_failures'] = self.stats.get('position_validation_failures', 0) + 1
+            # Return None to indicate "unknown" state
+            return (None, 0.0, error_msg)
+
+    async def _mark_position_as_ghost(self, position, reason: str = "ghost_detected_aged_close"):
+        """
+        Mark position as closed in database (ghost position cleanup).
+
+        Args:
+            position: Position object from database
+            reason: Reason for ghost detection
+        """
+        symbol = position.symbol
+
+        try:
+            # Close position in database
+            await self.repository.close_position(
+                position_id=position.id,
+                exit_price=position.entry_price,  # Use entry as exit (unknown actual)
+                exit_reason=reason,
+                realized_pnl=Decimal('0')  # Unknown actual PnL
+            )
+
+            logger.info(
+                f"✅ {symbol}: Ghost position closed in database\n"
+                f"   Position ID: {position.id}\n"
+                f"   Entry price: {position.entry_price}\n"
+                f"   Reason: {reason}"
+            )
+
+            # Update statistics
+            if hasattr(self, 'stats'):
+                if 'ghost_positions_detected' not in self.stats:
+                    self.stats['ghost_positions_detected'] = 0
+                self.stats['ghost_positions_detected'] += 1
+
+            # Remove from aged_targets if present
+            if symbol in self.aged_targets:
+                del self.aged_targets[symbol]
+                logger.debug(f"🗑️ {symbol}: Removed from aged_targets")
+
+            # Emit event
+            from core.event_logger import event_logger
+            await event_logger.log_event(
+                'aged_ghost_position_detected',
+                {
+                    'symbol': symbol,
+                    'exchange': position.exchange,
+                    'position_id': position.id,
+                    'entry_price': float(position.entry_price),
+                    'quantity': float(position.quantity),
+                    'reason': reason
+                }
+            )
+
+        except Exception as e:
+            logger.error(
+                f"❌ {symbol}: Failed to mark ghost position in database: {e}",
+                exc_info=True
+            )
+            raise  # Re-raise to caller
 
     async def check_position_age(self, position) -> bool:
         """Check if position qualifies as aged"""
@@ -302,12 +447,63 @@ class AgedPositionMonitorV2:
 
         symbol = position.symbol
         exchange_name = position.exchange
-        amount = abs(float(position.quantity))
 
         logger.info(
             f"📤 Triggering robust close for aged {symbol}: "
-            f"amount={amount}, phase={target.phase}"
+            f"phase={target.phase}"
         )
+
+        # === NEW: VALIDATE POSITION EXISTS ON EXCHANGE ===
+        exists, exchange_qty, error_msg = await self._validate_position_on_exchange(position)
+
+        if exists is False:
+            # Position confirmed NOT FOUND on exchange - GHOST POSITION
+            logger.warning(
+                f"⚠️ {symbol}: GHOST POSITION detected! "
+                f"Position exists in DB but NOT on exchange. "
+                f"Marking as closed in database (no exchange close needed)."
+            )
+
+            try:
+                await self._mark_position_as_ghost(position, "ghost_detected_aged_close")
+
+                # Update statistics
+                self.stats['ghost_positions_handled'] = self.stats.get('ghost_positions_handled', 0) + 1
+
+                logger.info(
+                    f"✅ {symbol}: Ghost position handled successfully "
+                    f"(closed in DB, no exchange action taken)"
+                )
+
+                # Remove from monitoring
+                if symbol in self.aged_targets:
+                    del self.aged_targets[symbol]
+
+                return  # EXIT - don't attempt close on exchange
+
+            except Exception as ghost_error:
+                logger.error(
+                    f"❌ {symbol}: Failed to handle ghost position: {ghost_error}",
+                    exc_info=True
+                )
+                # Continue to attempt close (fallback behavior)
+
+        elif exists is None:
+            # Validation FAILED (API error, timeout, etc.)
+            logger.warning(
+                f"⚠️ {symbol}: Position validation FAILED: {error_msg}\n"
+                f"   → Proceeding with close attempt using DB values (fallback mode)"
+            )
+            amount = abs(float(position.quantity))
+
+        else:
+            # Position EXISTS on exchange (exists=True)
+            logger.info(
+                f"✅ {symbol}: Position validated on exchange (qty={exchange_qty})"
+            )
+            amount = exchange_qty
+
+        # === END NEW CODE ===
 
         # Use OrderExecutor for robust execution
         try:
