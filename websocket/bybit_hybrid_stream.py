@@ -130,6 +130,11 @@ class BybitHybridStream:
         self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self.subscription_task = asyncio.create_task(self._subscription_manager())
 
+        # ✅ PHASE 2: Periodic reconnection (every 10 minutes)
+        self.reconnection_task = asyncio.create_task(
+            self._periodic_reconnection_task(interval_seconds=600)
+        )
+
         logger.info("✅ Bybit Hybrid WebSocket started")
 
     async def stop(self):
@@ -139,7 +144,13 @@ class BybitHybridStream:
         self.running = False
 
         # Cancel tasks
-        for task in [self.private_task, self.public_task, self.heartbeat_task, self.subscription_task]:
+        for task in [
+            self.private_task,
+            self.public_task,
+            self.heartbeat_task,
+            self.subscription_task,
+            self.reconnection_task  # ✅ PHASE 2
+        ]:
             if task and not task.done():
                 task.cancel()
                 try:
@@ -636,6 +647,79 @@ class BybitHybridStream:
 
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
+
+    async def _periodic_reconnection_task(self, interval_seconds: int = 600):
+        """
+        ✅ PHASE 2: Periodic prophylactic reconnection
+
+        Reconnects WebSocket every N seconds to ensure fresh connection state.
+        Industry best practice for reliable trading bots.
+
+        Args:
+            interval_seconds: Reconnection interval (default: 600s = 10min)
+        """
+        logger.info(
+            f"🔄 Starting periodic reconnection task (interval: {interval_seconds}s)"
+        )
+
+        while self.running:
+            try:
+                await asyncio.sleep(interval_seconds)
+
+                if not self.running:
+                    break
+
+                # Only reconnect if we have active positions
+                if not self.positions:
+                    logger.debug("No active positions, skipping periodic reconnection")
+                    continue
+
+                logger.info(
+                    f"🔄 Periodic reconnection triggered "
+                    f"({len(self.positions)} active positions)"
+                )
+
+                # Store current subscribed tickers
+                tickers_backup = list(self.subscribed_tickers)
+
+                # Gracefully close public WebSocket (ticker stream)
+                if self.public_ws and not self.public_ws.closed:
+                    logger.info("📤 Closing public WebSocket for reconnection...")
+                    await self.public_ws.close()
+                    self.public_connected = False
+
+                # Wait for reconnection
+                await asyncio.sleep(2)
+
+                # Connection will auto-reconnect via _run_public_stream
+                # Wait for reconnection to complete
+                max_wait = 30  # 30 seconds max
+                waited = 0
+                while not self.public_connected and waited < max_wait:
+                    await asyncio.sleep(1)
+                    waited += 1
+
+                if self.public_connected:
+                    logger.info("✅ Periodic reconnection successful")
+
+                    # Verify all subscriptions restored
+                    missing = set(tickers_backup) - self.subscribed_tickers
+                    if missing:
+                        logger.warning(
+                            f"⚠️ {len(missing)} subscriptions not restored: {missing}"
+                        )
+                        # Trigger manual restore
+                        for symbol in missing:
+                            await self._request_ticker_subscription(symbol, subscribe=True)
+                else:
+                    logger.error("❌ Periodic reconnection failed - timeout")
+
+            except asyncio.CancelledError:
+                logger.info("Periodic reconnection task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in periodic reconnection: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait before retry
 
     # ==================== STATUS ====================
 
