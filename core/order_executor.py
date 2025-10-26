@@ -23,8 +23,9 @@ class OrderResult:
     price: Optional[Decimal]
     executed_amount: Optional[Decimal]
     error_message: Optional[str]
-    attempts: int
-    execution_time: float
+    error_code: Optional[str] = None  # NEW: e.g., "POSITION_NOT_FOUND", "INSUFFICIENT_BALANCE"
+    attempts: int = 0
+    execution_time: float = 0.0
 
 
 class OrderExecutor:
@@ -239,6 +240,57 @@ class OrderExecutor:
                         f"Order attempt failed [{error_type}]: {order_type} "
                         f"attempt {attempt + 1}/{self.max_attempts}: {e}"
                     )
+
+                    # === NEW: Special handling for "Insufficient balance" error ===
+                    if '170131' in last_error or 'Insufficient balance' in last_error.lower():
+                        logger.warning(
+                            f"⚠️ {symbol}: Received 'Insufficient balance' error (170131). "
+                            f"This might indicate position doesn't exist on exchange."
+                        )
+
+                        # Try to verify if position exists
+                        try:
+                            positions = await exchange.exchange.fetch_positions([symbol])
+                            active_position = next(
+                                (p for p in positions if float(p.get('contracts', 0)) != 0),
+                                None
+                            )
+
+                            if not active_position:
+                                # CONFIRMED: Position doesn't exist
+                                logger.error(
+                                    f"❌ {symbol}: CONFIRMED - Position NOT FOUND on exchange!\n"
+                                    f"   Error 170131 was actually 'position not found', not balance issue.\n"
+                                    f"   Cannot close non-existent position."
+                                )
+
+                                # Return special result
+                                return OrderResult(
+                                    success=False,
+                                    order_id=None,
+                                    order_type='validation_failed',
+                                    price=None,
+                                    executed_amount=Decimal('0'),
+                                    error_message="Position not found on exchange (170131 detected as ghost)",
+                                    error_code="POSITION_NOT_FOUND",
+                                    attempts=total_attempts,
+                                    execution_time=time.time() - start_time
+                                )
+                            else:
+                                # Position EXISTS - this is REAL balance issue
+                                logger.error(
+                                    f"❌ {symbol}: CONFIRMED - Real insufficient balance issue!\n"
+                                    f"   Position exists (qty={float(active_position.get('contracts', 0))})\n"
+                                    f"   but account balance insufficient for this operation.\n"
+                                    f"   This is a CRITICAL issue requiring manual investigation."
+                                )
+
+                        except Exception as verify_error:
+                            logger.warning(
+                                f"⚠️ {symbol}: Could not verify position existence: {verify_error}\n"
+                                f"   Treating 170131 as permanent error (stopping retries)"
+                            )
+                    # === END NEW CODE ===
 
                     # Permanent errors - stop immediately
                     if error_type == 'permanent':
