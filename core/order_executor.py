@@ -350,14 +350,32 @@ class OrderExecutor:
     ) -> Dict:
         """Execute market order"""
 
+        # CRITICAL FIX: Convert DB symbol to exchange-specific format
+        exchange_symbol = exchange.find_exchange_symbol(symbol)
+        if not exchange_symbol:
+            raise ValueError(f"Symbol {symbol} not available on {exchange.name}")
+
+        # Validate market type (futures only)
+        market = exchange.markets.get(exchange_symbol)
+        if market and market.get('spot'):
+            raise ValueError(
+                f"CRITICAL: Attempting SPOT order for {exchange_symbol}! "
+                f"Bot trades ONLY futures. Symbol conversion failed."
+            )
+
         params = {'reduceOnly': True}
 
         # Exchange-specific parameters
         if exchange.exchange.id == 'binance':
             params['type'] = 'MARKET'
 
+        logger.info(
+            f"Creating market order: DB={symbol}, Exchange={exchange_symbol}, "
+            f"Market={market.get('type') if market else 'unknown'}"
+        )
+
         return await exchange.exchange.create_order(
-            symbol=symbol,
+            symbol=exchange_symbol,
             type='market',
             side=side,
             amount=amount,
@@ -373,8 +391,18 @@ class OrderExecutor:
     ) -> Dict:
         """Execute limit order with aggressive pricing for quick fill"""
 
+        # CRITICAL FIX: Convert symbol format
+        exchange_symbol = exchange.find_exchange_symbol(symbol)
+        if not exchange_symbol:
+            raise ValueError(f"Symbol {symbol} not available on {exchange.name}")
+
+        # Validate market type
+        market = exchange.markets.get(exchange_symbol)
+        if market and market.get('spot'):
+            raise ValueError(f"CRITICAL: SPOT order attempt blocked for {exchange_symbol}")
+
         # Get current market price
-        ticker = await exchange.exchange.fetch_ticker(symbol)
+        ticker = await exchange.exchange.fetch_ticker(exchange_symbol)
         current_price = Decimal(str(ticker['last']))
 
         # Validate ticker price
@@ -403,7 +431,7 @@ class OrderExecutor:
         )
 
         return await exchange.exchange.create_order(
-            symbol=symbol,
+            symbol=exchange_symbol,
             type='limit',
             side=side,
             amount=amount,
@@ -420,8 +448,18 @@ class OrderExecutor:
     ) -> Dict:
         """Execute limit order as maker (post-only)"""
 
+        # CRITICAL FIX: Convert symbol format
+        exchange_symbol = exchange.find_exchange_symbol(symbol)
+        if not exchange_symbol:
+            raise ValueError(f"Symbol {symbol} not available on {exchange.name}")
+
+        # Validate market type
+        market = exchange.markets.get(exchange_symbol)
+        if market and market.get('spot'):
+            raise ValueError(f"CRITICAL: SPOT order attempt blocked for {exchange_symbol}")
+
         # Get order book for best price
-        order_book = await exchange.exchange.fetch_order_book(symbol, limit=5)
+        order_book = await exchange.exchange.fetch_order_book(exchange_symbol, limit=5)
 
         # Check if order book is valid
         if not order_book:
@@ -464,7 +502,7 @@ class OrderExecutor:
         )
 
         return await exchange.exchange.create_order(
-            symbol=symbol,
+            symbol=exchange_symbol,
             type='limit',
             side=side,
             amount=amount,
