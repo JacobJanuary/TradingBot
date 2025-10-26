@@ -1367,6 +1367,59 @@ class ExchangeManager:
 
         return min_from_ccxt
 
+    def get_min_notional(self, symbol: str) -> float:
+        """
+        Get minimum notional value (order cost) for symbol
+
+        Bybit: Uses minNotionalValue from lotSizeFilter
+        Binance: Uses MIN_NOTIONAL filter
+        Other: Returns 0 (no minimum)
+
+        Returns:
+            Minimum order value in quote currency (USDT)
+        """
+        exchange_symbol = self.find_exchange_symbol(symbol) or symbol
+        market = self.markets.get(exchange_symbol)
+        if not market:
+            return 0  # No minimum
+
+        # BYBIT: Read minNotionalValue from API info
+        if self.name == 'bybit':
+            info = market.get('info', {})
+            lot_size_filter = info.get('lotSizeFilter', {})
+            min_notional = lot_size_filter.get('minNotionalValue')
+
+            if min_notional:
+                try:
+                    min_notional_float = float(min_notional)
+                    if min_notional_float > 0:
+                        return min_notional_float
+                except (ValueError, TypeError):
+                    logger.warning(f"{symbol}: Invalid minNotionalValue from Bybit API")
+
+            # Default for Bybit USDT perpetuals
+            return 5.0
+
+        # BINANCE: Read MIN_NOTIONAL filter
+        elif self.name == 'binance':
+            info = market.get('info', {})
+            filters = info.get('filters', [])
+
+            for f in filters:
+                if f.get('filterType') == 'MIN_NOTIONAL':
+                    min_notional = f.get('minNotional') or f.get('notional')
+                    if min_notional:
+                        try:
+                            return float(min_notional)
+                        except (ValueError, TypeError):
+                            pass
+
+            # Binance futures default
+            return 5.0
+
+        # Other exchanges: no minimum cost
+        return 0
+
     def get_tick_size(self, symbol: str) -> float:
         """Get price tick size for symbol"""
         # CRITICAL FIX: Convert symbol to exchange-specific format

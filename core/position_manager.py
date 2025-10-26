@@ -1745,6 +1745,42 @@ class PositionManager:
                 logger.warning(f"Quantity {quantity} below minimum {min_amount} and too expensive (${min_cost:.2f} > ${tolerance:.2f})")
                 return None
 
+        # CRITICAL FIX: Check minimum notional value (Bybit/Binance)
+        min_notional = exchange.get_min_notional(symbol)
+
+        if min_notional > 0:
+            order_value = float(adjusted_quantity) * float(price)
+
+            if order_value < min_notional:
+                # Order value below exchange minimum
+                required_qty = min_notional / float(price)
+
+                # Round UP to next valid step
+                step_size = exchange.get_step_size(symbol)
+                if step_size > 0:
+                    # Calculate steps needed
+                    steps = int((required_qty - float(adjusted_quantity)) / step_size) + 1
+                    adjusted_quantity = float(adjusted_quantity) + (steps * step_size)
+                else:
+                    adjusted_quantity = required_qty
+
+                # Re-check tolerance
+                new_cost = float(adjusted_quantity) * float(price)
+                tolerance = size_usd * tolerance_factor
+
+                if new_cost <= tolerance:
+                    logger.info(
+                        f"Adjusted quantity to meet minNotional: {symbol} "
+                        f"qty={adjusted_quantity:.6f}, value=${new_cost:.2f} "
+                        f"(min=${min_notional})"
+                    )
+                else:
+                    logger.warning(
+                        f"Cannot meet minNotional ${min_notional} without exceeding tolerance: "
+                        f"{symbol} would cost ${new_cost:.2f} > ${tolerance:.2f}"
+                    )
+                    return None
+
         # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
         formatted_qty = exchange.amount_to_precision(symbol, adjusted_quantity)
         formatted_qty = float(formatted_qty)
