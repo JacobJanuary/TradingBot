@@ -252,7 +252,107 @@ class SmartTrailingStopManager:
                 )
                 side_value = 'long'
 
-            # Reconstruct TrailingStopInstance
+            # ============================================================
+            # FIX #1: VALIDATE TS.SIDE AGAINST POSITION.SIDE
+            # ============================================================
+            # Fetch current position from exchange to verify side matches
+            try:
+                logger.debug(f"{symbol}: Validating TS side against exchange position...")
+
+                positions = await self.exchange.fetch_positions([symbol])
+
+                # Find position for this symbol
+                current_position = None
+                for pos in positions:
+                    if pos.get('symbol') == symbol:
+                        # Check if position is open (has size)
+                        size = pos.get('contracts', 0) or pos.get('size', 0)
+                        if size and size != 0:
+                            current_position = pos
+                            break
+
+                if not current_position:
+                    logger.warning(
+                        f"⚠️ {symbol}: TS state exists in DB but no position on exchange - "
+                        f"deleting stale TS state"
+                    )
+                    await self._delete_state(symbol)
+                    return None
+
+                # Determine position side from exchange data
+                # Bybit: pos['side'] = 'Buy' or 'Sell'
+                # Binance: pos['side'] = 'long' or 'short'
+                exchange_side_raw = current_position.get('side', '').lower()
+
+                # Normalize exchange side to 'long' or 'short'
+                if exchange_side_raw in ('buy', 'long'):
+                    exchange_side = 'long'
+                elif exchange_side_raw in ('sell', 'short'):
+                    exchange_side = 'short'
+                else:
+                    logger.error(
+                        f"❌ {symbol}: Unknown position side from exchange: '{exchange_side_raw}' - "
+                        f"cannot validate, deleting TS state"
+                    )
+                    await self._delete_state(symbol)
+                    return None
+
+                # CRITICAL CHECK: Compare TS side vs position side
+                if side_value != exchange_side:
+                    logger.error(
+                        f"🔴 {symbol}: SIDE MISMATCH DETECTED!\n"
+                        f"  TS side (from DB):      {side_value}\n"
+                        f"  Position side (exchange): {exchange_side}\n"
+                        f"  TS entry price (DB):    {state_data.get('entry_price')}\n"
+                        f"  Position entry (exchange): {current_position.get('entryPrice')}\n"
+                        f"  → Deleting stale TS state (prevents 100% SL failure)"
+                    )
+
+                    # Log critical event
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.WARNING_RAISED,
+                            {
+                                'warning_type': 'ts_side_mismatch_on_restore',
+                                'symbol': symbol,
+                                'ts_side_db': side_value,
+                                'position_side_exchange': exchange_side,
+                                'ts_entry_price': float(state_data.get('entry_price', 0)),
+                                'position_entry_price': float(current_position.get('entryPrice', 0)),
+                                'action': 'deleted_stale_ts_state'
+                            },
+                            symbol=symbol,
+                            exchange=self.exchange_name,
+                            severity='ERROR'
+                        )
+
+                    # Delete stale state from database
+                    await self._delete_state(symbol)
+
+                    # Return None → PositionManager will create new TS with correct side
+                    return None
+
+                # Side matches - safe to restore
+                logger.info(
+                    f"✅ {symbol}: TS side validation PASSED "
+                    f"(side={side_value}, entry={state_data.get('entry_price')})"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"❌ {symbol}: Failed to validate TS side against exchange: {e}\n"
+                    f"  → Deleting TS state to be safe (will create new)",
+                    exc_info=True
+                )
+                await self._delete_state(symbol)
+                return None
+
+            # ============================================================
+            # END FIX #1
+            # ============================================================
+
+            # Reconstruct TrailingStopInstance (side already validated)
             ts = TrailingStopInstance(
                 symbol=state_data['symbol'],
                 entry_price=Decimal(str(state_data['entry_price'])),
@@ -294,6 +394,7 @@ class SmartTrailingStopManager:
                 f"✅ {symbol}: TS state RESTORED from DB - "
                 f"state={ts.state.value}, "
                 f"activated={ts.state == TrailingStopState.ACTIVE}, "
+                f"side={ts.side} (VALIDATED), "
                 f"highest_price={ts.highest_price if ts.side == 'long' else 'N/A'}, "
                 f"lowest_price={ts.lowest_price if ts.side == 'short' else 'N/A'}, "
                 f"current_stop={ts.current_stop_price}, "
@@ -378,10 +479,13 @@ class SmartTrailingStopManager:
             ts.activation_price = ts.entry_price * (1 - self.config.activation_percent / 100)
 
         # STEP 5: Log creation (NO LOCK - event queue is async/thread-safe)
+        # FIX #5: Improved logging with side validation
         logger.info(
-            f"Created trailing stop for {symbol} {side}: "
-            f"entry={entry_price}, activation={ts.activation_price}, "
-            f"initial_stop={initial_stop}"
+            f"✅ {symbol}: TS CREATED - "
+            f"side={side}, entry={entry_price:.8f}, "
+            f"activation={float(ts.activation_price):.8f}, "
+            f"initial_stop={initial_stop:.8f if initial_stop else 'None'}, "
+            f"[SEARCH: ts_created_{symbol}]"
         )
 
         event_logger = get_event_logger()
@@ -556,9 +660,15 @@ class SmartTrailingStopManager:
         # Update stop order
         await self._update_stop_order(ts)
 
+        # FIX #5: Improved logging with side validation
         logger.info(
-            f"✅ {ts.symbol}: Trailing stop ACTIVATED at {ts.current_price:.4f}, "
-            f"stop at {ts.current_stop_price:.4f}"
+            f"✅ {ts.symbol}: TS ACTIVATED - "
+            f"side={ts.side}, "
+            f"price={ts.current_price:.8f}, "
+            f"sl={ts.current_stop_price:.8f}, "
+            f"entry={ts.entry_price:.8f}, "
+            f"profit={self._calculate_profit_percent(ts):.2f}%, "
+            f"[SEARCH: ts_activated_{ts.symbol}]"
         )
 
         # Log trailing stop activation
@@ -680,9 +790,16 @@ class SmartTrailingStopManager:
                     # Restore old stop price
                     ts.current_stop_price = old_stop
 
+                    # FIX #5: Improved logging with side validation
                     logger.error(
-                        f"❌ {ts.symbol}: SL update FAILED on exchange, "
-                        f"state rolled back (keeping old stop {old_stop:.4f})"
+                        f"❌ {ts.symbol}: SL UPDATE FAILED - "
+                        f"side={ts.side}, "
+                        f"proposed_sl={new_stop_price:.8f}, "
+                        f"kept_old_sl={old_stop:.8f}, "
+                        f"price={ts.current_price:.8f}, "
+                        f"entry={ts.entry_price:.8f}, "
+                        f"peak={('highest' if ts.side == 'long' else 'lowest')}={ts.highest_price if ts.side == 'long' else ts.lowest_price:.8f}, "
+                        f"[SEARCH: ts_sl_failed_{ts.symbol}]"
                     )
 
                     # Log failure event
@@ -710,9 +827,16 @@ class SmartTrailingStopManager:
             ts.update_count += 1
 
             improvement = abs((new_stop_price - old_stop) / old_stop * 100)
+            # FIX #5: Improved logging with side validation
             logger.info(
-                f"📈 {ts.symbol}: SL moved - Trailing stop updated from {old_stop:.4f} to {new_stop_price:.4f} "
-                f"(+{improvement:.2f}%)"
+                f"📈 {ts.symbol}: SL UPDATED - "
+                f"side={ts.side}, "
+                f"old_sl={old_stop:.8f}, "
+                f"new_sl={new_stop_price:.8f}, "
+                f"improvement={improvement:.2f}%, "
+                f"price={ts.current_price:.8f}, "
+                f"peak={('highest' if ts.side == 'long' else 'lowest')}={ts.highest_price if ts.side == 'long' else ts.lowest_price:.8f}, "
+                f"[SEARCH: ts_sl_updated_{ts.symbol}]"
             )
 
             # Log trailing stop update
@@ -1060,7 +1184,94 @@ class SmartTrailingStopManager:
                 logger.error(f"{ts.symbol}: Exchange does not support atomic SL update")
                 return False
 
-            # Call atomic update
+            # ============================================================
+            # FIX #2: VALIDATE SL DIRECTION BEFORE EXCHANGE CALL
+            # ============================================================
+            # Safety check: Ensure new SL price is on correct side of current price
+            #
+            # Rules:
+            # - LONG: SL must be BELOW current price (price falling triggers SL)
+            # - SHORT: SL must be ABOVE current price (price rising triggers SL)
+            #
+            # This catches side mismatch bugs BEFORE they cause exchange errors
+
+            sl_price = ts.current_stop_price
+            current_price = ts.current_price
+
+            # Determine if SL direction is valid
+            is_sl_valid = False
+            validation_error = None
+
+            if ts.side == 'long':
+                # For LONG: SL must be < current price
+                if sl_price < current_price:
+                    is_sl_valid = True
+                else:
+                    validation_error = (
+                        f"LONG position requires SL < current_price, "
+                        f"but {sl_price:.8f} >= {current_price:.8f}"
+                    )
+
+            elif ts.side == 'short':
+                # For SHORT: SL must be > current price
+                if sl_price > current_price:
+                    is_sl_valid = True
+                else:
+                    validation_error = (
+                        f"SHORT position requires SL > current_price, "
+                        f"but {sl_price:.8f} <= {current_price:.8f}"
+                    )
+
+            else:
+                validation_error = f"Unknown side: '{ts.side}'"
+
+            # If validation failed, abort update
+            if not is_sl_valid:
+                logger.error(
+                    f"🔴 {ts.symbol}: SL VALIDATION FAILED - Invalid SL direction!\n"
+                    f"  Side:          {ts.side}\n"
+                    f"  Current Price: {current_price:.8f}\n"
+                    f"  Proposed SL:   {sl_price:.8f}\n"
+                    f"  Error:         {validation_error}\n"
+                    f"  → ABORTING SL update (would fail on exchange)"
+                )
+
+                # Log critical event
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.TRAILING_STOP_SL_UPDATE_FAILED,
+                        {
+                            'symbol': ts.symbol,
+                            'error_type': 'sl_direction_validation_failed',
+                            'side': ts.side,
+                            'current_price': float(current_price),
+                            'proposed_sl_price': float(sl_price),
+                            'validation_error': validation_error,
+                            'entry_price': float(ts.entry_price),
+                            'highest_price': float(ts.highest_price) if ts.side == 'long' else None,
+                            'lowest_price': float(ts.lowest_price) if ts.side == 'short' else None,
+                            'action': 'aborted_before_exchange_call'
+                        },
+                        symbol=ts.symbol,
+                        exchange=self.exchange_name,
+                        severity='ERROR'
+                    )
+
+                # Return False → triggers rollback in _update_trailing_stop()
+                return False
+
+            # Validation passed - safe to proceed
+            logger.debug(
+                f"✅ {ts.symbol}: SL validation PASSED - "
+                f"side={ts.side}, sl={sl_price:.8f}, price={current_price:.8f}"
+            )
+
+            # ============================================================
+            # END FIX #2
+            # ============================================================
+
+            # Call atomic update (now safe)
             result = await self.exchange.update_stop_loss_atomic(
                 symbol=ts.symbol,
                 new_sl_price=float(ts.current_stop_price),
@@ -1152,8 +1363,17 @@ class SmartTrailingStopManager:
             return False
 
     async def on_position_closed(self, symbol: str, realized_pnl: float = None):
-        """Handle position closure"""
+        """Handle position closure
+
+        FIX #3: Always clean database state, even if TS not in memory
+        """
         if symbol not in self.trailing_stops:
+            # TS not in memory, but might exist in DB (orphaned state)
+            # FIX #3: Clean database anyway to prevent stale states
+            logger.debug(f"{symbol}: Position closed but no TS in memory, checking DB...")
+            delete_success = await self._delete_state(symbol)
+            if delete_success:
+                logger.info(f"✅ {symbol}: Cleaned orphaned TS state from database on position close")
             return
 
         async with self.lock:
@@ -1199,10 +1419,200 @@ class SmartTrailingStopManager:
             # Remove from active stops
             del self.trailing_stops[symbol]
 
-            # NEW: Delete state from database
-            await self._delete_state(symbol)
+            # ============================================================
+            # FIX #3: VERIFY TS STATE DELETED FROM DATABASE
+            # ============================================================
+            # Delete state from database and verify success
+            delete_success = await self._delete_state(symbol)
 
-            logger.info(f"Position {symbol} closed, trailing stop removed")
+            if delete_success:
+                logger.info(
+                    f"✅ {symbol}: Position closed, TS removed from memory AND database - "
+                    f"side={ts.side}, entry={ts.entry_price}, updates={ts.update_count}"
+                )
+            else:
+                logger.error(
+                    f"⚠️ {symbol}: Position closed, TS removed from memory BUT database deletion FAILED - "
+                    f"side={ts.side}, entry={ts.entry_price} (may leave stale state in DB)"
+                )
+            # ============================================================
+            # END FIX #3
+            # ============================================================
+
+    # ============================================================
+    # FIX #4: TS-POSITION CONSISTENCY CHECK
+    # ============================================================
+
+    async def check_ts_position_consistency(self) -> Dict[str, any]:
+        """
+        Periodic health check: Verify TS.side matches position.side for all active TS
+
+        Called by scheduler every 5 minutes
+
+        FIX #4: Detects side mismatches that slip through other defenses
+
+        Returns:
+            Dict with check results and metrics
+        """
+        logger.info("🔍 Running TS-Position consistency check...")
+
+        results = {
+            'total_ts_checked': 0,
+            'mismatches_detected': 0,
+            'auto_fixed': 0,
+            'check_failures': 0,
+            'details': []
+        }
+
+        # Get all active TS
+        async with self.lock:
+            symbols_to_check = list(self.trailing_stops.keys())
+
+        if not symbols_to_check:
+            logger.info("✅ No active TS to check")
+            return results
+
+        # Check each TS
+        for symbol in symbols_to_check:
+            results['total_ts_checked'] += 1
+
+            try:
+                ts = self.trailing_stops.get(symbol)
+                if not ts:
+                    continue
+
+                # Fetch position from exchange
+                positions = await self.exchange.fetch_positions([symbol])
+
+                # Find position
+                current_position = None
+                for pos in positions:
+                    if pos.get('symbol') == symbol:
+                        size = pos.get('contracts', 0) or pos.get('size', 0)
+                        if size and size != 0:
+                            current_position = pos
+                            break
+
+                if not current_position:
+                    logger.warning(
+                        f"⚠️ {symbol}: TS exists but no position on exchange - "
+                        f"orphaned TS (will be cleaned on next position update)"
+                    )
+                    results['details'].append({
+                        'symbol': symbol,
+                        'issue': 'orphaned_ts',
+                        'action': 'pending_cleanup'
+                    })
+                    continue
+
+                # Determine position side from exchange
+                exchange_side_raw = current_position.get('side', '').lower()
+
+                # Normalize exchange side
+                if exchange_side_raw in ('buy', 'long'):
+                    exchange_side = 'long'
+                elif exchange_side_raw in ('sell', 'short'):
+                    exchange_side = 'short'
+                else:
+                    logger.error(
+                        f"❌ {symbol}: Unknown position side from exchange: '{exchange_side_raw}'"
+                    )
+                    results['check_failures'] += 1
+                    results['details'].append({
+                        'symbol': symbol,
+                        'issue': 'unknown_exchange_side',
+                        'exchange_side_raw': exchange_side_raw
+                    })
+                    continue
+
+                # Compare TS side vs position side
+                if ts.side != exchange_side:
+                    # MISMATCH DETECTED!
+                    results['mismatches_detected'] += 1
+
+                    logger.error(
+                        f"🔴 {symbol}: SIDE MISMATCH in consistency check!\n"
+                        f"  TS side:       {ts.side}\n"
+                        f"  Exchange side: {exchange_side}\n"
+                        f"  TS entry:      {ts.entry_price}\n"
+                        f"  Exchange entry: {current_position.get('entryPrice')}\n"
+                        f"  → AUTO-FIXING: Deleting TS and recreating"
+                    )
+
+                    # Log critical event
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.WARNING_RAISED,
+                            {
+                                'warning_type': 'ts_side_mismatch_in_health_check',
+                                'symbol': symbol,
+                                'ts_side': ts.side,
+                                'position_side_exchange': exchange_side,
+                                'ts_entry_price': float(ts.entry_price),
+                                'position_entry_price': float(current_position.get('entryPrice', 0)),
+                                'action': 'auto_fix_delete_and_recreate'
+                            },
+                            symbol=symbol,
+                            exchange=self.exchange_name,
+                            severity='ERROR'
+                        )
+
+                    # Auto-fix: Delete TS (will be recreated on next price update)
+                    await self.on_position_closed(symbol, realized_pnl=None)
+
+                    results['auto_fixed'] += 1
+                    results['details'].append({
+                        'symbol': symbol,
+                        'issue': 'side_mismatch',
+                        'ts_side': ts.side,
+                        'exchange_side': exchange_side,
+                        'action': 'deleted_ts'
+                    })
+
+                else:
+                    # Match - all good
+                    logger.debug(f"✅ {symbol}: TS side matches position side ({ts.side})")
+
+            except Exception as e:
+                logger.error(f"❌ {symbol}: Failed to check TS consistency: {e}", exc_info=True)
+                results['check_failures'] += 1
+                results['details'].append({
+                    'symbol': symbol,
+                    'issue': 'check_exception',
+                    'error': str(e)
+                })
+
+        # Log summary
+        logger.info(
+            f"✅ TS consistency check complete:\n"
+            f"  Checked:    {results['total_ts_checked']}\n"
+            f"  Mismatches: {results['mismatches_detected']}\n"
+            f"  Auto-fixed: {results['auto_fixed']}\n"
+            f"  Failures:   {results['check_failures']}"
+        )
+
+        # Log metrics event
+        event_logger = get_event_logger()
+        if event_logger:
+            await event_logger.log_event(
+                EventType.HEALTH_CHECK_COMPLETED,
+                {
+                    'check_type': 'ts_position_consistency',
+                    'total_checked': results['total_ts_checked'],
+                    'mismatches_detected': results['mismatches_detected'],
+                    'auto_fixed': results['auto_fixed'],
+                    'check_failures': results['check_failures']
+                },
+                exchange=self.exchange_name,
+                severity='INFO'
+            )
+
+        return results
+
+    # ============================================================
+    # END FIX #4
+    # ============================================================
 
     def get_status(self, symbol: str = None) -> Dict:
         """Get status of trailing stops"""
