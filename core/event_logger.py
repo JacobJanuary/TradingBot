@@ -151,6 +151,14 @@ class EventType(Enum):
     WEBSOCKET_CONNECTED = "websocket_connected"
     WEBSOCKET_DISCONNECTED = "websocket_disconnected"
     WEBSOCKET_ERROR = "websocket_error"
+
+    # ✅ PHASE 3: WebSocket subscription health events
+    SUBSCRIPTION_STALE_DETECTED = "subscription_stale_detected"
+    SUBSCRIPTION_RESUBSCRIBED = "subscription_resubscribed"
+    SUBSCRIPTION_VERIFICATION_FAILED = "subscription_verification_failed"
+    SUBSCRIPTION_RETRY_EXHAUSTED = "subscription_retry_exhausted"
+    WEBSOCKET_PERIODIC_RECONNECTION = "websocket_periodic_reconnection"
+
     SIGNALS_RECEIVED = "signals_received"
 
 
