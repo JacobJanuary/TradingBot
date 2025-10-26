@@ -36,7 +36,12 @@ class UnifiedPriceMonitor:
         self.min_update_interval = 0.1  # 100ms between updates per symbol
 
         # ✅ ENHANCEMENT #2A: Staleness tracking
-        self.staleness_threshold_seconds = 300  # 5 minutes
+        # ✅ PHASE 1: Per-module thresholds
+        self.staleness_thresholds = {
+            'trailing_stop': 30,      # 30 seconds for trailing stops
+            'aged_position': 30,      # 30 seconds for aged positions
+            'default': 300            # 5 minutes for other modules
+        }
         self.stale_symbols = set()  # Symbols with stale prices
         self.staleness_warnings_logged = set()  # Prevent spam
 
@@ -118,20 +123,31 @@ class UnifiedPriceMonitor:
                     )
                     self.error_count += 1
 
-    async def check_staleness(self, symbols_to_check: list = None) -> dict:
+    async def check_staleness(
+        self,
+        symbols_to_check: list = None,
+        module: str = None
+    ) -> dict:
         """
-        ✅ ENHANCEMENT #2B: Check if price updates are stale for given symbols
+        ✅ ENHANCEMENT #2B + PHASE 1: Check if price updates are stale for given symbols
 
         Args:
             symbols_to_check: List of symbols to check, or None for all subscribed
+            module: Module name to use specific threshold (trailing_stop, aged_position)
 
         Returns:
-            dict: {symbol: {'stale': bool, 'seconds_since_update': float}}
+            dict: {symbol: {'stale': bool, 'seconds_since_update': float, 'threshold_used': int}}
         """
         import time
 
         now = time.time()
         result = {}
+
+        # Determine threshold based on module
+        if module and module in self.staleness_thresholds:
+            threshold = self.staleness_thresholds[module]
+        else:
+            threshold = self.staleness_thresholds['default']
 
         # Default to all subscribed symbols
         if symbols_to_check is None:
@@ -143,18 +159,20 @@ class UnifiedPriceMonitor:
                 result[symbol] = {
                     'stale': True,
                     'seconds_since_update': float('inf'),
-                    'last_update': None
+                    'last_update': None,
+                    'threshold_used': threshold
                 }
                 continue
 
             last_update = self.last_update_time[symbol]
             seconds_since = now - last_update
-            is_stale = seconds_since > self.staleness_threshold_seconds
+            is_stale = seconds_since > threshold
 
             result[symbol] = {
                 'stale': is_stale,
                 'seconds_since_update': seconds_since,
-                'last_update': last_update
+                'last_update': last_update,
+                'threshold_used': threshold
             }
 
             # Track stale symbols
@@ -165,7 +183,7 @@ class UnifiedPriceMonitor:
                 if symbol not in self.staleness_warnings_logged:
                     logger.warning(
                         f"⚠️ STALE PRICE: {symbol} - no updates for {seconds_since:.0f}s "
-                        f"(threshold: {self.staleness_threshold_seconds}s)"
+                        f"(threshold: {threshold}s, module: {module or 'default'})"
                     )
                     self.staleness_warnings_logged.add(symbol)
             else:
