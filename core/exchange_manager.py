@@ -994,13 +994,20 @@ class ExchangeManager:
             # Step 2: Create new SL IMMEDIATELY (NO SLEEP!)
             create_start = now_utc()
 
-            # Get position size
-            positions = await self.fetch_positions([symbol])
+            # Get position size - CRITICAL FIX: Check cache first
             amount = 0
-            for pos in positions:
-                if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
-                    amount = pos['contracts']
-                    break
+
+            # Try cache first (instant, no API call)
+            if symbol in self.positions and float(self.positions[symbol].get('contracts', 0)) > 0:
+                amount = self.positions[symbol]['contracts']
+                logger.debug(f"✅ {symbol}: Using cached position size: {amount}")
+            else:
+                # Cache miss - fetch from exchange
+                positions = await self.fetch_positions([symbol])
+                for pos in positions:
+                    if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                        amount = pos['contracts']
+                        break
 
             if amount == 0:
                 # FALLBACK: Try database (position might be active but not in exchange cache yet)
@@ -1011,8 +1018,8 @@ class ExchangeManager:
                         if db_position and db_position.get('status') == 'active' and db_position.get('quantity', 0) > 0:
                             amount = float(db_position['quantity'])
                             logger.warning(
-                                f"⚠️  {symbol}: Position not found on exchange, using DB fallback "
-                                f"(quantity={amount}, timing issue after restart)"
+                                f"⚠️  {symbol}: Position not found in cache AND exchange, using DB fallback "
+                                f"(quantity={amount}, possible API delay or restart)"
                             )
                     except Exception as e:
                         logger.error(f"❌ {symbol}: DB fallback failed: {e}")
