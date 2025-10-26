@@ -3,6 +3,7 @@ Minimal adapters for protection modules integration
 NO changes to original modules - just adapters
 """
 
+import asyncio
 import logging
 from typing import Optional
 from decimal import Decimal
@@ -66,7 +67,7 @@ class AgedPositionAdapter:
         self.monitoring_positions = {}
 
     async def add_aged_position(self, position):
-        """Add position to aged monitoring"""
+        """Add position to aged monitoring with subscription verification"""
 
         symbol = position.symbol
 
@@ -94,16 +95,22 @@ class AgedPositionAdapter:
             priority=40  # Lower priority than TrailingStop
         )
 
-        # ✅ FIX #3: Verify Subscription Registration
-        if symbol not in self.price_monitor.subscribers:
+        # ✅ PHASE 2: Verify Subscription with Timeout
+        verified = await self._verify_subscription_active(symbol, timeout=30)
+
+        if not verified:
             logger.error(
-                f"❌ CRITICAL: Subscription FAILED for {symbol}! "
-                f"Symbol NOT in price_monitor.subscribers."
+                f"❌ CRITICAL: Subscription verification FAILED for {symbol}! "
+                f"No price update received within 30s"
             )
-            return  # Do NOT add to monitoring_positions
+            # Cleanup failed subscription
+            await self.price_monitor.unsubscribe(symbol, 'aged_position')
+            return
 
         self.monitoring_positions[symbol] = position
-        logger.info(f"Aged position {symbol} registered (age={age_hours:.1f}h)")
+        logger.info(
+            f"✅ Aged position {symbol} registered and verified (age={age_hours:.1f}h)"
+        )
 
     async def _on_unified_price(self, symbol: str, price: Decimal):
         """
@@ -130,6 +137,51 @@ class AgedPositionAdapter:
             await self.price_monitor.unsubscribe(symbol, 'aged_position')
             del self.monitoring_positions[symbol]
             logger.debug(f"Aged position {symbol} unregistered")
+
+    async def _verify_subscription_active(self, symbol: str, timeout: int = 30) -> bool:
+        """
+        ✅ PHASE 2: Verify subscription is receiving data
+
+        Waits for at least one price update within timeout period.
+
+        Args:
+            symbol: Symbol to verify
+            timeout: Max seconds to wait (default: 30)
+
+        Returns:
+            True if subscription verified, False otherwise
+        """
+        import time
+
+        # Record current last update time
+        start_time = time.time()
+        initial_update_time = self.price_monitor.last_update_time.get(symbol, 0)
+
+        logger.debug(
+            f"🔍 Verifying subscription for {symbol} (timeout: {timeout}s)..."
+        )
+
+        # Wait for update
+        elapsed = 0
+        while elapsed < timeout:
+            await asyncio.sleep(1)
+            elapsed = time.time() - start_time
+
+            # Check if we received an update
+            current_update_time = self.price_monitor.last_update_time.get(symbol, 0)
+            if current_update_time > initial_update_time:
+                logger.info(
+                    f"✅ Subscription verified for {symbol} "
+                    f"(received update after {elapsed:.1f}s)"
+                )
+                return True
+
+        # Timeout - no update received
+        logger.error(
+            f"❌ Subscription verification timeout for {symbol} "
+            f"(no update after {timeout}s)"
+        )
+        return False
 
     def _get_position_age_hours(self, position) -> float:
         """Calculate position age in hours"""
