@@ -1743,7 +1743,7 @@ class PositionManager:
             # Phase 3: Use config tolerance instead of hardcoded 1.1
             from config.settings import config as global_config
             tolerance_factor = 1 + (float(global_config.safety.POSITION_SIZE_TOLERANCE_PERCENT) / 100)
-            tolerance = size_usd * tolerance_factor  # 10% over budget allowed
+            tolerance = size_usd * Decimal(str(tolerance_factor))  # 10% over budget allowed
 
             if min_cost <= tolerance:
                 logger.info(f"Using minimum quantity {min_amount} for {symbol} (cost: ${min_cost:.2f}, tolerance: ${tolerance:.2f})")
