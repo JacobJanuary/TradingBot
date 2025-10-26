@@ -132,6 +132,11 @@ class BinanceHybridStream:
         self.keepalive_task = asyncio.create_task(self._keep_alive_loop())
         self.subscription_task = asyncio.create_task(self._subscription_manager())
 
+        # ✅ PHASE 2: Periodic reconnection (every 10 minutes)
+        self.reconnection_task = asyncio.create_task(
+            self._periodic_reconnection_task(interval_seconds=600)
+        )
+
         logger.info("✅ Binance Hybrid WebSocket started")
 
     async def stop(self):
@@ -158,7 +163,13 @@ class BinanceHybridStream:
             await self.mark_session.close()
 
         # Cancel tasks
-        for task in [self.user_task, self.mark_task, self.keepalive_task, self.subscription_task]:
+        for task in [
+            self.user_task,
+            self.mark_task,
+            self.keepalive_task,
+            self.subscription_task,
+            self.reconnection_task  # ✅ PHASE 2
+        ]:
             if task and not task.done():
                 task.cancel()
                 try:
@@ -298,6 +309,78 @@ class BinanceHybridStream:
                 break
             except Exception as e:
                 logger.error(f"Keep alive error: {e}")
+
+    async def _periodic_reconnection_task(self, interval_seconds: int = 600):
+        """
+        ✅ PHASE 2: Periodic prophylactic reconnection for Binance
+
+        Reconnects mark price WebSocket every N seconds.
+        User Data Stream uses listen key keepalive instead.
+
+        Args:
+            interval_seconds: Reconnection interval (default: 600s = 10min)
+        """
+        logger.info(
+            f"🔄 [MARK] Starting periodic reconnection task (interval: {interval_seconds}s)"
+        )
+
+        while self.running:
+            try:
+                await asyncio.sleep(interval_seconds)
+
+                if not self.running:
+                    break
+
+                # Only reconnect if we have active positions
+                if not self.positions:
+                    logger.debug("[MARK] No active positions, skipping reconnection")
+                    continue
+
+                logger.info(
+                    f"🔄 [MARK] Periodic reconnection triggered "
+                    f"({len(self.positions)} active positions)"
+                )
+
+                # Store current subscribed symbols
+                symbols_backup = list(self.subscribed_symbols)
+
+                # Gracefully close mark WebSocket
+                if self.mark_ws and not self.mark_ws.closed:
+                    logger.info("📤 [MARK] Closing WebSocket for reconnection...")
+                    await self.mark_ws.close()
+                    self.mark_connected = False
+
+                # Wait for reconnection
+                await asyncio.sleep(2)
+
+                # Wait for reconnection to complete
+                max_wait = 30
+                waited = 0
+                while not self.mark_connected and waited < max_wait:
+                    await asyncio.sleep(1)
+                    waited += 1
+
+                if self.mark_connected:
+                    logger.info("✅ [MARK] Periodic reconnection successful")
+
+                    # Verify all subscriptions restored
+                    missing = set(symbols_backup) - self.subscribed_symbols
+                    if missing:
+                        logger.warning(
+                            f"⚠️ [MARK] {len(missing)} subscriptions not restored: {missing}"
+                        )
+                        # Trigger manual restore
+                        for symbol in missing:
+                            await self._request_mark_subscription(symbol, subscribe=True)
+                else:
+                    logger.error("❌ [MARK] Periodic reconnection failed - timeout")
+
+            except asyncio.CancelledError:
+                logger.info("[MARK] Periodic reconnection task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[MARK] Error in periodic reconnection: {e}", exc_info=True)
+                await asyncio.sleep(60)
 
     # ==================== USER DATA STREAM ====================
 
