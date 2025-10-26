@@ -1092,93 +1092,92 @@ class Repository:
 
     async def get_active_aged_positions(
         self,
-        statuses: List[str] = None
+        phases: List[str] = None
     ) -> List[Dict]:
         """Get all active aged positions from database
 
         Args:
-            statuses: List of statuses to filter by
+            phases: List of phase values to filter by
+                    If None, returns active phases only (excludes 'stale')
+
+        Phase values used by aged_position_monitor_v2.py:
+            - 'grace': Grace period breakeven
+            - 'progressive': Progressive liquidation
+            - 'emergency': Emergency close (documented but not used yet)
+            - 'stale': Closed/inactive positions (excluded by default)
 
         Returns:
             List of active aged position records
         """
-        if not statuses:
-            statuses = ['detected', 'grace_active', 'progressive_active', 'monitoring']
+        if not phases:
+            # Default: Return only active phases (exclude 'stale')
+            # Matches aged_position_monitor_v2.py phase values (lines 468, 481)
+            phases = ['grace', 'progressive', 'emergency']
 
         query = """
             SELECT
                 ap.*,
-                -- CRITICAL FIX: Use created_at instead of missing position_opened_at column
-                EXTRACT(EPOCH FROM (NOW() - ap.created_at)) / 3600 as current_age_hours,
-                -- CRITICAL FIX: Use created_at instead of missing detected_at column
-                EXTRACT(EPOCH FROM (NOW() - ap.created_at)) / 3600 as hours_since_detection
+                EXTRACT(EPOCH FROM (NOW() - ap.created_at)) / 3600 as current_age_hours
             FROM monitoring.aged_positions ap
-            WHERE ap.status = ANY($1)
-                AND ap.closed_at IS NULL
-            -- CRITICAL FIX: Use created_at for ordering instead of detected_at
+            WHERE ap.phase = ANY($1)
             ORDER BY ap.created_at DESC
         """
 
         async with self.pool.acquire() as conn:
             try:
-                rows = await conn.fetch(query, statuses)
+                rows = await conn.fetch(query, phases)
                 return [dict(row) for row in rows]
             except Exception as e:
                 logger.error(f"Failed to get active aged positions: {e}")
                 return []
 
-    async def update_aged_position_status(
+    async def update_aged_position(
         self,
-        aged_id: str,
-        new_status: str,
+        position_id: str,
+        phase: str = None,
         target_price: Decimal = None,
-        current_phase: str = None,
-        current_loss_tolerance_percent: Decimal = None,
         hours_aged: float = None,
-        last_error_message: str = None
+        loss_tolerance: Decimal = None
     ) -> bool:
-        """Update aged position status and optional fields
+        """Update aged position fields
 
         Args:
-            aged_id: Aged position ID
-            new_status: New status
+            position_id: Position ID (matches position_id column, not aged position id)
+            phase: New phase (e.g., 'grace', 'progressive', 'stale')
             target_price: Updated target price
-            current_phase: Current phase (grace/progressive)
-            current_loss_tolerance_percent: Current loss tolerance
             hours_aged: Current age in hours
-            last_error_message: Error message if any
+            loss_tolerance: Loss tolerance as decimal (e.g., 0.015 for 1.5%)
 
         Returns:
-            True if updated successfully
+            True if updated successfully, False otherwise
         """
-        # Build dynamic update query
-        fields = ['status = %(new_status)s', 'updated_at = NOW()']
-        params = {'aged_id': aged_id, 'new_status': new_status}
+        if not any([phase, target_price, hours_aged, loss_tolerance]):
+            logger.warning(f"No fields to update for position {position_id}")
+            return False
+
+        fields = ['updated_at = NOW()']
+        params = {'position_id': position_id}
+
+        if phase is not None:
+            fields.append('phase = %(phase)s')
+            params['phase'] = phase
 
         if target_price is not None:
             fields.append('target_price = %(target_price)s')
             params['target_price'] = target_price
 
-        if current_phase is not None:
-            fields.append('current_phase = %(current_phase)s')
-            params['current_phase'] = current_phase
-
-        if current_loss_tolerance_percent is not None:
-            fields.append('current_loss_tolerance_percent = %(current_loss_tolerance_percent)s')
-            params['current_loss_tolerance_percent'] = current_loss_tolerance_percent
-
         if hours_aged is not None:
             fields.append('hours_aged = %(hours_aged)s')
             params['hours_aged'] = hours_aged
 
-        if last_error_message is not None:
-            fields.append('last_error_message = %(last_error_message)s')
-            params['last_error_message'] = last_error_message
+        if loss_tolerance is not None:
+            fields.append('loss_tolerance = %(loss_tolerance)s')
+            params['loss_tolerance'] = loss_tolerance
 
         query = f"""
             UPDATE monitoring.aged_positions
             SET {', '.join(fields)}
-            WHERE id = %(aged_id)s
+            WHERE position_id = %(position_id)s
             RETURNING id
         """
 
@@ -1186,13 +1185,13 @@ class Repository:
             try:
                 result = await conn.fetchval(query, **params)
                 if result:
-                    logger.info(f"Updated aged position {aged_id} status to {new_status}")
+                    logger.info(f"Updated aged position {position_id}: {', '.join(params.keys())}")
                     return True
                 else:
-                    logger.warning(f"Aged position {aged_id} not found")
+                    logger.warning(f"Aged position for position_id {position_id} not found")
                     return False
             except Exception as e:
-                logger.error(f"Failed to update aged position status: {e}")
+                logger.error(f"Failed to update aged position: {e}")
                 return False
 
     async def create_aged_monitoring_event(

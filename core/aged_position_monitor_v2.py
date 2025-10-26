@@ -651,9 +651,9 @@ class AgedPositionMonitorV2:
                         logger.info(f"Recovered aged position: {db_record['symbol']}")
                     else:
                         # Position no longer exists, mark as stale in DB
-                        await self.repository.update_aged_position_status(
+                        await self.repository.update_aged_position(
                             position_id=db_record['position_id'],
-                            status='stale'
+                            phase='stale'
                         )
 
             logger.info(f"Recovery complete: {recovered_count} aged positions restored")
@@ -682,9 +682,9 @@ class AgedPositionMonitorV2:
                     position = self.position_manager.positions.get(record['symbol'])
                     if not position:
                         # Mark as stale
-                        await self.repository.update_aged_position_status(
+                        await self.repository.update_aged_position(
                             position_id=record['position_id'],
-                            status='stale'
+                            phase='stale'
                         )
                         cleaned_count += 1
 
