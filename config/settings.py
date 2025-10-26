@@ -42,7 +42,6 @@ class TradingConfig:
     max_position_size_usd: Decimal = Decimal('10000')
     max_positions: int = 150
     max_exposure_usd: Decimal = Decimal('99000')
-    max_account_utilization_percent: Decimal = Decimal('100')
 
     # Risk management
     stop_loss_percent: Decimal = Decimal('4.0')
@@ -205,8 +204,6 @@ class Config:
             config.max_positions = int(val)
         if val := os.getenv('MAX_EXPOSURE_USD'):
             config.max_exposure_usd = Decimal(val)
-        if val := os.getenv('MAX_ACCOUNT_UTILIZATION_PERCENT'):
-            config.max_account_utilization_percent = Decimal(val)
 
         # Risk management
         if val := os.getenv('STOP_LOSS_PERCENT'):

@@ -1523,13 +1523,6 @@ class ExchangeManager:
                     # Log warning but don't block
                     logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
 
-            # Step 4: Conservative utilization check
-            if total_usdt > 0:
-                utilization = (total_notional + float(notional_usd)) / total_usdt
-                max_util = float(config.trading.max_account_utilization_percent) / 100
-                if utilization > max_util:
-                    return False, f"Would exceed safe utilization: {utilization*100:.1f}% > {max_util*100:.0f}%"
-
             return True, "OK"
 
         except Exception as e:
