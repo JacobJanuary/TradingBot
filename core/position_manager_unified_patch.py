@@ -183,19 +183,82 @@ async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: i
             await asyncio.sleep(60)  # Wait 1 minute before retry
 
 
+async def resubscribe_stale_positions(
+    unified_protection: Dict,
+    stale_symbols: list,
+    position_manager
+) -> int:
+    """
+    ✅ PHASE 1: Automatic resubscription for stale positions
+
+    Args:
+        unified_protection: Unified protection components
+        stale_symbols: List of symbols with stale data
+        position_manager: Position manager instance
+
+    Returns:
+        Number of positions resubscribed
+    """
+    aged_adapter = unified_protection.get('aged_adapter')
+    price_monitor = unified_protection.get('price_monitor')
+
+    if not aged_adapter or not price_monitor:
+        logger.error("Cannot resubscribe - missing components")
+        return 0
+
+    resubscribed = 0
+
+    for symbol in stale_symbols:
+        try:
+            logger.warning(f"🔄 Attempting resubscription for stale symbol: {symbol}")
+
+            # Get position from position_manager
+            position = position_manager.positions.get(symbol)
+            if not position:
+                logger.warning(f"⚠️ Position {symbol} not found in position_manager")
+                continue
+
+            # Unsubscribe first (clean slate)
+            if symbol in aged_adapter.monitoring_positions:
+                await aged_adapter.remove_aged_position(symbol)
+                logger.info(f"📤 Unsubscribed {symbol} from aged monitoring")
+                await asyncio.sleep(0.5)  # Small delay
+
+            # Re-subscribe
+            await aged_adapter.add_aged_position(position)
+
+            # Verify subscription was created
+            if symbol in price_monitor.subscribers:
+                resubscribed += 1
+                logger.info(f"✅ Successfully resubscribed {symbol}")
+            else:
+                logger.error(f"❌ FAILED to resubscribe {symbol} - not in subscribers")
+
+        except Exception as e:
+            logger.error(f"❌ Error resubscribing {symbol}: {e}", exc_info=True)
+
+    if resubscribed > 0:
+        logger.warning(f"🔄 Resubscribed {resubscribed}/{len(stale_symbols)} stale positions")
+
+    return resubscribed
+
+
 async def start_websocket_health_monitor(
     unified_protection: Dict,
-    check_interval_seconds: int = 60
+    check_interval_seconds: int = 60,
+    position_manager = None
 ):
     """
-    ✅ ENHANCEMENT #2C: Monitor WebSocket health for aged positions
+    ✅ ENHANCEMENT #2C + PHASE 1: Monitor WebSocket health for aged positions
+    NOW with automatic resubscription for stale subscriptions
 
     Periodically checks if aged positions are receiving price updates.
-    Alerts if prices are stale (> 5 minutes without update).
+    Alerts if prices are stale (> 30 seconds without update).
 
     Args:
         unified_protection: Unified protection components
         check_interval_seconds: Check interval (default: 60s)
+        position_manager: Position manager instance (for resubscription)
     """
     if not unified_protection:
         return
@@ -209,7 +272,7 @@ async def start_websocket_health_monitor(
 
     logger.info(
         f"🔍 Starting WebSocket health monitor "
-        f"(interval: {check_interval_seconds}s, threshold: 5min)"
+        f"(interval: {check_interval_seconds}s, threshold: 30s for aged/trailing)"
     )
 
     while True:
@@ -222,19 +285,23 @@ async def start_websocket_health_monitor(
             if not aged_symbols:
                 continue  # No aged positions to monitor
 
-            # Check staleness for aged symbols only
-            staleness_report = await price_monitor.check_staleness(aged_symbols)
+            # Check staleness for aged symbols with 30s threshold
+            staleness_report = await price_monitor.check_staleness(
+                aged_symbols,
+                module='aged_position'
+            )
 
             # Count stale aged positions
-            stale_count = sum(
-                1 for symbol, data in staleness_report.items()
+            stale_symbols = [
+                symbol for symbol, data in staleness_report.items()
                 if data['stale']
-            )
+            ]
+            stale_count = len(stale_symbols)
 
             if stale_count > 0:
                 logger.warning(
                     f"⚠️ WebSocket Health Check: {stale_count}/{len(aged_symbols)} "
-                    f"aged positions have STALE prices!"
+                    f"aged positions have STALE prices (threshold: 30s)!"
                 )
 
                 # Log each stale position
@@ -245,6 +312,24 @@ async def start_websocket_health_monitor(
                             f"  - {symbol}: no update for {seconds:.0f}s "
                             f"({seconds/60:.1f} minutes)"
                         )
+
+                # ✅ NEW: AUTOMATIC RESUBSCRIPTION
+                if position_manager:
+                    resubscribed_count = await resubscribe_stale_positions(
+                        unified_protection,
+                        stale_symbols,
+                        position_manager
+                    )
+
+                    if resubscribed_count > 0:
+                        logger.info(
+                            f"✅ Resubscription completed: {resubscribed_count} "
+                            f"positions recovered"
+                        )
+                else:
+                    logger.error(
+                        "⚠️ Cannot resubscribe - position_manager not provided!"
+                    )
             else:
                 # All good
                 logger.debug(
@@ -256,7 +341,7 @@ async def start_websocket_health_monitor(
             logger.info("WebSocket health monitor stopped")
             break
         except Exception as e:
-            logger.error(f"Error in WebSocket health monitor: {e}")
+            logger.error(f"Error in WebSocket health monitor: {e}", exc_info=True)
             await asyncio.sleep(10)  # Wait before retry
 
 
