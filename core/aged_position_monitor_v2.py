@@ -1156,3 +1156,112 @@ class AgedPositionMonitorV2:
             )
 
         return health_report
+
+    async def _periodic_position_validation_task(self):
+        """
+        Background task: Periodically validate aged positions exist on exchange.
+        Runs every 5 minutes.
+        """
+        logger.info("🔄 Starting periodic aged position validation task (interval: 5 min)")
+
+        while True:
+            try:
+                await asyncio.sleep(300)  # 5 minutes
+
+                # Get current aged positions
+                aged_symbols = list(self.aged_targets.keys())
+
+                if not aged_symbols:
+                    logger.debug("No aged positions to validate")
+                    continue
+
+                logger.info(
+                    f"🔍 Running periodic validation for {len(aged_symbols)} aged positions"
+                )
+
+                ghosts_detected = 0
+                validation_errors = 0
+
+                for symbol in aged_symbols:
+                    try:
+                        # Get position from position_manager
+                        position = self.position_manager.positions.get(symbol)
+                        if not position:
+                            logger.debug(f"⚠️ {symbol}: Not found in position_manager (already closed?)")
+                            # Remove from aged_targets
+                            if symbol in self.aged_targets:
+                                del self.aged_targets[symbol]
+                            continue
+
+                        # Validate position on exchange
+                        exists, exchange_qty, error_msg = await self._validate_position_on_exchange(position)
+
+                        if exists is False:
+                            # GHOST DETECTED
+                            logger.warning(
+                                f"🔍 Periodic validation: GHOST POSITION detected for {symbol}!\n"
+                                f"   Aged position exists in DB but NOT on exchange.\n"
+                                f"   Cleaning up immediately."
+                            )
+
+                            await self._mark_position_as_ghost(
+                                position,
+                                reason="ghost_detected_periodic_validation"
+                            )
+
+                            ghosts_detected += 1
+
+                        elif exists is None:
+                            # Validation failed
+                            logger.debug(
+                                f"⚠️ {symbol}: Periodic validation failed: {error_msg}"
+                            )
+                            validation_errors += 1
+
+                        else:
+                            # Position valid
+                            logger.debug(f"✅ {symbol}: Validated (qty={exchange_qty})")
+
+                    except Exception as symbol_error:
+                        logger.error(
+                            f"❌ {symbol}: Error during periodic validation: {symbol_error}",
+                            exc_info=True
+                        )
+                        validation_errors += 1
+
+                # Log summary
+                if ghosts_detected > 0 or validation_errors > 0:
+                    logger.info(
+                        f"🔍 Periodic validation complete: "
+                        f"{len(aged_symbols)} checked, "
+                        f"{ghosts_detected} ghosts detected, "
+                        f"{validation_errors} validation errors"
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"❌ Error in periodic aged position validation task: {e}",
+                    exc_info=True
+                )
+                # Continue running despite errors
+
+    async def start(self):
+        """Start the aged position monitor"""
+        logger.info("🔄 Starting AgedPositionMonitor...")
+
+        # Start periodic validation task
+        self.validation_task = asyncio.create_task(self._periodic_position_validation_task())
+
+        logger.info("✅ AgedPositionMonitor started (validation task running)")
+
+    async def stop(self):
+        """Stop the aged position monitor"""
+        # Stop validation task
+        if hasattr(self, 'validation_task') and self.validation_task:
+            self.validation_task.cancel()
+            try:
+                await self.validation_task
+            except asyncio.CancelledError:
+                pass
+
+        logger.info("✅ AgedPositionMonitor stopped (validation task cancelled)")
