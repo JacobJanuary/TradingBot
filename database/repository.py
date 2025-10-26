@@ -1108,12 +1108,15 @@ class Repository:
         query = """
             SELECT
                 ap.*,
-                EXTRACT(EPOCH FROM (NOW() - ap.position_opened_at)) / 3600 as current_age_hours,
-                EXTRACT(EPOCH FROM (NOW() - ap.detected_at)) / 3600 as hours_since_detection
+                -- CRITICAL FIX: Use created_at instead of missing position_opened_at column
+                EXTRACT(EPOCH FROM (NOW() - ap.created_at)) / 3600 as current_age_hours,
+                -- CRITICAL FIX: Use created_at instead of missing detected_at column
+                EXTRACT(EPOCH FROM (NOW() - ap.created_at)) / 3600 as hours_since_detection
             FROM monitoring.aged_positions ap
             WHERE ap.status = ANY($1)
                 AND ap.closed_at IS NULL
-            ORDER BY ap.detected_at DESC
+            -- CRITICAL FIX: Use created_at for ordering instead of detected_at
+            ORDER BY ap.created_at DESC
         """
 
         async with self.pool.acquire() as conn:
