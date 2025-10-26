@@ -186,15 +186,17 @@ async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: i
 async def resubscribe_stale_positions(
     unified_protection: Dict,
     stale_symbols: list,
-    position_manager
+    position_manager,
+    max_retries: int = 3
 ) -> int:
     """
-    ✅ PHASE 1: Automatic resubscription for stale positions
+    ✅ PHASE 1 + PHASE 2: Automatic resubscription with exponential backoff
 
     Args:
         unified_protection: Unified protection components
         stale_symbols: List of symbols with stale data
         position_manager: Position manager instance
+        max_retries: Maximum retry attempts per symbol (default: 3)
 
     Returns:
         Number of positions resubscribed
@@ -209,36 +211,69 @@ async def resubscribe_stale_positions(
     resubscribed = 0
 
     for symbol in stale_symbols:
-        try:
-            logger.warning(f"🔄 Attempting resubscription for stale symbol: {symbol}")
+        success = False
 
-            # Get position from position_manager
-            position = position_manager.positions.get(symbol)
-            if not position:
-                logger.warning(f"⚠️ Position {symbol} not found in position_manager")
-                continue
+        # ✅ PHASE 2: Exponential backoff retry
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.warning(
+                    f"🔄 Attempting resubscription for {symbol} "
+                    f"(attempt {attempt}/{max_retries})"
+                )
 
-            # Unsubscribe first (clean slate)
-            if symbol in aged_adapter.monitoring_positions:
-                await aged_adapter.remove_aged_position(symbol)
-                logger.info(f"📤 Unsubscribed {symbol} from aged monitoring")
-                await asyncio.sleep(0.5)  # Small delay
+                # Get position
+                position = position_manager.positions.get(symbol)
+                if not position:
+                    logger.warning(f"⚠️ Position {symbol} not found")
+                    break
 
-            # Re-subscribe
-            await aged_adapter.add_aged_position(position)
+                # Unsubscribe first
+                if symbol in aged_adapter.monitoring_positions:
+                    await aged_adapter.remove_aged_position(symbol)
+                    logger.debug(f"📤 Unsubscribed {symbol}")
 
-            # Verify subscription was created
-            if symbol in price_monitor.subscribers:
-                resubscribed += 1
-                logger.info(f"✅ Successfully resubscribed {symbol}")
-            else:
-                logger.error(f"❌ FAILED to resubscribe {symbol} - not in subscribers")
+                # Exponential backoff wait
+                if attempt > 1:
+                    wait_time = 2 ** (attempt - 1)  # 2, 4, 8 seconds
+                    logger.debug(f"⏳ Waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    await asyncio.sleep(0.5)
 
-        except Exception as e:
-            logger.error(f"❌ Error resubscribing {symbol}: {e}", exc_info=True)
+                # Re-subscribe (with verification in Phase 2)
+                await aged_adapter.add_aged_position(position)
+
+                # Check if successful
+                if symbol in price_monitor.subscribers:
+                    resubscribed += 1
+                    success = True
+                    logger.info(
+                        f"✅ Successfully resubscribed {symbol} "
+                        f"(attempt {attempt})"
+                    )
+                    break
+                else:
+                    logger.warning(
+                        f"⚠️ Resubscription attempt {attempt} failed for {symbol}"
+                    )
+
+            except Exception as e:
+                logger.error(
+                    f"❌ Error resubscribing {symbol} (attempt {attempt}): {e}",
+                    exc_info=True
+                )
+
+        # All retries failed
+        if not success:
+            logger.error(
+                f"❌ FAILED to resubscribe {symbol} after {max_retries} attempts! "
+                f"MANUAL INTERVENTION REQUIRED"
+            )
 
     if resubscribed > 0:
-        logger.warning(f"🔄 Resubscribed {resubscribed}/{len(stale_symbols)} stale positions")
+        logger.warning(
+            f"🔄 Resubscribed {resubscribed}/{len(stale_symbols)} stale positions"
+        )
 
     return resubscribed
 
