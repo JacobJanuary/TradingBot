@@ -241,6 +241,17 @@ class SmartTrailingStopManager:
                 logger.debug(f"{symbol}: No TS state in DB, will create new")
                 return None
 
+            # CRITICAL FIX: Validate and normalize side value from database
+            # Prevents asymmetry bug between create (normalized) and restore (not normalized)
+            # See: docs/new_errors/ERROR3_CORRECTED_INVESTIGATION_FINAL.md
+            side_value = state_data.get('side', '').lower()
+            if side_value not in ('long', 'short'):
+                logger.error(
+                    f"❌ {symbol}: Invalid side value in database: '{state_data.get('side')}', "
+                    f"defaulting to 'long' (CHECK DATABASE INTEGRITY!)"
+                )
+                side_value = 'long'
+
             # Reconstruct TrailingStopInstance
             ts = TrailingStopInstance(
                 symbol=state_data['symbol'],
@@ -249,8 +260,9 @@ class SmartTrailingStopManager:
                 current_price=Decimal(str(state_data['entry_price'])),
                 # Restore peaks from DB - these are the actual highest/lowest reached
                 # update_price() will naturally update them if price moves beyond these levels
-                highest_price=Decimal(str(state_data.get('highest_price', state_data['entry_price']))) if state_data['side'] == 'long' else UNINITIALIZED_PRICE_HIGH,
-                lowest_price=UNINITIALIZED_PRICE_HIGH if state_data['side'] == 'long' else Decimal(str(state_data.get('lowest_price', state_data['entry_price']))),
+                # CRITICAL FIX: Use normalized side_value instead of state_data['side']
+                highest_price=Decimal(str(state_data.get('highest_price', state_data['entry_price']))) if side_value == 'long' else UNINITIALIZED_PRICE_HIGH,
+                lowest_price=UNINITIALIZED_PRICE_HIGH if side_value == 'long' else Decimal(str(state_data.get('lowest_price', state_data['entry_price']))),
                 state=TrailingStopState(state_data['state'].lower()),  # FIX: Handle legacy uppercase states
                 activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
                 current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
@@ -259,7 +271,8 @@ class SmartTrailingStopManager:
                 activated_at=state_data.get('activated_at'),
                 highest_profit_percent=Decimal(str(state_data.get('highest_profit_percent', 0))),
                 update_count=state_data.get('update_count', 0),
-                side=state_data['side'],
+                # CRITICAL FIX: Use normalized side_value (matches create_trailing_stop behavior)
+                side=side_value,
                 quantity=Decimal(str(state_data['quantity']))
             )
 
