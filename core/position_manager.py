@@ -1909,6 +1909,24 @@ class PositionManager:
         symbol = normalize_symbol(symbol_raw) if symbol_raw else None
         logger.info(f"📊 Position update: {symbol_raw} → {symbol}, mark_price={data.get('mark_price')}")
 
+        # CRITICAL FIX: Handle position closure (size=0)
+        size = float(data.get('size', 0))
+        position_amt = float(data.get('position_amt', 0))
+
+        if size == 0 or position_amt == 0:
+            logger.info(f"❌ Position closure detected via WebSocket: {symbol}")
+            if symbol in self.positions:
+                # Close position immediately
+                position = self.positions[symbol]
+                await self.close_position(
+                    symbol=symbol,
+                    close_price=float(data.get('mark_price', position.current_price)),
+                    realized_pnl=float(data.get('unrealized_pnl', position.unrealized_pnl)),
+                    reason='websocket_closure'
+                )
+                logger.info(f"✅ Position {symbol} closed via WebSocket event")
+            return
+
         if not symbol or symbol not in self.positions:
             # NEW: Buffer updates for positions being created
             if symbol and symbol in self.position_locks:

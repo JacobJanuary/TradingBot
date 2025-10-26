@@ -422,6 +422,16 @@ class BinanceHybridStream:
             else:
                 # Position closed - remove and unsubscribe
                 if symbol in self.positions:
+                    # CRITICAL FIX: Emit closure event BEFORE deleting position
+                    position_data = self.positions[symbol].copy()
+                    position_data['size'] = '0'
+                    position_data['position_amt'] = 0
+
+                    # Emit closure event to position_manager
+                    await self._emit_combined_event(symbol, position_data)
+                    logger.info(f"📤 [USER] Emitted closure event for {symbol}")
+
+                    # Now safe to delete from local tracking
                     del self.positions[symbol]
                     logger.info(f"❌ [USER] Position closed: {symbol}")
 
