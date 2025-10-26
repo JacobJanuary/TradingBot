@@ -160,6 +160,11 @@ class SmartTrailingStopManager:
             logger.warning(f"{ts.symbol}: No repository configured, cannot save TS state")
             return False
 
+        # CRITICAL: Validate pool is initialized before use
+        if not self.repository.pool:
+            logger.error(f"❌ {ts.symbol}: Repository pool not initialized!")
+            raise RuntimeError("Pool not initialized - TS cannot be persisted")
+
         try:
             # FIX: P0 - Direct position lookup instead of fetching all positions
             # Old way was O(N) with N=45+ causing 10s+ delays
@@ -515,7 +520,20 @@ class SmartTrailingStopManager:
             )
 
         # STEP 6: Save to database (NO LOCK - DB connection pool handles concurrency)
-        await self._save_state(ts)
+        save_success = await self._save_state(ts)
+
+        # CRITICAL: Verify save succeeded, retry if failed
+        if not save_success:
+            logger.warning(f"⚠️ {symbol}: Initial TS save failed, retrying with backoff...")
+            # Retry 3 times with backoff (1s, 2s, 3s)
+            for attempt in range(3):
+                await asyncio.sleep(1 * (attempt + 1))
+                if await self._save_state(ts):
+                    logger.info(f"✅ {symbol}: TS state saved on retry #{attempt + 1}")
+                    break
+            else:
+                # All retries exhausted
+                raise RuntimeError(f"Failed to persist TS state for {symbol} after 3 retries")
 
         # STEP 7: Store instance in dict (QUICK - with lock, double-check pattern)
         async with self.lock:

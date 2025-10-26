@@ -92,6 +92,11 @@ class TradingBot:
             self.repository = TradingRepository(db_config)
             await self.repository.initialize()
 
+            # CRITICAL: Verify pool initialized successfully
+            if not self.repository.pool:
+                raise RuntimeError("Repository pool initialization failed!")
+            logger.info(f"✅ Repository pool initialized: {type(self.repository.pool)}")
+
             # Initialize health checker and performance tracker with repository
             self.health_monitor = HealthChecker(
                 self.repository,
