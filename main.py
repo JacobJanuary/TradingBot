@@ -398,12 +398,13 @@ class TradingBot:
                     ))
                     logger.info("🔍 Periodic aged scan task started (interval: 5 minutes)")
 
-                    # ✅ ENHANCEMENT #2E: Start WebSocket health monitor for aged positions
+                    # ✅ ENHANCEMENT #2E + PHASE 1: Start WebSocket health monitor with resubscription
                     asyncio.create_task(start_websocket_health_monitor(
                         unified_protection=self.position_manager.unified_protection,
-                        check_interval_seconds=60  # Check every minute
+                        check_interval_seconds=60,  # Check every minute
+                        position_manager=self.position_manager  # ✅ PHASE 1: Enable resubscription
                     ))
-                    logger.info("✅ WebSocket health monitor started (interval: 60s)")
+                    logger.info("✅ WebSocket health monitor started (interval: 60s, resubscription: enabled)")
 
             # Initialize WebSocket signal processor
             logger.info("Initializing WebSocket signal processor...")
