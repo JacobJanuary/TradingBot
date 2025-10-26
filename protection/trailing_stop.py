@@ -436,6 +436,11 @@ class SmartTrailingStopManager:
                     peak_updated = True
                     logger.debug(f"[TS] {symbol} lowest_price updated: {old_lowest} → {ts.lowest_price}")
 
+            # CRITICAL FIX: Calculate profit_percent BEFORE using it in logging
+            profit_percent = self._calculate_profit_percent(ts)
+            if profit_percent > ts.highest_profit_percent:
+                ts.highest_profit_percent = profit_percent
+
             # NEW: Save peak to database if needed (only for ACTIVE TS)
             if peak_updated and ts.state == TrailingStopState.ACTIVE:
                 current_peak = ts.highest_price if ts.side == 'long' else ts.lowest_price
@@ -458,11 +463,6 @@ class SmartTrailingStopManager:
                     )
                 else:
                     logger.debug(f"⏭️  {symbol}: Peak save SKIPPED - {skip_reason}")
-
-            # Calculate current profit
-            profit_percent = self._calculate_profit_percent(ts)
-            if profit_percent > ts.highest_profit_percent:
-                ts.highest_profit_percent = profit_percent
 
             # Log current state
             logger.debug(
