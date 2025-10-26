@@ -2991,6 +2991,18 @@ class PositionManager:
 
                         # STEP 2: Calculate price drift from entry
                         entry_price = float(position.entry_price)
+                        quantity = float(position.quantity)
+
+                        # CRITICAL FIX: Skip placeholder or invalid positions
+                        # Placeholders (from pre_register_position) have entry_price=0 and quantity=0
+                        # Also skip any position with invalid data (data corruption)
+                        if entry_price == 0 or quantity == 0:
+                            logger.debug(
+                                f"Skipping {position.symbol}: placeholder or invalid data "
+                                f"(entry_price={entry_price}, quantity={quantity})"
+                            )
+                            continue
+
                         price_drift_pct = abs((current_price - entry_price) / entry_price)
 
                         # CRITICAL FIX (2025-10-22): Sanity check - reject obviously wrong price data
