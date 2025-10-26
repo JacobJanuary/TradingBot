@@ -95,7 +95,8 @@ class TradingBot:
             # Initialize health checker and performance tracker with repository
             self.health_monitor = HealthChecker(
                 self.repository,
-                {'check_interval': 10}
+                {'check_interval': 10},
+                signal_processor=None  # Will be set after signal_processor initialization
             )
 
             # CRITICAL FIX: Start health monitoring
@@ -408,6 +409,10 @@ class TradingBot:
                 event_router=self.event_router
             )
             logger.info("✅ WebSocket signal processor initialized")
+
+            # Set signal processor reference in health monitor
+            if self.health_monitor:
+                self.health_monitor.set_signal_processor(self.signal_processor)
 
             # Stop-list symbols are now loaded from configuration (.env file)
             # via SymbolFilter in signal_processor

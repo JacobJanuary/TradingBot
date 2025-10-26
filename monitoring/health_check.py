@@ -72,10 +72,12 @@ class HealthChecker:
     
     def __init__(self,
                  repository: Repository,
-                 config: Dict[str, Any]):
-        
+                 config: Dict[str, Any],
+                 signal_processor=None):
+
         self.repository = repository
         self.config = config
+        self.signal_processor = signal_processor
         
         # Health check intervals
         self.check_interval = config.get('health_check_interval', 30)  # seconds
@@ -123,7 +125,12 @@ class HealthChecker:
         self.is_running = False
         
         logger.info("HealthChecker initialized")
-    
+
+    def set_signal_processor(self, signal_processor):
+        """Set signal processor reference after initialization"""
+        self.signal_processor = signal_processor
+        logger.info("Signal processor reference set in HealthChecker")
+
     async def start(self):
         """Start health monitoring"""
         
@@ -340,29 +347,115 @@ class HealthChecker:
         )
     
     async def _check_signal_processor(self) -> ComponentHealth:
-        """Check signal processing system"""
-        
+        """
+        Check signal processing system
+
+        NEW LOGIC:
+        - Checks WebSocket connection status (primary indicator)
+        - Checks last wave processing time (not signal time!)
+        - Accounts for wave-based processing (13-15 min intervals)
+        - No dependency on unimplemented repository.get_last_signal_time()
+        """
+
         try:
-            # Check last signal processing time
-            last_signal = await self.repository.get_last_signal_time()
-            
-            if last_signal:
-                # Ensure last_signal is timezone-aware for proper comparison
-                if last_signal.tzinfo is None:
-                    last_signal = last_signal.replace(tzinfo=timezone.utc)
+            # If signal_processor not set, return DEGRADED with info
+            if not self.signal_processor:
+                return ComponentHealth(
+                    name="Signal Processor",
+                    type=ComponentType.SIGNAL_PROCESSOR,
+                    status=HealthStatus.DEGRADED,
+                    last_check=datetime.now(timezone.utc),
+                    response_time_ms=0,
+                    error_message="Signal processor not initialized in health checker"
+                )
 
-                time_since = datetime.now(timezone.utc) - last_signal
+            # Get signal processor stats
+            stats = self.signal_processor.get_stats()
 
-                if time_since > timedelta(minutes=5):
-                    status = HealthStatus.DEGRADED
-                    error_message = f"No signals for {time_since.seconds//60} minutes"
+            # Check WebSocket connection status (PRIMARY INDICATOR)
+            ws_stats = stats.get('websocket', {})
+            ws_connected = ws_stats.get('connected', False)
+
+            # Check if signal processor is running
+            is_running = self.signal_processor.running
+
+            # Get bot uptime (for grace period logic)
+            # Note: This assumes signal_processor has start_time tracking
+            # If not, can use first wave detection time as proxy
+            waves_detected = stats.get('waves_detected', 0)
+            last_signal_time = stats.get('last_signal_time')
+
+            # Calculate time since last signal (if any)
+            time_since_last_signal = None
+            if last_signal_time:
+                time_since_last_signal = datetime.now(timezone.utc) - last_signal_time
+
+            # DETERMINE HEALTH STATUS
+            status = HealthStatus.HEALTHY
+            error_message = None
+
+            # CRITICAL: Signal Processor not running
+            if not is_running:
+                status = HealthStatus.CRITICAL
+                error_message = "Signal processor not running"
+
+            # UNHEALTHY: WebSocket disconnected
+            elif not ws_connected:
+                reconnections = ws_stats.get('reconnections', 0)
+                if reconnections > 5:
+                    status = HealthStatus.UNHEALTHY
+                    error_message = f"WebSocket disconnected ({reconnections} reconnections)"
                 else:
-                    status = HealthStatus.HEALTHY
-                    error_message = None
+                    status = HealthStatus.DEGRADED
+                    error_message = f"WebSocket reconnecting (attempt {reconnections})"
+
+            # CHECK: Last wave/signal time (with grace period)
+            elif time_since_last_signal:
+                # Grace period: 40 minutes (accounts for 2-3 wave intervals)
+                # Waves come every 13-15 minutes, so 40 min = reasonable threshold
+                max_allowed_silence = timedelta(minutes=40)
+
+                if time_since_last_signal > max_allowed_silence:
+                    # Check if this is just after bot start (grace period)
+                    # If no waves detected yet, give more time
+                    if waves_detected == 0:
+                        # First wave might take up to 20 minutes after start
+                        grace_period = timedelta(minutes=20)
+                        if time_since_last_signal > grace_period:
+                            status = HealthStatus.DEGRADED
+                            error_message = f"No waves detected after {time_since_last_signal.seconds//60} minutes"
+                        # else: still in grace period, status = HEALTHY
+                    else:
+                        # We've detected waves before, but nothing recently
+                        status = HealthStatus.DEGRADED
+                        error_message = f"No signals for {time_since_last_signal.seconds//60} minutes (last wave: {waves_detected})"
+
             else:
-                status = HealthStatus.DEGRADED
-                error_message = "No signals processed yet"
-            
+                # No last_signal_time - check if this is normal
+                if waves_detected == 0:
+                    # Just started, no signals yet - give 20 min grace period
+                    # Can't check actual time without start_time, so assume HEALTHY for now
+                    status = HealthStatus.HEALTHY
+                    error_message = None  # No error during startup
+                else:
+                    # We detected waves but have no last_signal_time? Strange but not critical
+                    status = HealthStatus.DEGRADED
+                    error_message = "No last signal time tracked (internal error)"
+
+            # Build metadata
+            metadata = {
+                'websocket_connected': ws_connected,
+                'processor_running': is_running,
+                'waves_detected': waves_detected,
+                'waves_processed': stats.get('waves_processed', 0),
+                'signals_received': stats.get('signals_received', 0),
+                'signals_processed': stats.get('signals_processed', 0),
+                'last_signal_time': last_signal_time.isoformat() if last_signal_time else None,
+                'time_since_last_signal_seconds': int(time_since_last_signal.total_seconds()) if time_since_last_signal else None,
+                'websocket_reconnections': ws_stats.get('reconnections', 0),
+                'buffer_size': stats.get('buffer_size', 0)
+            }
+
             return ComponentHealth(
                 name="Signal Processor",
                 type=ComponentType.SIGNAL_PROCESSOR,
@@ -370,17 +463,19 @@ class HealthChecker:
                 last_check=datetime.now(timezone.utc),
                 response_time_ms=0,
                 error_message=error_message,
-                metadata={'last_signal': last_signal.isoformat() if last_signal else None}
+                metadata=metadata
             )
-            
+
         except Exception as e:
+            # Exception during health check - mark as UNHEALTHY
+            logger.error(f"Exception in _check_signal_processor: {e}", exc_info=True)
             return ComponentHealth(
                 name="Signal Processor",
                 type=ComponentType.SIGNAL_PROCESSOR,
                 status=HealthStatus.UNHEALTHY,
                 last_check=datetime.now(timezone.utc),
                 response_time_ms=0,
-                error_message=str(e)
+                error_message=f"Health check exception: {str(e)}"
             )
     
     async def _check_risk_manager(self) -> ComponentHealth:
