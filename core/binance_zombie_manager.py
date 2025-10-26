@@ -338,7 +338,6 @@ class BinanceZombieManager:
 
             # Build list of symbols with actual balances
             active_symbols = set()
-            min_balance_usd = 10  # Minimum balance to consider active
 
             for asset, amounts in balance['total'].items():
                 if amounts and float(amounts) > 0:

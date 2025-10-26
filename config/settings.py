@@ -136,7 +136,7 @@ class Config:
         # Initialize configs
         self.exchanges = self._init_exchanges()
         self.trading = self._init_trading()
-        self.safety = TradingSafetyConstants()  # Phase 3: Safety constants
+        self.safety = self._init_safety_constants()  # Phase 3: Safety constants (with .env override)
         self.database = self._init_database()
 
         # System settings
@@ -266,6 +266,19 @@ class Config:
         logger.info(f"Wave limits: max_trades={config.max_trades_per_15min}, buffer={getattr(config, 'signal_buffer_percent', 33)}%")
         logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
         return config
+
+    def _init_safety_constants(self) -> TradingSafetyConstants:
+        """Initialize safety constants from .env (if provided)"""
+        constants = TradingSafetyConstants()
+
+        # Load from .env if available (override defaults)
+        if val := os.getenv('MINIMUM_ACTIVE_BALANCE_USD'):
+            constants.MINIMUM_ACTIVE_BALANCE_USD = Decimal(val)
+
+        # Log loaded values
+        logger.info(f"Safety constants: min_active_balance=${constants.MINIMUM_ACTIVE_BALANCE_USD}")
+
+        return constants
 
     def _init_database(self) -> DatabaseConfig:
         """Initialize database configuration from .env ONLY"""

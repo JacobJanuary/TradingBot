@@ -1476,6 +1476,17 @@ class ExchangeManager:
             if free_usdt < float(notional_usd):
                 return False, f"Insufficient free balance: ${free_usdt:.2f} < ${notional_usd:.2f}"
 
+            # Step 1.5: Check minimum active balance (reserve after opening position)
+            remaining_balance = free_usdt - float(notional_usd)
+            min_active_balance = float(config.safety.MINIMUM_ACTIVE_BALANCE_USD)
+
+            if remaining_balance < min_active_balance:
+                return False, (
+                    f"Insufficient free balance on {self.name}: "
+                    f"Opening ${notional_usd:.2f} position would leave ${remaining_balance:.2f}, "
+                    f"minimum required: ${min_active_balance:.2f}"
+                )
+
             # Step 2: Get total current notional
             if preloaded_positions is not None:
                 positions = preloaded_positions
