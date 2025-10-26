@@ -363,12 +363,22 @@ class BybitHybridStream:
             else:
                 # Position closed - remove and unsubscribe
                 if symbol in self.positions:
+                    # CRITICAL FIX: Emit closure event BEFORE deleting position
+                    # This ensures position_manager is notified and can clean up properly
+                    position_data = self.positions[symbol].copy()
+                    position_data['size'] = '0'
+                    position_data['position_amt'] = 0  # Required for position_manager closure detection
+
+                    # Emit closure event to position_manager
+                    await self._emit_combined_event(symbol, position_data)
+                    logger.info(f"📤 [PRIVATE] Emitted closure event for {symbol}")
+
+                    # Now safe to delete from local tracking
                     del self.positions[symbol]
+                    logger.info(f"✅ [PRIVATE] Position closed: {symbol}")
 
                 # Request ticker unsubscription
                 await self._request_ticker_subscription(symbol, subscribe=False)
-
-                logger.info(f"✅ Position closed: {symbol}")
 
     # ==================== PUBLIC WEBSOCKET ====================
 
