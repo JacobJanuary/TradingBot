@@ -217,7 +217,7 @@ class SmartTrailingStopManager:
             logger.error(f"❌ {ts.symbol}: Failed to save TS state: {e}", exc_info=True)
             return False
 
-    async def _restore_state(self, symbol: str) -> Optional[TrailingStopInstance]:
+    async def _restore_state(self, symbol: str, position_data: Optional[Dict] = None) -> Optional[TrailingStopInstance]:
         """
         Restore trailing stop state from database
 
@@ -225,6 +225,9 @@ class SmartTrailingStopManager:
 
         Args:
             symbol: Trading symbol
+            position_data: Optional position data from position_manager (avoids exchange fetch during startup)
+                          If provided, will validate against this cached data instead of calling fetch_positions()
+                          Format: {'symbol': str, 'side': str, 'size': float, 'entryPrice': float}
 
         Returns:
             TrailingStopInstance if state exists in DB, None otherwise
@@ -255,21 +258,25 @@ class SmartTrailingStopManager:
             # ============================================================
             # FIX #1: VALIDATE TS.SIDE AGAINST POSITION.SIDE
             # ============================================================
-            # Fetch current position from exchange to verify side matches
+            # Use cached position data if available (startup mode), otherwise fetch from exchange
             try:
-                logger.debug(f"{symbol}: Validating TS side against exchange position...")
+                # Use cached data if passed from position_manager (avoids exchange call during startup)
+                if position_data:
+                    logger.debug(f"{symbol}: Using cached position data from position_manager (startup mode)")
+                    current_position = position_data
+                else:
+                    logger.debug(f"{symbol}: Validating TS side against exchange position...")
+                    positions = await self.exchange.fetch_positions([symbol])
 
-                positions = await self.exchange.fetch_positions([symbol])
-
-                # Find position for this symbol
-                current_position = None
-                for pos in positions:
-                    if pos.get('symbol') == symbol:
-                        # Check if position is open (has size)
-                        size = pos.get('contracts', 0) or pos.get('size', 0)
-                        if size and size != 0:
-                            current_position = pos
-                            break
+                    # Find position for this symbol
+                    current_position = None
+                    for pos in positions:
+                        if pos.get('symbol') == symbol:
+                            # Check if position is open (has size)
+                            size = pos.get('contracts', 0) or pos.get('size', 0)
+                            if size and size != 0:
+                                current_position = pos
+                                break
 
                 if not current_position:
                     logger.warning(
@@ -334,9 +341,10 @@ class SmartTrailingStopManager:
                     return None
 
                 # Side matches - safe to restore
+                data_source = "cached" if position_data else "exchange"
                 logger.info(
                     f"✅ {symbol}: TS side validation PASSED "
-                    f"(side={side_value}, entry={state_data.get('entry_price')})"
+                    f"(side={side_value}, entry={state_data.get('entry_price')}, source={data_source})"
                 )
 
             except Exception as e:
@@ -484,7 +492,7 @@ class SmartTrailingStopManager:
             f"✅ {symbol}: TS CREATED - "
             f"side={side}, entry={entry_price:.8f}, "
             f"activation={float(ts.activation_price):.8f}, "
-            f"initial_stop={initial_stop:.8f if initial_stop else 'None'}, "
+            f"initial_stop={f'{initial_stop:.8f}' if initial_stop else 'None'}, "
             f"[SEARCH: ts_created_{symbol}]"
         )
 

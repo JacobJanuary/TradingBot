@@ -588,7 +588,14 @@ class PositionManager:
                     trailing_manager = self.trailing_managers.get(position.exchange)
                     if trailing_manager:
                         # NEW: Try to restore state from database first
-                        restored_ts = await trailing_manager._restore_state(symbol)
+                        # Prepare position data to avoid exchange API call during startup
+                        position_dict = {
+                            'symbol': symbol,
+                            'side': position.side,
+                            'size': float(safe_get_attr(position, 'quantity', 'qty', 'size', default=0)),
+                            'entryPrice': float(position.entry_price)
+                        }
+                        restored_ts = await trailing_manager._restore_state(symbol, position_data=position_dict)
 
                         if restored_ts:
                             # State restored from DB - add to manager
