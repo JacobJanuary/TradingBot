@@ -1155,37 +1155,54 @@ class Repository:
             logger.warning(f"No fields to update for position {position_id}")
             return False
 
-        fields = ['updated_at = NOW()']
-        params = {'position_id': position_id}
+        # Build SET clause and parameter list dynamically
+        set_fields = ['updated_at = NOW()']
+        params = []  # List for positional params
+        param_idx = 1  # asyncpg uses $1, $2, $3, ...
+
+        # Track parameter names for logging
+        param_names = []
 
         if phase is not None:
-            fields.append('phase = %(phase)s')
-            params['phase'] = phase
+            set_fields.append(f'phase = ${param_idx}')
+            params.append(phase)
+            param_names.append('phase')
+            param_idx += 1
 
         if target_price is not None:
-            fields.append('target_price = %(target_price)s')
-            params['target_price'] = target_price
+            set_fields.append(f'target_price = ${param_idx}')
+            params.append(target_price)
+            param_names.append('target_price')
+            param_idx += 1
 
         if hours_aged is not None:
-            fields.append('hours_aged = %(hours_aged)s')
-            params['hours_aged'] = hours_aged
+            set_fields.append(f'hours_aged = ${param_idx}')
+            params.append(hours_aged)
+            param_names.append('hours_aged')
+            param_idx += 1
 
         if loss_tolerance is not None:
-            fields.append('loss_tolerance = %(loss_tolerance)s')
-            params['loss_tolerance'] = loss_tolerance
+            set_fields.append(f'loss_tolerance = ${param_idx}')
+            params.append(loss_tolerance)
+            param_names.append('loss_tolerance')
+            param_idx += 1
+
+        # position_id is the last parameter (for WHERE clause)
+        params.append(str(position_id))
+        param_names.append('position_id')
 
         query = f"""
             UPDATE monitoring.aged_positions
-            SET {', '.join(fields)}
-            WHERE position_id = %(position_id)s
+            SET {', '.join(set_fields)}
+            WHERE position_id = ${param_idx}
             RETURNING id
         """
 
         async with self.pool.acquire() as conn:
             try:
-                result = await conn.fetchval(query, **params)
+                result = await conn.fetchval(query, *params)
                 if result:
-                    logger.info(f"Updated aged position {position_id}: {', '.join(params.keys())}")
+                    logger.info(f"Updated aged position {position_id}: {', '.join(param_names)}")
                     return True
                 else:
                     logger.warning(f"Aged position for position_id {position_id} not found")
@@ -1313,14 +1330,14 @@ class Repository:
                     AVG(close_attempts) as avg_close_attempts,
                     AVG(EXTRACT(EPOCH FROM (closed_at - detected_at))) as avg_close_duration
                 FROM monitoring.aged_positions
-                WHERE detected_at BETWEEN %(from_date)s AND %(to_date)s
+                WHERE detected_at BETWEEN $1 AND $2
             ),
             close_reasons AS (
                 SELECT
                     close_reason,
                     COUNT(*) as count
                 FROM monitoring.aged_positions
-                WHERE detected_at BETWEEN %(from_date)s AND %(to_date)s
+                WHERE detected_at BETWEEN $1 AND $2
                     AND close_reason IS NOT NULL
                 GROUP BY close_reason
             )
@@ -1337,14 +1354,9 @@ class Repository:
                      s.avg_close_attempts, s.avg_close_duration
         """
 
-        params = {
-            'from_date': from_date,
-            'to_date': to_date
-        }
-
         async with self.pool.acquire() as conn:
             try:
-                row = await conn.fetchrow(query, **params)
+                row = await conn.fetchrow(query, from_date, to_date)
                 if row:
                     result = dict(row)
                     # Calculate success rate
