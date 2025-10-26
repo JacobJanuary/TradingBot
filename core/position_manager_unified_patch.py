@@ -24,8 +24,24 @@ import asyncio
 import logging
 from typing import Optional, Dict
 from decimal import Decimal
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# ✅ PHASE 3: Global metrics instance
+_subscription_metrics = None
+
+
+def get_subscription_metrics():
+    """Get or create subscription metrics instance"""
+    global _subscription_metrics
+    if _subscription_metrics is None:
+        try:
+            from core.aged_position_metrics import SubscriptionMetrics
+            _subscription_metrics = SubscriptionMetrics()
+        except ImportError:
+            _subscription_metrics = None
+    return _subscription_metrics
 
 
 def init_unified_protection(position_manager) -> Optional[Dict]:
@@ -190,7 +206,7 @@ async def resubscribe_stale_positions(
     max_retries: int = 3
 ) -> int:
     """
-    ✅ PHASE 1 + PHASE 2: Automatic resubscription with exponential backoff
+    ✅ PHASE 1 + PHASE 2 + PHASE 3: Automatic resubscription with exponential backoff and metrics
 
     Args:
         unified_protection: Unified protection components
@@ -207,6 +223,9 @@ async def resubscribe_stale_positions(
     if not aged_adapter or not price_monitor:
         logger.error("Cannot resubscribe - missing components")
         return 0
+
+    # ✅ PHASE 3: Get metrics instance
+    metrics = get_subscription_metrics()
 
     resubscribed = 0
 
@@ -275,7 +294,52 @@ async def resubscribe_stale_positions(
             f"🔄 Resubscribed {resubscribed}/{len(stale_symbols)} stale positions"
         )
 
+        # ✅ PHASE 3: Record metrics
+        if metrics:
+            metrics.resubscription_count += resubscribed
+            metrics.last_resubscription_at = datetime.now(timezone.utc)
+
     return resubscribed
+
+
+async def check_alert_conditions(
+    unified_protection: Dict,
+    staleness_report: dict
+):
+    """
+    ✅ PHASE 3: Check alert conditions and log critical warnings
+
+    Alerts:
+    - Any aged position stale > 2 minutes
+    - High resubscription rate (>10)
+    - High verification failure rate (>5)
+    """
+    metrics = get_subscription_metrics()
+
+    # Alert 1: Aged position stale > 2 minutes
+    for symbol, data in staleness_report.items():
+        if data['stale'] and data['seconds_since_update'] > 120:  # 2 minutes
+            logger.critical(
+                f"🚨 CRITICAL ALERT: {symbol} stale for "
+                f"{data['seconds_since_update']/60:.1f} minutes! "
+                f"Exceeds 2-minute alert threshold"
+            )
+
+    # Alert 2: High resubscription rate
+    if metrics and metrics.resubscription_count > 10:
+        logger.critical(
+            f"🚨 HIGH RESUBSCRIPTION RATE: "
+            f"{metrics.resubscription_count} resubscriptions! "
+            f"May indicate connection instability"
+        )
+
+    # Alert 3: Verification failures
+    if metrics and metrics.verification_failure_count > 5:
+        logger.critical(
+            f"🚨 HIGH VERIFICATION FAILURE RATE: "
+            f"{metrics.verification_failure_count} failures! "
+            f"Check WebSocket connection health"
+        )
 
 
 async def start_websocket_health_monitor(
@@ -284,8 +348,8 @@ async def start_websocket_health_monitor(
     position_manager = None
 ):
     """
-    ✅ ENHANCEMENT #2C + PHASE 1: Monitor WebSocket health for aged positions
-    NOW with automatic resubscription for stale subscriptions
+    ✅ ENHANCEMENT #2C + PHASE 1 + PHASE 3: Monitor WebSocket health for aged positions
+    NOW with automatic resubscription for stale subscriptions and metrics collection
 
     Periodically checks if aged positions are receiving price updates.
     Alerts if prices are stale (> 30 seconds without update).
@@ -304,6 +368,9 @@ async def start_websocket_health_monitor(
     if not aged_monitor or not price_monitor:
         logger.warning("WebSocket health monitor disabled - missing components")
         return
+
+    # ✅ PHASE 3: Get metrics instance
+    metrics = get_subscription_metrics()
 
     logger.info(
         f"🔍 Starting WebSocket health monitor "
@@ -339,6 +406,20 @@ async def start_websocket_health_monitor(
                     f"aged positions have STALE prices (threshold: 30s)!"
                 )
 
+                # ✅ PHASE 3: Record stale detection metrics
+                if metrics:
+                    metrics.stale_detection_count += stale_count
+                    metrics.last_stale_detected_at = datetime.now(timezone.utc)
+
+                    # Update max stale duration
+                    max_stale = max(
+                        data['seconds_since_update']
+                        for data in staleness_report.values()
+                        if data['stale']
+                    )
+                    if max_stale > metrics.max_stale_duration_seconds:
+                        metrics.max_stale_duration_seconds = max_stale
+
                 # Log each stale position
                 for symbol, data in staleness_report.items():
                     if data['stale']:
@@ -347,6 +428,9 @@ async def start_websocket_health_monitor(
                             f"  - {symbol}: no update for {seconds:.0f}s "
                             f"({seconds/60:.1f} minutes)"
                         )
+
+                # ✅ PHASE 3: Check alert conditions
+                await check_alert_conditions(unified_protection, staleness_report)
 
                 # ✅ NEW: AUTOMATIC RESUBSCRIPTION
                 if position_manager:
