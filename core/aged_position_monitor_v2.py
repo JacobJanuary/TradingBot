@@ -550,7 +550,7 @@ class AgedPositionMonitorV2:
             # Update database
             if self.repository:
                 try:
-                    await self.repository.update_aged_position_status(
+                    await self.repository.update_aged_position(
                         position_id=target.position_id,
                         phase=new_phase,
                         target_price=new_target_price,
@@ -602,12 +602,12 @@ class AgedPositionMonitorV2:
         try:
             # Save each tracked target to DB
             for symbol, target in self.aged_targets.items():
-                await self.repository.update_aged_position_status(
+                await self.repository.update_aged_position(
                     position_id=target.position_id,
                     phase=target.phase,
                     target_price=target.target_price,
                     loss_tolerance=target.loss_tolerance,
-                    current_age_hours=target.hours_aged
+                    hours_aged=target.hours_aged
                 )
 
             logger.info(f"Persisted {len(self.aged_targets)} aged targets to DB")
