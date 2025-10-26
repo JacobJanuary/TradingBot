@@ -39,12 +39,13 @@ class TradingConfig:
     # Position sizing
     position_size_usd: Decimal = Decimal('6')
     min_position_size_usd: Decimal = Decimal('5')
-    max_position_size_usd: Decimal = Decimal('5000')
+    max_position_size_usd: Decimal = Decimal('10000')
     max_positions: int = 150
     max_exposure_usd: Decimal = Decimal('99000')
+    max_account_utilization_percent: Decimal = Decimal('100')
 
     # Risk management
-    stop_loss_percent: Decimal = Decimal('2.0')
+    stop_loss_percent: Decimal = Decimal('4.0')
     trailing_activation_percent: Decimal = Decimal('2.0')
     trailing_callback_percent: Decimal = Decimal('0.5')
 
@@ -60,7 +61,7 @@ class TradingConfig:
 
     # Aged positions
     max_position_age_hours: int = 3
-    aged_grace_period_hours: int = 1
+    aged_grace_period_hours: int = 3
     aged_loss_step_percent: Decimal = Decimal('0.5')
     aged_max_loss_percent: Decimal = Decimal('10.0')
     aged_acceleration_factor: Decimal = Decimal('1.2')
@@ -70,7 +71,7 @@ class TradingConfig:
     # Signal filtering
     min_score_week: int = 62
     min_score_month: int = 58
-    max_spread_percent: Decimal = Decimal('2.0')
+    max_spread_percent: Decimal = Decimal('0.5')
 
     # Execution
     signal_time_window_minutes: int = 10
@@ -113,9 +114,9 @@ class TradingSafetyConstants:
 class DatabaseConfig:
     """Database configuration from .env ONLY"""
     host: str = 'localhost'
-    port: int = 5433
+    port: int = 5432
     database: str = 'fox_crypto'
-    user: str = 'elcrypto'
+    user: str = 'evgeniyyanvarskiy'
     password: str = ''
     pool_size: int = 10
     max_overflow: int = 20
@@ -204,6 +205,8 @@ class Config:
             config.max_positions = int(val)
         if val := os.getenv('MAX_EXPOSURE_USD'):
             config.max_exposure_usd = Decimal(val)
+        if val := os.getenv('MAX_ACCOUNT_UTILIZATION_PERCENT'):
+            config.max_account_utilization_percent = Decimal(val)
 
         # Risk management
         if val := os.getenv('STOP_LOSS_PERCENT'):

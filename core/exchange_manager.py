@@ -16,6 +16,7 @@ from utils.crypto_manager import decrypt_env_value
 from utils.decimal_utils import to_decimal
 from utils.rate_limiter import get_rate_limiter
 from utils.datetime_helpers import now_utc, ensure_utc
+from config.settings import config
 
 logger = logging.getLogger(__name__)
 
@@ -1514,8 +1515,9 @@ class ExchangeManager:
             # Step 4: Conservative utilization check
             if total_usdt > 0:
                 utilization = (total_notional + float(notional_usd)) / total_usdt
-                if utilization > 0.80:  # 80% max
-                    return False, f"Would exceed safe utilization: {utilization*100:.1f}% > 80%"
+                max_util = float(config.trading.max_account_utilization_percent) / 100
+                if utilization > max_util:
+                    return False, f"Would exceed safe utilization: {utilization*100:.1f}% > {max_util*100:.0f}%"
 
             return True, "OK"
 
