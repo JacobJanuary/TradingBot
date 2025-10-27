@@ -261,16 +261,23 @@ class ExchangeManager:
                 if accounts:
                     account = accounts[0]
 
-                    # FIX: totalAvailableBalance is often empty string "" for UNIFIED accounts
-                    # Use coin[].walletBalance instead
+                    # FIX: For UNIFIED accounts, must account for margin used in positions
+                    # totalAvailableBalance often returns empty string ""
+                    # Correct formula: walletBalance - totalPositionIM
                     coins = account.get('coin', [])
                     for coin_data in coins:
                         if coin_data.get('coin') == 'USDT':
-                            # walletBalance - locked = available for new positions
                             wallet_balance = float(coin_data.get('walletBalance', 0) or 0)
-                            locked = float(coin_data.get('locked', 0) or 0)
-                            free_balance = wallet_balance - locked
-                            logger.debug(f"Bybit USDT: wallet={wallet_balance:.2f}, locked={locked:.2f}, free={free_balance:.2f}")
+                            total_position_im = float(coin_data.get('totalPositionIM', 0) or 0)
+
+                            # Free balance = wallet - margin used in positions
+                            free_balance = wallet_balance - total_position_im
+
+                            logger.debug(
+                                f"Bybit USDT: wallet={wallet_balance:.2f}, "
+                                f"positionIM={total_position_im:.2f}, "
+                                f"free={free_balance:.2f}"
+                            )
                             return free_balance
 
                     logger.warning("No USDT found in Bybit coin list")
