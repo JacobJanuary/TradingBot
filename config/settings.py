@@ -68,16 +68,20 @@ class TradingConfig:
     commission_percent: Decimal = Decimal('0.05')
 
     # Signal filtering
-    min_score_week: int = 62
-    min_score_month: int = 58
     max_spread_percent: Decimal = Decimal('0.5')
 
     # Execution
     signal_time_window_minutes: int = 10
+
+    # NOTE: Fallback only - per-exchange limits from DB (trading_params table) take precedence
+    # Used only when DB params unavailable (signal_processor_websocket.py:591,683)
     max_trades_per_15min: int = 5
 
-    # Wave processing - FIX: 2025-10-03 - Добавлено поле для SIGNAL_BUFFER_PERCENT
-    signal_buffer_percent: float = 50.0
+    # Per-exchange signal selection buffer (fixed value replaces magic number "3")
+    # Determines how many extra signals to select before validation/filtering
+    # Example: max_trades=6, buffer_fixed=3 → select 9 signals, validate, take top 6
+    # Used in signal_processor_websocket.py lines 621, 642, 661, 705, 718
+    signal_buffer_fixed: int = 3
 
 
 @dataclass
@@ -246,21 +250,17 @@ class Config:
             config.commission_percent = Decimal(val)
 
         # Signal filtering
-        if val := os.getenv('MIN_SCORE_WEEK'):
-            config.min_score_week = int(val)
-        if val := os.getenv('MIN_SCORE_MONTH'):
-            config.min_score_month = int(val)
         if val := os.getenv('MAX_SPREAD_PERCENT'):
             config.max_spread_percent = Decimal(val)
 
         # FIX: 2025-10-03 - Добавлена загрузка MAX_TRADES_PER_15MIN из .env
         if val := os.getenv('MAX_TRADES_PER_15MIN'):
             config.max_trades_per_15min = int(val)
-        if val := os.getenv('SIGNAL_BUFFER_PERCENT'):
-            config.signal_buffer_percent = float(val)
+        if val := os.getenv('SIGNAL_BUFFER_FIXED'):
+            config.signal_buffer_fixed = int(val)
 
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
-        logger.info(f"Wave limits: max_trades={config.max_trades_per_15min}, buffer={getattr(config, 'signal_buffer_percent', 33)}%")
+        logger.info(f"Wave limits: max_trades={config.max_trades_per_15min} (fallback), buffer_fixed=+{config.signal_buffer_fixed}")
         logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
         return config
 

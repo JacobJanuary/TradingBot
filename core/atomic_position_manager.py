@@ -370,6 +370,10 @@ class AtomicPositionManager:
                 if exchange == 'bybit' and (not exec_price or exec_price == 0):
                     logger.info(f"📊 Fetching position for {symbol} to get execution price")
                     try:
+                        # FIX: Bybit API needs time to populate entryPrice in position data
+                        # Wait 500ms for API to process order and update position
+                        await asyncio.sleep(0.5)
+
                         # Use fetch_positions instead of fetch_order (Bybit V5 best practice)
                         positions = await exchange_instance.fetch_positions(
                             symbols=[symbol],

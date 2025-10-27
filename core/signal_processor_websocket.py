@@ -618,7 +618,7 @@ class WebSocketSignalProcessor:
 
             if params and params.get('max_trades_filter') is not None:
                 max_trades = int(params['max_trades_filter'])
-                buffer_size = max_trades + 3  # Fixed +3 buffer
+                buffer_size = max_trades + self.config.signal_buffer_fixed
 
                 logger.debug(
                     f"📊 {exchange_name}: max_trades={max_trades} (from DB), buffer={buffer_size} (+3)"
@@ -639,7 +639,7 @@ class WebSocketSignalProcessor:
                 )
 
                 max_trades = config_fallback
-                buffer_size = max_trades + 3
+                buffer_size = max_trades + self.config.signal_buffer_fixed
 
                 return {
                     'max_trades': max_trades,
@@ -658,7 +658,7 @@ class WebSocketSignalProcessor:
             logger.warning(f"⚠️ Using config fallback={config_fallback}")
 
             max_trades = config_fallback
-            buffer_size = max_trades + 3
+            buffer_size = max_trades + self.config.signal_buffer_fixed
 
             return {
                 'max_trades': max_trades,
@@ -702,7 +702,7 @@ class WebSocketSignalProcessor:
             # Create fallback
             params_by_exchange[1] = {
                 'max_trades': config_fallback,
-                'buffer_size': config_fallback + 3,
+                'buffer_size': config_fallback + self.config.signal_buffer_fixed,
                 'source': 'exception_fallback',
                 'exchange_id': 1,
                 'exchange_name': 'Binance'
@@ -715,7 +715,7 @@ class WebSocketSignalProcessor:
             # Create fallback
             params_by_exchange[2] = {
                 'max_trades': config_fallback,
-                'buffer_size': config_fallback + 3,
+                'buffer_size': config_fallback + self.config.signal_buffer_fixed,
                 'source': 'exception_fallback',
                 'exchange_id': 2,
                 'exchange_name': 'Bybit'
@@ -868,7 +868,7 @@ class WebSocketSignalProcessor:
         NEW LOGIC (mirrors current perfect implementation):
         1. Group signals by exchange_id
         2. For each exchange:
-           a. Select top (max_trades + 3) signals
+           a. Select top (max_trades + buffer_fixed) signals
            b. Validate (duplicate check, etc.)
            c. If successful < max_trades, top-up from remaining
            d. Execute SEQUENTIALLY with stop at target
@@ -930,7 +930,7 @@ class WebSocketSignalProcessor:
                 f"(target={max_trades}, buffer={buffer_size}, params_source={exchange_params.get('source')})"
             )
 
-            # Step 2a: Select top (max_trades + 3) signals
+            # Step 2a: Select top (max_trades + buffer_fixed) signals
             signals_to_process = exchange_signals[:buffer_size]
 
             logger.debug(

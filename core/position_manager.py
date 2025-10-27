@@ -2860,6 +2860,18 @@ class PositionManager:
                 if not exchange:
                     continue
 
+                # CRITICAL FIX: Skip placeholder or invalid positions BEFORE checking exchange
+                # Placeholders (from pre_register_position) have entry_price=0 and quantity=0
+                entry_price = position.entry_price or 0
+                quantity = position.quantity or 0
+
+                if entry_price == 0 or quantity == 0:
+                    logger.debug(
+                        f"Skipping {symbol}: placeholder during atomic operation "
+                        f"(entry_price={entry_price}, quantity={quantity})"
+                    )
+                    continue
+
                 # ============================================================
                 # UNIFIED APPROACH: Use StopLossManager for SL check
                 # ============================================================
@@ -3006,16 +3018,6 @@ class PositionManager:
                         # STEP 2: Calculate price drift from entry
                         entry_price = float(position.entry_price)
                         quantity = float(position.quantity)
-
-                        # CRITICAL FIX: Skip placeholder or invalid positions
-                        # Placeholders (from pre_register_position) have entry_price=0 and quantity=0
-                        # Also skip any position with invalid data (data corruption)
-                        if entry_price == 0 or quantity == 0:
-                            logger.debug(
-                                f"Skipping {position.symbol}: placeholder or invalid data "
-                                f"(entry_price={entry_price}, quantity={quantity})"
-                            )
-                            continue
 
                         price_drift_pct = abs((current_price - entry_price) / entry_price)
 

@@ -47,11 +47,10 @@ class WaveSignalProcessor:
 
         # Wave parameters
         self.max_trades_per_wave = int(getattr(config, 'max_trades_per_15min', 10))
-        self.buffer_percent = float(getattr(config, 'signal_buffer_percent', 33))
         self.duplicate_check_enabled = getattr(config, 'duplicate_check_enabled', True)
 
-        # Calculate buffer size
-        self.buffer_size = int(self.max_trades_per_wave * (1 + self.buffer_percent / 100))
+        # Buffer size for logging (aligns with per-exchange logic)
+        self.buffer_size = self.max_trades_per_wave + self.config.signal_buffer_fixed
 
         # Statistics
         self.wave_stats = {}  # {timestamp: WaveProcessingStats}
@@ -61,7 +60,7 @@ class WaveSignalProcessor:
         logger.info(
             f"WaveSignalProcessor initialized: "
             f"max_trades={self.max_trades_per_wave}, "
-            f"buffer_size={self.buffer_size} (+{self.buffer_percent}%), "
+            f"buffer_size={self.buffer_size} (+{self.config.signal_buffer_fixed}), "
             f"duplicate_check={self.duplicate_check_enabled}"
         )
 
@@ -503,7 +502,7 @@ class WaveSignalProcessor:
         return {
             'buffer_config': {
                 'max_trades_per_wave': self.max_trades_per_wave,
-                'buffer_percent': self.buffer_percent,
+                'buffer_fixed': self.config.signal_buffer_fixed,
                 'buffer_size': self.buffer_size
             },
             'total_stats': {

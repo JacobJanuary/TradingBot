@@ -30,10 +30,8 @@ def test_config_defaults_match_env():
     assert config.trailing_min_update_interval_seconds == 30, "trailing_min_update_interval_seconds should default to 30"
     assert config.trailing_min_improvement_percent == Decimal('0.05'), "trailing_min_improvement_percent should default to 0.05"
     assert config.trailing_alert_if_unprotected_window_ms == 300, "trailing_alert_if_unprotected_window_ms should default to 300"
-    assert config.min_score_week == 62, "min_score_week should default to 62"
-    assert config.min_score_month == 58, "min_score_month should default to 58"
     assert config.max_trades_per_15min == 5, "max_trades_per_15min should default to 5"
-    assert config.signal_buffer_percent == 50.0, "signal_buffer_percent should default to 50.0"
+    assert config.signal_buffer_fixed == 3, "signal_buffer_fixed should default to 3"
 
     print("✅ All config defaults match .env values")
 
