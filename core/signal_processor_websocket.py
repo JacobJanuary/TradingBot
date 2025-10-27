@@ -619,7 +619,27 @@ class WebSocketSignalProcessor:
     async def _on_ws_error(self, error):
         """Callback при ошибке WebSocket"""
         logger.error(f"❌ WebSocket error: {error}")
-    
+
+    def _group_signals_by_exchange(self, signals: List[Dict]) -> Dict[int, List[Dict]]:
+        """
+        Group signals by exchange_id
+
+        Args:
+            signals: List of signal dicts with exchange_id field
+
+        Returns:
+            Dict mapping exchange_id → list of signals for that exchange
+            Example: {1: [signal1, signal2], 2: [signal3, signal4]}
+        """
+        grouped = {}
+        for signal in signals:
+            exchange_id = signal.get('exchange_id')
+            if exchange_id:
+                if exchange_id not in grouped:
+                    grouped[exchange_id] = []
+                grouped[exchange_id].append(signal)
+        return grouped
+
     async def _execute_signal(self, signal: Dict) -> bool:
         """
         Execute signal: validate and open position
