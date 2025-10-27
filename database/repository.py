@@ -151,6 +151,142 @@ class Repository:
             )
             return result
 
+    # ============== Parameter Management ==============
+
+    async def get_params(self, exchange_id: int) -> Optional[Dict]:
+        """
+        Get backtest parameters for exchange
+
+        Args:
+            exchange_id: Exchange ID (1=Binance, 2=Bybit)
+
+        Returns:
+            Dict with parameters or None if not found
+        """
+        query = """
+            SELECT
+                exchange_id,
+                max_trades_filter,
+                stop_loss_filter,
+                trailing_activation_filter,
+                trailing_distance_filter,
+                updated_at,
+                created_at
+            FROM monitoring.params
+            WHERE exchange_id = $1
+        """
+
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(query, exchange_id)
+
+            if row:
+                return dict(row)
+            return None
+
+    async def update_params(
+        self,
+        exchange_id: int,
+        max_trades_filter: Optional[int] = None,
+        stop_loss_filter: Optional[float] = None,
+        trailing_activation_filter: Optional[float] = None,
+        trailing_distance_filter: Optional[float] = None
+    ) -> bool:
+        """
+        Update backtest parameters for exchange
+
+        Only updates fields that are not None.
+        Returns True if update succeeded, False otherwise.
+
+        Args:
+            exchange_id: Exchange ID (1=Binance, 2=Bybit)
+            max_trades_filter: Max trades per wave
+            stop_loss_filter: Stop loss %
+            trailing_activation_filter: Trailing activation %
+            trailing_distance_filter: Trailing distance %
+
+        Returns:
+            bool: True if updated, False if failed
+        """
+        # Build dynamic UPDATE query (only update provided fields)
+        updates = []
+        params = [exchange_id]
+        param_idx = 2
+
+        if max_trades_filter is not None:
+            updates.append(f"max_trades_filter = ${param_idx}")
+            params.append(max_trades_filter)
+            param_idx += 1
+
+        if stop_loss_filter is not None:
+            updates.append(f"stop_loss_filter = ${param_idx}")
+            params.append(stop_loss_filter)
+            param_idx += 1
+
+        if trailing_activation_filter is not None:
+            updates.append(f"trailing_activation_filter = ${param_idx}")
+            params.append(trailing_activation_filter)
+            param_idx += 1
+
+        if trailing_distance_filter is not None:
+            updates.append(f"trailing_distance_filter = ${param_idx}")
+            params.append(trailing_distance_filter)
+            param_idx += 1
+
+        if not updates:
+            logger.warning(f"No parameters to update for exchange_id={exchange_id}")
+            return False
+
+        # updated_at is auto-updated by trigger
+        query = f"""
+            UPDATE monitoring.params
+            SET {', '.join(updates)}
+            WHERE exchange_id = $1
+            RETURNING exchange_id
+        """
+
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.fetchval(query, *params)
+
+                if result:
+                    logger.info(
+                        f"✅ Updated params for exchange_id={exchange_id}: "
+                        f"{', '.join(updates)}"
+                    )
+                    return True
+                else:
+                    logger.warning(f"No row found for exchange_id={exchange_id}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Failed to update params for exchange_id={exchange_id}: {e}")
+            return False
+
+    async def get_all_params(self) -> Dict[int, Dict]:
+        """
+        Get all exchange parameters
+
+        Returns:
+            Dict mapping exchange_id to params dict
+        """
+        query = """
+            SELECT
+                exchange_id,
+                max_trades_filter,
+                stop_loss_filter,
+                trailing_activation_filter,
+                trailing_distance_filter,
+                updated_at,
+                created_at
+            FROM monitoring.params
+            ORDER BY exchange_id
+        """
+
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(query)
+
+            return {row['exchange_id']: dict(row) for row in rows}
+
     # ============== Trade Operations ==============
 
     async def create_trade(self, trade_data: Dict) -> int:

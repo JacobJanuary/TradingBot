@@ -2,7 +2,7 @@
 Signal Adapter для преобразования WebSocket сигналов в формат бота
 """
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,10 @@ class SignalAdapter:
             
             # Вычисляем wave_timestamp (округление до 15 минут)
             wave_timestamp = self._calculate_wave_timestamp(created_at)
-            
+
+            # ✅ NEW: Extract filter parameters
+            filter_params = self._extract_filter_params(ws_signal)
+
             # Создаем адаптированный сигнал
             adapted = {
                 'id': ws_signal.get('id'),
@@ -79,7 +82,12 @@ class SignalAdapter:
                 'score_month': float(ws_signal.get('score_month', 0)),
                 'created_at': created_at,
                 'exchange': exchange,
+                'exchange_id': exchange_id,  # ✅ NEW: Include exchange_id
                 'wave_timestamp': wave_timestamp,
+
+                # ✅ NEW: Include filter parameters
+                'filter_params': filter_params,
+
                 # Дополнительные поля для совместимости
                 'timestamp': created_at,
                 'is_active': True,
@@ -166,6 +174,40 @@ class SignalAdapter:
         # Добавляем интервалы к началу часа
         from datetime import timedelta
         wave_ts = hour_start + timedelta(minutes=intervals * 15)
-        
+
         return wave_ts
-    
+
+    def _extract_filter_params(self, ws_signal: Dict) -> Optional[Dict]:
+        """
+        Извлекает filter параметры из WebSocket сигнала
+
+        Args:
+            ws_signal: Raw сигнал от WebSocket
+
+        Returns:
+            Dict с filter параметрами или None если нет данных
+        """
+        try:
+            # Extract filter fields
+            params = {}
+
+            # Optional fields - only include if present
+            if 'max_trades_filter' in ws_signal and ws_signal['max_trades_filter'] is not None:
+                params['max_trades_filter'] = int(ws_signal['max_trades_filter'])
+
+            if 'stop_loss_filter' in ws_signal and ws_signal['stop_loss_filter'] is not None:
+                params['stop_loss_filter'] = float(ws_signal['stop_loss_filter'])
+
+            if 'trailing_activation_filter' in ws_signal and ws_signal['trailing_activation_filter'] is not None:
+                params['trailing_activation_filter'] = float(ws_signal['trailing_activation_filter'])
+
+            if 'trailing_distance_filter' in ws_signal and ws_signal['trailing_distance_filter'] is not None:
+                params['trailing_distance_filter'] = float(ws_signal['trailing_distance_filter'])
+
+            # Return None if no parameters found (backward compatibility)
+            return params if params else None
+
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to extract filter params from signal {ws_signal.get('id')}: {e}")
+            return None
+

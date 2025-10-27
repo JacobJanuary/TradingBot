@@ -290,6 +290,16 @@ class WebSocketSignalProcessor:
                         f"{len(final_signals)} signals with buffer (target: {max_trades} positions)"
                     )
 
+                    # ✅ NEW: Update exchange parameters from first signal per exchange
+                    # This runs in parallel with validation, non-blocking
+                    asyncio.create_task(
+                        self._update_exchange_params(signals_to_process, expected_wave_timestamp)
+                    )
+
+                    logger.info(
+                        f"📊 Triggered parameter update for wave {expected_wave_timestamp}"
+                    )
+
                     # PARALLEL VALIDATION: Pre-fetch positions once per exchange and validate all signals in parallel
                     try:
                         # Pre-fetch positions for ALL exchanges
@@ -827,7 +837,104 @@ class WebSocketSignalProcessor:
         except Exception as e:
             logger.error(f"❌ Error executing signal #{signal_id}: {e}", exc_info=True)
             return False
-    
+
+    async def _update_exchange_params(self, wave_signals: List[Dict], wave_timestamp: str):
+        """
+        Update monitoring.params from first signal per exchange in wave
+
+        Extracts filter parameters from:
+        - First Binance signal (exchange_id=1) → UPDATE exchange_id=1
+        - First Bybit signal (exchange_id=2) → UPDATE exchange_id=2
+
+        Runs asynchronously to avoid blocking wave processing.
+
+        Args:
+            wave_signals: List of adapted signals with filter_params
+            wave_timestamp: Wave timestamp for logging
+        """
+        if not wave_signals:
+            return
+
+        try:
+            # Group signals by exchange_id
+            signals_by_exchange = {}
+            for signal in wave_signals:
+                exchange_id = signal.get('exchange_id')
+                if exchange_id and exchange_id not in signals_by_exchange:
+                    # Take first signal per exchange
+                    signals_by_exchange[exchange_id] = signal
+
+            logger.debug(
+                f"Found {len(signals_by_exchange)} unique exchanges in wave {wave_timestamp}: "
+                f"{list(signals_by_exchange.keys())}"
+            )
+
+            # Update params for each exchange
+            update_tasks = []
+            for exchange_id, signal in signals_by_exchange.items():
+                filter_params = signal.get('filter_params')
+
+                if filter_params:
+                    logger.info(
+                        f"📊 Updating params for exchange_id={exchange_id} from signal #{signal.get('id')}: "
+                        f"{filter_params}"
+                    )
+
+                    # Create update task (non-blocking)
+                    task = self._update_params_for_exchange(exchange_id, filter_params, wave_timestamp)
+                    update_tasks.append(task)
+                else:
+                    logger.debug(
+                        f"No filter_params in signal #{signal.get('id')} for exchange_id={exchange_id}"
+                    )
+
+            # Execute all updates in parallel (non-blocking)
+            if update_tasks:
+                await asyncio.gather(*update_tasks, return_exceptions=True)
+
+        except Exception as e:
+            # CRITICAL: Catch all exceptions to prevent breaking wave processing
+            logger.error(f"Error updating exchange params for wave {wave_timestamp}: {e}", exc_info=True)
+
+    async def _update_params_for_exchange(
+        self,
+        exchange_id: int,
+        filter_params: Dict,
+        wave_timestamp: str
+    ):
+        """
+        Update monitoring.params for specific exchange
+
+        Args:
+            exchange_id: Exchange ID (1=Binance, 2=Bybit)
+            filter_params: Filter parameters dict
+            wave_timestamp: Wave timestamp for logging
+        """
+        try:
+            # Update database
+            success = await self.repository.update_params(
+                exchange_id=exchange_id,
+                max_trades_filter=filter_params.get('max_trades_filter'),
+                stop_loss_filter=filter_params.get('stop_loss_filter'),
+                trailing_activation_filter=filter_params.get('trailing_activation_filter'),
+                trailing_distance_filter=filter_params.get('trailing_distance_filter')
+            )
+
+            if success:
+                logger.info(
+                    f"✅ Params updated for exchange_id={exchange_id} at wave {wave_timestamp}"
+                )
+            else:
+                logger.warning(
+                    f"⚠️ Failed to update params for exchange_id={exchange_id} at wave {wave_timestamp}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Error updating params for exchange_id={exchange_id}: {e}",
+                exc_info=True
+            )
+
     def get_stats(self) -> Dict:
         """Get processor statistics"""
         return {
