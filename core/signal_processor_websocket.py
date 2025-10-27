@@ -244,12 +244,19 @@ class WebSocketSignalProcessor:
                     })
                     self.stats['waves_detected'] += 1
                     self.stats['current_wave'] = expected_wave_timestamp
-                    
+
+                    # ✅ CRITICAL: Update exchange parameters BEFORE signal selection
+                    # This ensures params are available for current wave processing
+                    await self._update_exchange_params(wave_signals, expected_wave_timestamp)
+                    logger.info(
+                        f"📊 Parameter update completed for wave {expected_wave_timestamp}"
+                    )
+
                     # Calculate buffer size (signals already sorted by score_week)
                     max_trades = self.wave_processor.max_trades_per_wave
                     buffer_percent = self.wave_processor.buffer_percent
                     buffer_size = int(max_trades * (1 + buffer_percent / 100))
-                    
+
                     # Take only top signals with buffer
                     signals_to_process = wave_signals[:buffer_size]
                     
@@ -288,16 +295,6 @@ class WebSocketSignalProcessor:
                     logger.info(
                         f"✅ Wave {expected_wave_timestamp} validated: "
                         f"{len(final_signals)} signals with buffer (target: {max_trades} positions)"
-                    )
-
-                    # ✅ NEW: Update exchange parameters from first signal per exchange
-                    # This runs in parallel with validation, non-blocking
-                    asyncio.create_task(
-                        self._update_exchange_params(signals_to_process, expected_wave_timestamp)
-                    )
-
-                    logger.info(
-                        f"📊 Triggered parameter update for wave {expected_wave_timestamp}"
                     )
 
                     # PARALLEL VALIDATION: Pre-fetch positions once per exchange and validate all signals in parallel
