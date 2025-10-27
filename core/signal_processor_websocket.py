@@ -640,6 +640,44 @@ class WebSocketSignalProcessor:
                 grouped[exchange_id].append(signal)
         return grouped
 
+    async def _get_exchange_params(self, exchange_id: int) -> Dict:
+        """
+        Get parameters for exchange from database with fallback to config
+
+        Args:
+            exchange_id: Exchange ID (1=Binance, 2=Bybit)
+
+        Returns:
+            Dict with max_trades_filter and other params
+            Falls back to config defaults if DB query fails or returns NULL
+        """
+        try:
+            # Query database
+            db_params = await self.repository.get_params(exchange_id)
+
+            # If DB has params and max_trades_filter is set, use them
+            if db_params and db_params.get('max_trades_filter') is not None:
+                return {
+                    'max_trades_filter': db_params['max_trades_filter'],
+                    'stop_loss_filter': db_params.get('stop_loss_filter'),
+                    'trailing_activation_filter': db_params.get('trailing_activation_filter'),
+                    'trailing_distance_filter': db_params.get('trailing_distance_filter')
+                }
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to get params for exchange_id={exchange_id} from DB: {e}. "
+                f"Falling back to config defaults."
+            )
+
+        # Fallback to config defaults
+        return {
+            'max_trades_filter': self.wave_processor.max_trades_per_wave,
+            'stop_loss_filter': None,
+            'trailing_activation_filter': None,
+            'trailing_distance_filter': None
+        }
+
     async def _execute_signal(self, signal: Dict) -> bool:
         """
         Execute signal: validate and open position
