@@ -121,11 +121,11 @@ class SignalAdapter:
                 continue
         
         
-        # ✅ PROTECTIVE SORT: Ensure signals are sorted DESC by score_week, score_month
+        # ✅ PROTECTIVE SORT: Ensure signals are sorted DESC by (score_week + score_month)
         # This is a safety measure even if server sends pre-sorted data
         sorted_signals = sorted(
             adapted_signals,
-            key=lambda s: (s.get('score_week', 0), s.get('score_month', 0)),
+            key=lambda s: s.get('score_week', 0) + s.get('score_month', 0),
             reverse=True
         )
         

@@ -207,11 +207,11 @@ class SignalWebSocketClient:
         self.stats['signals_received'] += count
         self.stats['last_signal_time'] = datetime.now()
 
-        # ✅ PROTECTIVE SORT: Ensure signals are sorted DESC by score_week, score_month
+        # ✅ PROTECTIVE SORT: Ensure signals are sorted DESC by (score_week + score_month)
         # Even though server sends sorted data, we add this as safety measure
         sorted_signals = sorted(
             signals,
-            key=lambda s: (s.get('score_week', 0), s.get('score_month', 0)),
+            key=lambda s: s.get('score_week', 0) + s.get('score_month', 0),
             reverse=True
         )
         
