@@ -2434,6 +2434,13 @@ class PositionManager:
                                 severity='INFO'
                             )
 
+                # ✅ FIX: Clean up aged position monitoring
+                if self.unified_protection:
+                    aged_adapter = self.unified_protection.get('aged_adapter')
+                    if aged_adapter and symbol in aged_adapter.monitoring_positions:
+                        await aged_adapter.remove_aged_position(symbol)
+                        logger.debug(f"Removed {symbol} from aged monitoring on closure")
+
                 logger.info(
                     f"Position closed: {symbol} {reason} "
                     f"PnL: ${realized_pnl:.2f} ({realized_pnl_percent:.2f}%)"
