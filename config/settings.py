@@ -83,6 +83,16 @@ class TradingConfig:
     # Used in signal_processor_websocket.py lines 621, 642, 661, 705, 718
     signal_buffer_fixed: int = 3
 
+    # Advanced signal filters (market quality validation)
+    signal_min_open_interest_usdt: int = 1_000_000  # Minimum OI in USDT
+    signal_min_volume_1h_usdt: int = 50_000         # Minimum 1h volume in USDT
+    signal_max_price_change_5min_percent: float = 4.0  # Max 5min price change %
+
+    # Filter enable/disable switches
+    signal_filter_oi_enabled: bool = True           # Enable OI filter
+    signal_filter_volume_enabled: bool = True       # Enable volume filter
+    signal_filter_price_change_enabled: bool = True # Enable price change filter
+
 
 @dataclass
 class TradingSafetyConstants:

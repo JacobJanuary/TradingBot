@@ -57,11 +57,19 @@ class WaveSignalProcessor:
         self.total_duplicates_filtered = 0
         self.total_buffer_replacements = 0
 
+        # New filter statistics
+        self.total_filtered_low_oi = 0
+        self.total_filtered_low_volume = 0
+        self.total_filtered_price_change = 0
+
         logger.info(
             f"WaveSignalProcessor initialized: "
             f"max_trades={self.max_trades_per_wave}, "
             f"buffer_size={self.buffer_size} (+{self.config.signal_buffer_fixed}), "
-            f"duplicate_check={self.duplicate_check_enabled}"
+            f"duplicate_check={self.duplicate_check_enabled}, "
+            f"filters=[OI:{getattr(config, 'signal_filter_oi_enabled', True)}, "
+            f"Volume:{getattr(config, 'signal_filter_volume_enabled', True)}, "
+            f"PriceChange:{getattr(config, 'signal_filter_price_change_enabled', True)}]"
         )
 
     async def process_wave_signals(
@@ -358,6 +366,139 @@ class WaveSignalProcessor:
 
                 return True, f"Position size (${position_size_usd:.2f}) below exchange minimum (${min_cost:.2f})"
 
+            # ========== NEW FILTERS: OI, Volume, Price Change ==========
+
+            # Extract signal timestamp and direction for new filters
+            signal_timestamp_str = signal.get('timestamp') or signal.get('created_at')
+            direction = signal.get('recommended_action') or signal.get('signal_type') or signal.get('action')
+
+            if signal_timestamp_str and direction:
+                try:
+                    # Parse timestamp
+                    signal_timestamp = datetime.fromisoformat(signal_timestamp_str.replace('+00', '+00:00'))
+
+                    # Filter 1: Open Interest >= 1M USDT
+                    if getattr(self.config, 'signal_filter_oi_enabled', True):
+                        oi_usdt = await self._fetch_open_interest_usdt(
+                            exchange_manager, symbol, exchange, current_price
+                        )
+                        min_oi = getattr(self.config, 'signal_min_open_interest_usdt', 1_000_000)
+
+                        if oi_usdt is not None and oi_usdt < min_oi:
+                            logger.info(
+                                f"⏭️ Signal skipped: {symbol} OI ${oi_usdt:,.0f} < ${min_oi:,} on {exchange}"
+                            )
+
+                            # Log event
+                            from core.event_logger import get_event_logger, EventType
+                            event_logger = get_event_logger()
+                            if event_logger:
+                                await event_logger.log_event(
+                                    EventType.SIGNAL_FILTERED,
+                                    {
+                                        'signal_id': signal.get('id'),
+                                        'symbol': symbol,
+                                        'exchange': exchange,
+                                        'filter_reason': 'low_open_interest',
+                                        'open_interest_usdt': float(oi_usdt),
+                                        'min_oi_required': float(min_oi)
+                                    },
+                                    symbol=symbol,
+                                    exchange=exchange,
+                                    severity='INFO'
+                                )
+
+                            self.total_filtered_low_oi = getattr(self, 'total_filtered_low_oi', 0) + 1
+                            return True, f"OI ${oi_usdt:,.0f} below minimum ${min_oi:,}"
+
+                    # Filter 2: 1h Volume >= 50k USDT
+                    if getattr(self.config, 'signal_filter_volume_enabled', True):
+                        volume_1h_usdt = await self._fetch_1h_volume_usdt(
+                            exchange_manager, symbol, signal_timestamp
+                        )
+                        min_volume = getattr(self.config, 'signal_min_volume_1h_usdt', 50_000)
+
+                        if volume_1h_usdt is not None and volume_1h_usdt < min_volume:
+                            logger.info(
+                                f"⏭️ Signal skipped: {symbol} 1h volume ${volume_1h_usdt:,.0f} < ${min_volume:,} on {exchange}"
+                            )
+
+                            # Log event
+                            from core.event_logger import get_event_logger, EventType
+                            event_logger = get_event_logger()
+                            if event_logger:
+                                await event_logger.log_event(
+                                    EventType.SIGNAL_FILTERED,
+                                    {
+                                        'signal_id': signal.get('id'),
+                                        'symbol': symbol,
+                                        'exchange': exchange,
+                                        'filter_reason': 'low_volume',
+                                        'volume_1h_usdt': float(volume_1h_usdt),
+                                        'min_volume_required': float(min_volume)
+                                    },
+                                    symbol=symbol,
+                                    exchange=exchange,
+                                    severity='INFO'
+                                )
+
+                            self.total_filtered_low_volume = getattr(self, 'total_filtered_low_volume', 0) + 1
+                            return True, f"1h volume ${volume_1h_usdt:,.0f} below minimum ${min_volume:,}"
+
+                    # Filter 3: Price Change <= 4% (overheating check)
+                    if getattr(self.config, 'signal_filter_price_change_enabled', True):
+                        price_at_signal, price_5min_before = await self._fetch_price_5min_before(
+                            exchange_manager, symbol, signal_timestamp
+                        )
+                        max_change = getattr(self.config, 'signal_max_price_change_5min_percent', 4.0)
+
+                        if price_at_signal and price_5min_before and price_5min_before > 0:
+                            price_change_percent = ((price_at_signal - price_5min_before) / price_5min_before) * 100
+
+                            # For BUY: reject if price rose >4%
+                            # For SELL: reject if price fell >4%
+                            should_filter = False
+                            if direction == 'BUY' and price_change_percent > max_change:
+                                should_filter = True
+                                reason = f"overheated (BUY after +{price_change_percent:.2f}% rise)"
+                            elif direction == 'SELL' and price_change_percent < -max_change:
+                                should_filter = True
+                                reason = f"oversold (SELL after {price_change_percent:.2f}% drop)"
+
+                            if should_filter:
+                                logger.info(
+                                    f"⏭️ Signal skipped: {symbol} {reason} on {exchange}"
+                                )
+
+                                # Log event
+                                from core.event_logger import get_event_logger, EventType
+                                event_logger = get_event_logger()
+                                if event_logger:
+                                    await event_logger.log_event(
+                                        EventType.SIGNAL_FILTERED,
+                                        {
+                                            'signal_id': signal.get('id'),
+                                            'symbol': symbol,
+                                            'exchange': exchange,
+                                            'filter_reason': 'price_overheated' if direction == 'BUY' else 'price_oversold',
+                                            'direction': direction,
+                                            'price_change_5min_percent': float(price_change_percent),
+                                            'max_change_allowed': float(max_change),
+                                            'price_at_signal': float(price_at_signal),
+                                            'price_5min_before': float(price_5min_before)
+                                        },
+                                        symbol=symbol,
+                                        exchange=exchange,
+                                        severity='INFO'
+                                    )
+
+                                self.total_filtered_price_change = getattr(self, 'total_filtered_price_change', 0) + 1
+                                return True, reason
+
+                except Exception as e:
+                    logger.warning(f"Error applying new filters to {symbol}: {e}")
+                    # Don't filter on error - graceful degradation
+
             # All checks passed
             return False, ""
 
@@ -461,6 +602,191 @@ class WaveSignalProcessor:
         )
         return 10.0
 
+    async def _fetch_open_interest_usdt(
+        self,
+        exchange_manager,
+        symbol: str,
+        exchange_name: str,
+        current_price: float
+    ) -> Optional[float]:
+        """
+        Получить Open Interest в USDT для проверки ликвидности.
+
+        Использует 5 методов в порядке fallback:
+        1. fetch_open_interest() → openInterestValue
+        2. fetch_open_interest() → quoteVolume
+        3. fetch_open_interest() → openInterestAmount * markPrice
+        4. fetch_ticker() → info.openInterest * last_price (Binance)
+        5. fetch_ticker() → info.openInterestValue (Bybit)
+
+        Args:
+            exchange_manager: Exchange manager instance
+            symbol: Trading symbol
+            exchange_name: Exchange name
+            current_price: Current price for fallback conversion
+
+        Returns:
+            Open Interest in USDT or None if not available
+        """
+        try:
+            # Method 1-3: Try fetch_open_interest
+            try:
+                oi_data = await exchange_manager.exchange.fetch_open_interest(
+                    exchange_manager.find_exchange_symbol(symbol)
+                )
+
+                if oi_data:
+                    # Method 1: openInterestValue (already in USDT)
+                    if 'openInterestValue' in oi_data and oi_data['openInterestValue'] is not None:
+                        return float(oi_data['openInterestValue'])
+
+                    # Method 2: quoteVolume
+                    if 'quoteVolume' in oi_data and oi_data['quoteVolume'] is not None:
+                        return float(oi_data['quoteVolume'])
+
+                    # Method 3: openInterestAmount * markPrice
+                    if 'openInterestAmount' in oi_data and oi_data['openInterestAmount'] is not None:
+                        amount = float(oi_data['openInterestAmount'])
+                        if 'info' in oi_data and oi_data['info']:
+                            mark_price = oi_data['info'].get('markPrice') or oi_data['info'].get('lastPrice')
+                            if mark_price:
+                                return amount * float(mark_price)
+                        # Fallback: use current_price
+                        return amount * current_price
+            except Exception:
+                pass  # Try next method
+
+            # Method 4-5: Try fetch_ticker
+            try:
+                ticker = await exchange_manager.fetch_ticker(symbol)
+                if ticker and ticker.get('info'):
+                    info = ticker['info']
+
+                    # Method 4: Binance - openInterest * last_price
+                    if 'openInterest' in info and info['openInterest']:
+                        oi_amount = float(info['openInterest'])
+                        price = ticker.get('last') or current_price
+                        return oi_amount * price
+
+                    # Method 5: Bybit - openInterestValue
+                    if 'openInterestValue' in info and info['openInterestValue']:
+                        return float(info['openInterestValue'])
+            except Exception:
+                pass
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"Could not fetch OI for {symbol}: {e}")
+            return None
+
+    async def _fetch_1h_volume_usdt(
+        self,
+        exchange_manager,
+        symbol: str,
+        signal_timestamp: datetime
+    ) -> Optional[float]:
+        """
+        Получить объем торгов за 1 час ПОСЛЕ сигнала в USDT.
+
+        Args:
+            exchange_manager: Exchange manager instance
+            symbol: Trading symbol
+            signal_timestamp: Timestamp сигнала
+
+        Returns:
+            1h volume in USDT or None if not available
+        """
+        try:
+            # Round timestamp down to hour boundary
+            hour_start = signal_timestamp.replace(minute=0, second=0, microsecond=0)
+            ts_ms = int(hour_start.timestamp() * 1000)
+
+            # Fetch 1h candle starting at signal hour
+            ohlcv = await exchange_manager.exchange.fetch_ohlcv(
+                exchange_manager.find_exchange_symbol(symbol),
+                timeframe='1h',
+                since=ts_ms,
+                limit=1
+            )
+
+            if not ohlcv or len(ohlcv) == 0:
+                return None
+
+            candle = ohlcv[0]
+            # [timestamp, open, high, low, close, volume]
+            base_volume = candle[5]
+            close_price = candle[4]
+
+            # Convert to USDT
+            volume_usdt = base_volume * close_price
+            return volume_usdt
+
+        except Exception as e:
+            logger.debug(f"Could not fetch 1h volume for {symbol}: {e}")
+            return None
+
+    async def _fetch_price_5min_before(
+        self,
+        exchange_manager,
+        symbol: str,
+        signal_timestamp: datetime
+    ) -> tuple:
+        """
+        Получить цену за 5 минут ДО сигнала для проверки перегрева.
+
+        Args:
+            exchange_manager: Exchange manager instance
+            symbol: Trading symbol
+            signal_timestamp: Timestamp сигнала
+
+        Returns:
+            tuple: (price_at_signal, price_5min_before) or (None, None)
+        """
+        try:
+            exchange_symbol = exchange_manager.find_exchange_symbol(symbol)
+
+            # Get price at signal (1m candles around signal time)
+            ts_signal_ms = int(signal_timestamp.timestamp() * 1000)
+            ohlcv_signal = await exchange_manager.exchange.fetch_ohlcv(
+                exchange_symbol,
+                timeframe='1m',
+                since=ts_signal_ms - (5 * 60 * 1000),  # 5 min before
+                limit=10
+            )
+
+            if not ohlcv_signal:
+                return None, None
+
+            # Find closest candle to signal time
+            closest_signal = min(ohlcv_signal, key=lambda x: abs(x[0] - ts_signal_ms))
+            price_at_signal = closest_signal[4]  # close price
+
+            # Get price 5 minutes before signal
+            from datetime import timedelta
+            ts_5min_before = signal_timestamp - timedelta(minutes=5)
+            ts_5min_before_ms = int(ts_5min_before.timestamp() * 1000)
+
+            ohlcv_before = await exchange_manager.exchange.fetch_ohlcv(
+                exchange_symbol,
+                timeframe='1m',
+                since=ts_5min_before_ms - (5 * 60 * 1000),  # 5 min window
+                limit=10
+            )
+
+            if not ohlcv_before:
+                return None, None
+
+            # Find closest candle to 5min before time
+            closest_before = min(ohlcv_before, key=lambda x: abs(x[0] - ts_5min_before_ms))
+            price_5min_before = closest_before[4]  # close price
+
+            return price_at_signal, price_5min_before
+
+        except Exception as e:
+            logger.debug(f"Could not fetch 5min-before price for {symbol}: {e}")
+            return None, None
+
     async def _get_open_positions(self) -> List[Dict]:
         """Get all open positions with details."""
 
@@ -508,7 +834,10 @@ class WaveSignalProcessor:
             'total_stats': {
                 'duplicates_filtered': self.total_duplicates_filtered,
                 'buffer_replacements': self.total_buffer_replacements,
-                'waves_processed': len(self.wave_stats)
+                'waves_processed': len(self.wave_stats),
+                'filtered_low_oi': self.total_filtered_low_oi,
+                'filtered_low_volume': self.total_filtered_low_volume,
+                'filtered_price_change': self.total_filtered_price_change
             },
             'recent_stats': {
                 'avg_duplicates_per_wave': avg_duplicates,
@@ -523,4 +852,7 @@ class WaveSignalProcessor:
         self.wave_stats.clear()
         self.total_duplicates_filtered = 0
         self.total_buffer_replacements = 0
+        self.total_filtered_low_oi = 0
+        self.total_filtered_low_volume = 0
+        self.total_filtered_price_change = 0
         logger.info("Wave processor statistics reset")
