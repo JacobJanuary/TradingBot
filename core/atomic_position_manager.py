@@ -221,11 +221,14 @@ class AtomicPositionManager:
         Raises:
             AtomicPositionError if unable to verify after timeout
         """
+        # FIX RC#1: Изменен приоритет verification sources
+        # Order Status теперь ПРИОРИТЕТ 1 (самый надежный - ордер УЖЕ исполнен)
         logger.info(
             f"🔍 Multi-source position verification for {symbol}\n"
             f"  Expected quantity: {expected_quantity}\n"
             f"  Timeout: {timeout}s\n"
-            f"  Order ID: {entry_order.id}"
+            f"  Order ID: {entry_order.id}\n"
+            f"  Priority: 1=OrderStatus, 2=WebSocket, 3=RestAPI"
         )
 
         start_time = asyncio.get_event_loop().time()
@@ -233,9 +236,9 @@ class AtomicPositionManager:
 
         # Track which sources we've tried
         sources_tried = {
-            'websocket': False,
-            'order_status': False,
-            'rest_api': False
+            'order_status': False,  # ПРИОРИТЕТ 1 (БЫЛО 2)
+            'websocket': False,     # ПРИОРИТЕТ 2 (БЫЛО 1)
+            'rest_api': False       # ПРИОРИТЕТ 3 (БЕЗ ИЗМЕНЕНИЙ)
         }
 
         while (asyncio.get_event_loop().time() - start_time) < timeout:
@@ -247,50 +250,15 @@ class AtomicPositionManager:
             )
 
             # ============================================================
-            # SOURCE 1: WebSocket position updates (PRIORITY 1)
-            # ============================================================
-            if self.position_manager and hasattr(self.position_manager, 'get_cached_position') and not sources_tried['websocket']:
-                try:
-                    # Check if position_manager has received WS update
-                    ws_position = self.position_manager.get_cached_position(symbol, exchange)
-
-                    if ws_position and float(ws_position.get('quantity', 0)) > 0:
-                        quantity = float(ws_position.get('quantity', 0))
-                        logger.info(
-                            f"✅ [SOURCE 1/3] Position verified via WEBSOCKET:\n"
-                            f"  Symbol: {symbol}\n"
-                            f"  Quantity: {quantity}\n"
-                            f"  Expected: {expected_quantity}\n"
-                            f"  Match: {'YES ✅' if abs(quantity - expected_quantity) < 0.01 else 'NO ⚠️'}\n"
-                            f"  Time: {elapsed:.2f}s"
-                        )
-
-                        # Quantity match check (allow 0.01 tolerance for floating point)
-                        if abs(quantity - expected_quantity) > 0.01:
-                            logger.warning(
-                                f"⚠️ WebSocket quantity mismatch! "
-                                f"Expected {expected_quantity}, got {quantity}"
-                            )
-                            # Don't return False - might be partial fill, check other sources
-                        else:
-                            return True  # Perfect match!
-
-                    sources_tried['websocket'] = True
-
-                except AttributeError as e:
-                    logger.debug(f"position_manager doesn't support get_cached_position: {e}")
-                    sources_tried['websocket'] = True
-                except Exception as e:
-                    logger.debug(f"WebSocket check failed: {e}")
-                    sources_tried['websocket'] = True
-
-            # ============================================================
-            # SOURCE 2: Order filled status (PRIORITY 2)
+            # SOURCE 1 (PRIORITY 1): Order filled status
+            # САМЫЙ НАДЕЖНЫЙ - ордер УЖЕ ИСПОЛНЕН в exchange
             # ============================================================
             if not sources_tried['order_status']:
                 try:
+                    logger.debug(f"🔍 [SOURCE 1/3] Checking order status for {entry_order.id}")
+
                     # Refetch order to get latest status
-                    # Small delay first (order status updates faster than positions)
+                    # Small delay first only on first attempt
                     if attempt == 1:
                         await asyncio.sleep(0.5)
 
@@ -300,44 +268,96 @@ class AtomicPositionManager:
                         filled = float(order_status.get('filled', 0))
                         status = order_status.get('status', '')
 
-                        logger.info(
-                            f"🔍 [SOURCE 2/3] Order status check:\n"
-                            f"  Order ID: {entry_order.id}\n"
-                            f"  Status: {status}\n"
-                            f"  Filled: {filled} / {order_status.get('amount', 0)}\n"
-                            f"  Time: {elapsed:.2f}s"
+                        logger.debug(
+                            f"📊 Order status: id={entry_order.id}, status={status}, filled={filled}"
                         )
 
                         if filled > 0:
                             logger.info(
-                                f"✅ [SOURCE 2/3] Position verified via ORDER STATUS:\n"
+                                f"✅ [SOURCE 1] Order status CONFIRMED position exists!\n"
+                                f"  Order ID: {entry_order.id}\n"
+                                f"  Status: {status}\n"
                                 f"  Filled: {filled}\n"
                                 f"  Expected: {expected_quantity}\n"
-                                f"  Match: {'YES ✅' if abs(filled - expected_quantity) < 0.01 else 'PARTIAL ⚠️'}"
+                                f"  Match: {'YES ✅' if abs(filled - expected_quantity) < 0.01 else 'PARTIAL ⚠️'}\n"
+                                f"  Verification time: {elapsed:.2f}s"
                             )
-                            return True
+                            return True  # SUCCESS!
 
                         elif status == 'closed' and filled == 0:
                             # Order closed but not filled = order FAILED
                             logger.error(
-                                f"❌ [SOURCE 2/3] Order FAILED verification:\n"
+                                f"❌ [SOURCE 1] Order FAILED verification:\n"
                                 f"  Status: closed\n"
                                 f"  Filled: 0\n"
                                 f"  This means order was rejected or cancelled!"
                             )
                             return False  # Confirmed: position does NOT exist
 
+                    # Помечаем source как tried только после проверки
                     sources_tried['order_status'] = True
 
                 except Exception as e:
-                    logger.debug(f"Order status check failed: {e}")
-                    # Don't mark as tried - will retry
+                    logger.debug(f"⚠️ [SOURCE 1] Order status check failed: {e}")
+                    # НЕ помечаем как tried - будем retry в следующей итерации
 
             # ============================================================
-            # SOURCE 3: REST API fetch_positions (PRIORITY 3 - FALLBACK)
+            # SOURCE 2 (PRIORITY 2): WebSocket position updates
+            # ВТОРИЧНЫЙ - может иметь delay в обновлении self.positions
+            # ============================================================
+            if self.position_manager and hasattr(self.position_manager, 'get_cached_position') and not sources_tried['websocket']:
+                try:
+                    logger.debug(f"🔍 [SOURCE 2/3] Checking WebSocket cache for {symbol}")
+
+                    ws_position = self.position_manager.get_cached_position(symbol, exchange)
+
+                    if ws_position:
+                        ws_quantity = float(ws_position.get('quantity', 0))
+                        ws_side = ws_position.get('side', '')
+
+                        logger.debug(
+                            f"📊 WebSocket position: symbol={symbol}, quantity={ws_quantity}, side={ws_side}"
+                        )
+
+                        if ws_quantity > 0:
+                            # Проверяем соответствие quantity
+                            quantity_diff = abs(ws_quantity - expected_quantity)
+
+                            if quantity_diff <= 0.01:  # Допускаем погрешность 0.01
+                                logger.info(
+                                    f"✅ [SOURCE 2] WebSocket CONFIRMED position exists!\n"
+                                    f"  Symbol: {symbol}\n"
+                                    f"  Quantity: {ws_quantity} (expected: {expected_quantity})\n"
+                                    f"  Side: {ws_side}\n"
+                                    f"  Verification time: {elapsed:.2f}s"
+                                )
+                                return True  # SUCCESS!
+                            else:
+                                logger.warning(
+                                    f"⚠️ [SOURCE 2] WebSocket quantity mismatch!\n"
+                                    f"  Expected: {expected_quantity}\n"
+                                    f"  Got: {ws_quantity}\n"
+                                    f"  Difference: {quantity_diff}"
+                                )
+
+                    # Помечаем source как tried
+                    sources_tried['websocket'] = True
+
+                except AttributeError as e:
+                    logger.debug(f"⚠️ [SOURCE 2] WebSocket not available: {e}")
+                    sources_tried['websocket'] = True
+                except Exception as e:
+                    logger.debug(f"⚠️ [SOURCE 2] WebSocket check failed: {e}")
+                    sources_tried['websocket'] = True
+
+            # ============================================================
+            # SOURCE 3 (PRIORITY 3): REST API fetch_positions
+            # FALLBACK - может иметь cache delay
             # ============================================================
             if not sources_tried['rest_api'] or attempt % 3 == 0:  # Retry every 3 attempts
                 try:
+                    logger.debug(f"🔍 [SOURCE 3/3] Checking REST API positions for {symbol}")
+
                     # Fetch positions from REST API
                     if exchange == 'bybit':
                         positions = await exchange_instance.fetch_positions(
@@ -352,18 +372,19 @@ class AtomicPositionManager:
                         if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
                             contracts = float(pos.get('contracts', 0))
                             logger.info(
-                                f"✅ [SOURCE 3/3] Position verified via REST API:\n"
+                                f"✅ [SOURCE 3] REST API CONFIRMED position exists!\n"
+                                f"  Symbol: {symbol}\n"
                                 f"  Contracts: {contracts}\n"
                                 f"  Expected: {expected_quantity}\n"
                                 f"  Match: {'YES ✅' if abs(contracts - expected_quantity) < 0.01 else 'NO ⚠️'}\n"
-                                f"  Time: {elapsed:.2f}s"
+                                f"  Verification time: {elapsed:.2f}s"
                             )
                             return True
 
                     sources_tried['rest_api'] = True
 
                 except Exception as e:
-                    logger.debug(f"REST API check failed: {e}")
+                    logger.debug(f"⚠️ [SOURCE 3] REST API check failed: {e}")
                     # Don't mark as tried - will retry
 
             # No source confirmed position yet - wait before retry
@@ -539,36 +560,64 @@ class AtomicPositionManager:
                 # Fetch order to get complete data including side, status, filled, avgPrice
                 if raw_order and raw_order.id:
                     order_id = raw_order.id
-                    try:
-                        # Wait for market order to execute
-                        # Bybit needs longer wait than Binance due to API propagation delay
-                        wait_time = 0.5 if exchange == 'bybit' else 0.1
-                        await asyncio.sleep(wait_time)
 
-                        # Fetch complete order data
-                        fetched_order = await exchange_instance.fetch_order(order_id, symbol)
+                    # FIX RC#2: Retry logic для fetch_order с exponential backoff
+                    # Bybit API v5 имеет propagation delay - 0.5s недостаточно
+                    max_retries = 5
+                    retry_delay = 0.5 if exchange == 'bybit' else 0.1
 
-                        if fetched_order:
-                            logger.info(
-                                f"✅ Fetched {exchange} order data: "
-                                f"id={order_id}, "
-                                f"side={fetched_order.side}, "
-                                f"status={fetched_order.status}, "
-                                f"filled={fetched_order.filled}/{fetched_order.amount}, "
-                                f"avgPrice={fetched_order.price}"
+                    fetched_order = None
+
+                    for attempt in range(1, max_retries + 1):
+                        try:
+                            # Wait before fetch attempt
+                            await asyncio.sleep(retry_delay)
+
+                            # Attempt to fetch complete order data
+                            fetched_order = await exchange_instance.fetch_order(order_id, symbol)
+
+                            if fetched_order:
+                                logger.info(
+                                    f"✅ Fetched {exchange} order on attempt {attempt}/{max_retries}: "
+                                    f"id={order_id}, "
+                                    f"side={fetched_order.side}, "
+                                    f"status={fetched_order.status}, "
+                                    f"filled={fetched_order.filled}/{fetched_order.amount}, "
+                                    f"avgPrice={fetched_order.price}"
+                                )
+                                raw_order = fetched_order
+                                break  # Success - exit retry loop
+                            else:
+                                logger.warning(
+                                    f"⚠️ Attempt {attempt}/{max_retries}: fetch_order returned None for {order_id}"
+                                )
+
+                                # Увеличиваем delay для следующей попытки (exponential backoff)
+                                if attempt < max_retries:
+                                    retry_delay *= 1.5  # 0.5s → 0.75s → 1.12s → 1.69s → 2.53s
+
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ Attempt {attempt}/{max_retries}: fetch_order failed with error: {e}"
                             )
 
-                            # Use fetched order data (has correct status and avgPrice)
-                            raw_order = fetched_order
-                        else:
-                            logger.warning(f"⚠️ Fetch order returned None for {order_id}")
+                            # Увеличиваем delay для следующей попытки
+                            if attempt < max_retries:
+                                retry_delay *= 1.5
 
-                    except Exception as e:
-                        logger.warning(
-                            f"⚠️ Failed to fetch order {order_id} status, "
-                            f"using create response: {e}"
+                    # После всех retries
+                    if not fetched_order:
+                        logger.error(
+                            f"❌ CRITICAL: fetch_order returned None after {max_retries} attempts for {order_id}!\n"
+                            f"  Exchange: {exchange}\n"
+                            f"  Symbol: {symbol}\n"
+                            f"  Total wait time: ~{sum([0.5 * (1.5 ** i) for i in range(max_retries)]):.2f}s\n"
+                            f"  Will attempt to use create_order response (may be incomplete).\n"
+                            f"  If this fails, position creation will rollback."
                         )
-                        # Fallback: use original create_order response
+                        # Используем минимальный create_order response
+                        # ExchangeResponseAdapter может выбросить ValueError если нет 'side'
+                        # Это ПРАВИЛЬНОЕ поведение - лучше rollback чем создать позицию с unknown side
 
                 # Normalize order response
                 entry_order = ExchangeResponseAdapter.normalize_order(raw_order, exchange)
