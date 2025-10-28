@@ -554,7 +554,15 @@ class AtomicPositionManager:
 
                 # Verify position actually exists
                 try:
-                    positions = await exchange_instance.fetch_positions([symbol])
+                    # CRITICAL FIX: Bybit V5 API requires category parameter
+                    if exchange == 'bybit':
+                        positions = await exchange_instance.fetch_positions(
+                            symbols=[symbol],
+                            params={'category': 'linear'}
+                        )
+                    else:
+                        positions = await exchange_instance.fetch_positions([symbol])
+
                     active_position = next(
                         (p for p in positions if p.get('contracts', 0) > 0 or p.get('size', 0) > 0),
                         None
