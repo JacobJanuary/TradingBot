@@ -268,22 +268,7 @@ class AtomicPositionManager:
                             f"using .env fallback: {trailing_callback_percent}%"
                         )
 
-                # Step 1: Создание записи позиции в состоянии PENDING_ENTRY
-                logger.info(f"📝 Creating position record for {symbol}")
-                position_data = {
-                    'symbol': symbol,
-                    'exchange': exchange,
-                    'side': 'long' if side.lower() == 'buy' else 'short',
-                    'quantity': quantity,
-                    'entry_price': entry_price,
-                    'trailing_activation_percent': trailing_activation_percent,
-                    'trailing_callback_percent': trailing_callback_percent
-                }
-
-                position_id = await self.repository.create_position(position_data)
-                logger.info(f"✅ Position record created: ID={position_id}")
-
-                # Step 2: Размещение entry ордера
+                # Step 1: Размещение entry ордера (MOVED UP - before position creation)
                 logger.info(f"📊 Placing entry order for {symbol}")
                 state = PositionState.ENTRY_PLACED
 
@@ -473,6 +458,25 @@ class AtomicPositionManager:
                         # Fallback to signal price
                         exec_price = entry_price
 
+                # Step 2: Создание записи позиции с REAL execution price
+                # Position created AFTER order execution to use real fill price
+                logger.info(f"📝 Creating position record for {symbol} with exec price ${exec_price:.8f}")
+                position_data = {
+                    'symbol': symbol,
+                    'exchange': exchange,
+                    'side': 'long' if side.lower() == 'buy' else 'short',
+                    'quantity': quantity,
+                    'entry_price': exec_price,  # ← FIXED: Use REAL execution price, not signal
+                    'current_price': exec_price,
+                    'status': state.value,
+                    'exchange_order_id': entry_order.id,
+                    'trailing_activation_percent': trailing_activation_percent,
+                    'trailing_callback_percent': trailing_callback_percent
+                }
+
+                position_id = await self.repository.create_position(position_data)
+                logger.info(f"✅ Position record created: ID={position_id} (entry=${exec_price:.8f})")
+
                 # CRITICAL FIX: Recalculate SL from REAL execution price
                 # Signal price may differ significantly from execution price
                 from utils.decimal_utils import calculate_stop_loss, to_decimal
@@ -485,21 +489,6 @@ class AtomicPositionManager:
                 )
 
                 logger.info(f"🛡️ SL calculated from exec_price ${exec_price}: ${stop_loss_price} ({stop_loss_percent}%)")
-
-                # CRITICAL FIX: Update BOTH entry_price and current_price with execution price
-                # entry_price should reflect ACTUAL fill price from exchange, not signal price
-                # This fixes PnL calculations and historical analysis
-                await self.repository.update_position(position_id, **{
-                    'entry_price': exec_price,      # ← NEW: Set actual execution price
-                    'current_price': exec_price,     # Keep existing behavior (will be updated by WebSocket)
-                    'status': state.value,
-                    'exchange_order_id': entry_order.id
-                })
-
-                logger.debug(
-                    f"📝 Updated position #{position_id} with execution price: ${exec_price:.8f} "
-                    f"(signal was ${entry_price:.8f})"
-                )
 
                 # Log entry order to database for audit trail
                 logger.info(f"🔍 About to log entry order for {symbol}")
