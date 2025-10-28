@@ -1069,7 +1069,13 @@ class Repository:
                 last_sl_update_time = EXCLUDED.last_sl_update_time,
                 last_updated_sl_price = EXCLUDED.last_updated_sl_price,
                 last_peak_save_time = EXCLUDED.last_peak_save_time,
-                last_saved_peak_price = EXCLUDED.last_saved_peak_price
+                last_saved_peak_price = EXCLUDED.last_saved_peak_price,
+                -- CRITICAL FIX: Update position-specific fields on conflict (prevents side mismatch)
+                entry_price = EXCLUDED.entry_price,
+                side = EXCLUDED.side,
+                quantity = EXCLUDED.quantity,
+                activation_percent = EXCLUDED.activation_percent,
+                callback_percent = EXCLUDED.callback_percent
         """
 
         try:
