@@ -369,6 +369,39 @@ class SmartTrailingStopManager:
             # END FIX #1
             # ============================================================
 
+            # ============================================================
+            # FIX #2: RESTORE ACTIVATION_PERCENT AND CALLBACK_PERCENT
+            # Bug: These were missing, causing callback_percent=0 and SL=highest_price
+            # See: docs/investigations/CRITICAL_TS_CALLBACK_ZERO_BUG_20251028.md
+            # ============================================================
+            # Read from TS state first
+            activation_percent = Decimal(str(state_data.get('activation_percent', 0)))
+            callback_percent = Decimal(str(state_data.get('callback_percent', 0)))
+
+            # If zeros in DB (bug), fallback to position table
+            if activation_percent == 0 or callback_percent == 0:
+                if position_data:
+                    # Use position data as fallback
+                    activation_percent = Decimal(str(position_data.get('trailing_activation_percent', 2.0)))
+                    callback_percent = Decimal(str(position_data.get('trailing_callback_percent', 0.5)))
+                    logger.warning(
+                        f"⚠️ {symbol}: TS state has zero activation/callback in DB, "
+                        f"using position data fallback: activation={activation_percent}%, callback={callback_percent}%"
+                    )
+                else:
+                    # No position data available, use config defaults
+                    activation_percent = self.config.activation_percent
+                    callback_percent = self.config.callback_percent
+                    logger.warning(
+                        f"⚠️ {symbol}: TS state has zero activation/callback in DB, "
+                        f"using config fallback: activation={activation_percent}%, callback={callback_percent}%"
+                    )
+            else:
+                logger.debug(
+                    f"✅ {symbol}: Restored trailing params from DB: "
+                    f"activation={activation_percent}%, callback={callback_percent}%"
+                )
+
             # Reconstruct TrailingStopInstance (side already validated)
             ts = TrailingStopInstance(
                 symbol=state_data['symbol'],
@@ -390,7 +423,10 @@ class SmartTrailingStopManager:
                 update_count=state_data.get('update_count', 0),
                 # CRITICAL FIX: Use normalized side_value (matches create_trailing_stop behavior)
                 side=side_value,
-                quantity=Decimal(str(state_data['quantity']))
+                quantity=Decimal(str(state_data['quantity'])),
+                # FIX #2: Add missing trailing parameters (were defaulting to 0!)
+                activation_percent=activation_percent,
+                callback_percent=callback_percent
             )
 
             # Restore rate limiting fields
