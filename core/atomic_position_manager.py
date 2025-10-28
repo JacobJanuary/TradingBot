@@ -189,6 +189,206 @@ class AtomicPositionManager:
             logger.error(f"❌ Failed to activate position #{position_id}: {e}")
             return False
 
+    async def _verify_position_exists_multi_source(
+        self,
+        exchange_instance,
+        symbol: str,
+        exchange: str,
+        entry_order: Any,
+        expected_quantity: float,
+        timeout: float = 10.0
+    ) -> bool:
+        """
+        Verify position exists using multiple data sources with retry logic.
+
+        Uses priority-based approach:
+        1. WebSocket position updates (if available) - FASTEST
+        2. Order filled status - RELIABLE
+        3. REST API fetch_positions - FALLBACK
+
+        Args:
+            exchange_instance: Exchange connection
+            symbol: Trading symbol
+            exchange: Exchange name
+            entry_order: The entry order that should have created position
+            expected_quantity: Expected position size
+            timeout: Max time to wait for verification (default 10s)
+
+        Returns:
+            True if position verified to exist
+            False if position confirmed NOT to exist (order failed)
+
+        Raises:
+            AtomicPositionError if unable to verify after timeout
+        """
+        logger.info(
+            f"🔍 Multi-source position verification for {symbol}\n"
+            f"  Expected quantity: {expected_quantity}\n"
+            f"  Timeout: {timeout}s\n"
+            f"  Order ID: {entry_order.id}"
+        )
+
+        start_time = asyncio.get_event_loop().time()
+        attempt = 0
+
+        # Track which sources we've tried
+        sources_tried = {
+            'websocket': False,
+            'order_status': False,
+            'rest_api': False
+        }
+
+        while (asyncio.get_event_loop().time() - start_time) < timeout:
+            attempt += 1
+            elapsed = asyncio.get_event_loop().time() - start_time
+            logger.debug(
+                f"Verification attempt {attempt} for {symbol} "
+                f"(elapsed: {elapsed:.1f}s / {timeout}s)"
+            )
+
+            # ============================================================
+            # SOURCE 1: WebSocket position updates (PRIORITY 1)
+            # ============================================================
+            if self.position_manager and hasattr(self.position_manager, 'get_cached_position') and not sources_tried['websocket']:
+                try:
+                    # Check if position_manager has received WS update
+                    ws_position = self.position_manager.get_cached_position(symbol, exchange)
+
+                    if ws_position and float(ws_position.get('quantity', 0)) > 0:
+                        quantity = float(ws_position.get('quantity', 0))
+                        logger.info(
+                            f"✅ [SOURCE 1/3] Position verified via WEBSOCKET:\n"
+                            f"  Symbol: {symbol}\n"
+                            f"  Quantity: {quantity}\n"
+                            f"  Expected: {expected_quantity}\n"
+                            f"  Match: {'YES ✅' if abs(quantity - expected_quantity) < 0.01 else 'NO ⚠️'}\n"
+                            f"  Time: {elapsed:.2f}s"
+                        )
+
+                        # Quantity match check (allow 0.01 tolerance for floating point)
+                        if abs(quantity - expected_quantity) > 0.01:
+                            logger.warning(
+                                f"⚠️ WebSocket quantity mismatch! "
+                                f"Expected {expected_quantity}, got {quantity}"
+                            )
+                            # Don't return False - might be partial fill, check other sources
+                        else:
+                            return True  # Perfect match!
+
+                    sources_tried['websocket'] = True
+
+                except AttributeError as e:
+                    logger.debug(f"position_manager doesn't support get_cached_position: {e}")
+                    sources_tried['websocket'] = True
+                except Exception as e:
+                    logger.debug(f"WebSocket check failed: {e}")
+                    sources_tried['websocket'] = True
+
+            # ============================================================
+            # SOURCE 2: Order filled status (PRIORITY 2)
+            # ============================================================
+            if not sources_tried['order_status']:
+                try:
+                    # Refetch order to get latest status
+                    # Small delay first (order status updates faster than positions)
+                    if attempt == 1:
+                        await asyncio.sleep(0.5)
+
+                    order_status = await exchange_instance.fetch_order(entry_order.id, symbol)
+
+                    if order_status:
+                        filled = float(order_status.get('filled', 0))
+                        status = order_status.get('status', '')
+
+                        logger.info(
+                            f"🔍 [SOURCE 2/3] Order status check:\n"
+                            f"  Order ID: {entry_order.id}\n"
+                            f"  Status: {status}\n"
+                            f"  Filled: {filled} / {order_status.get('amount', 0)}\n"
+                            f"  Time: {elapsed:.2f}s"
+                        )
+
+                        if filled > 0:
+                            logger.info(
+                                f"✅ [SOURCE 2/3] Position verified via ORDER STATUS:\n"
+                                f"  Filled: {filled}\n"
+                                f"  Expected: {expected_quantity}\n"
+                                f"  Match: {'YES ✅' if abs(filled - expected_quantity) < 0.01 else 'PARTIAL ⚠️'}"
+                            )
+                            return True
+
+                        elif status == 'closed' and filled == 0:
+                            # Order closed but not filled = order FAILED
+                            logger.error(
+                                f"❌ [SOURCE 2/3] Order FAILED verification:\n"
+                                f"  Status: closed\n"
+                                f"  Filled: 0\n"
+                                f"  This means order was rejected or cancelled!"
+                            )
+                            return False  # Confirmed: position does NOT exist
+
+                    sources_tried['order_status'] = True
+
+                except Exception as e:
+                    logger.debug(f"Order status check failed: {e}")
+                    # Don't mark as tried - will retry
+
+            # ============================================================
+            # SOURCE 3: REST API fetch_positions (PRIORITY 3 - FALLBACK)
+            # ============================================================
+            if not sources_tried['rest_api'] or attempt % 3 == 0:  # Retry every 3 attempts
+                try:
+                    # Fetch positions from REST API
+                    if exchange == 'bybit':
+                        positions = await exchange_instance.fetch_positions(
+                            symbols=[symbol],
+                            params={'category': 'linear'}
+                        )
+                    else:
+                        positions = await exchange_instance.fetch_positions([symbol])
+
+                    # Find our position
+                    for pos in positions:
+                        if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
+                            contracts = float(pos.get('contracts', 0))
+                            logger.info(
+                                f"✅ [SOURCE 3/3] Position verified via REST API:\n"
+                                f"  Contracts: {contracts}\n"
+                                f"  Expected: {expected_quantity}\n"
+                                f"  Match: {'YES ✅' if abs(contracts - expected_quantity) < 0.01 else 'NO ⚠️'}\n"
+                                f"  Time: {elapsed:.2f}s"
+                            )
+                            return True
+
+                    sources_tried['rest_api'] = True
+
+                except Exception as e:
+                    logger.debug(f"REST API check failed: {e}")
+                    # Don't mark as tried - will retry
+
+            # No source confirmed position yet - wait before retry
+            wait_time = min(0.5 * (1.5 ** attempt), 2.0)  # Exponential backoff: 0.5s, 0.75s, 1.12s, 1.69s, 2s...
+            await asyncio.sleep(wait_time)
+
+        # Timeout reached without verification
+        logger.critical(
+            f"❌ Multi-source verification TIMEOUT for {symbol}:\n"
+            f"  Duration: {timeout}s\n"
+            f"  Attempts: {attempt}\n"
+            f"  Sources tried:\n"
+            f"    - WebSocket: {sources_tried['websocket']}\n"
+            f"    - Order status: {sources_tried['order_status']}\n"
+            f"    - REST API: {sources_tried['rest_api']}\n"
+            f"  Order ID: {entry_order.id}\n"
+            f"  Expected quantity: {expected_quantity}"
+        )
+
+        raise AtomicPositionError(
+            f"Could not verify position for {symbol} after {timeout}s timeout using any source. "
+            f"Order ID: {entry_order.id}, Expected quantity: {expected_quantity}. "
+            f"This may indicate API issues or order rejection."
+        )
+
     async def open_position_atomic(
         self,
         signal_id: int,
@@ -301,14 +501,15 @@ class AtomicPositionManager:
                     params['newOrderRespType'] = 'FULL'
                     logger.debug(f"Setting newOrderRespType=FULL for Binance market order")
 
+                # FIX #1: Pre-register position BEFORE order execution (prevents race condition)
+                # WebSocket updates arrive instantly (<1ms), must register before order
+                if hasattr(self, 'position_manager') and self.position_manager:
+                    await self.position_manager.pre_register_position(symbol, exchange)
+                    logger.info(f"⚡ Pre-registered {symbol} for WebSocket tracking (BEFORE order)")
+
                 raw_order = await exchange_instance.create_market_order(
                     symbol, side, quantity, params=params if params else None
                 )
-
-                # Pre-register position for WebSocket updates (fix race condition)
-                if hasattr(self, 'position_manager') and self.position_manager:
-                    await self.position_manager.pre_register_position(symbol, exchange)
-                    logger.info(f"✅ Pre-registered {symbol} for immediate WebSocket tracking")
 
                 # Check if order was created
                 if raw_order is None:
@@ -332,22 +533,27 @@ class AtomicPositionManager:
                         logger.error(f"❌ Bybit order failed for {symbol}: retCode={ret_code}, {ret_msg}")
                         raise AtomicPositionError(f"Bybit order creation failed: {ret_msg}")
 
-                # CRITICAL FIX: For Binance with FULL response type,
-                # market orders return status='NEW' immediately before execution.
-                # Fetch order to get actual filled status and avgPrice.
-                if exchange == 'binance' and raw_order and raw_order.id:
+                # CRITICAL FIX: Market orders need fetch for full data
+                # - Binance: Returns status='NEW', need fetch for status='FILLED'
+                # - Bybit: Returns minimal response (only orderId), need fetch for all fields
+                # Fetch order to get complete data including side, status, filled, avgPrice
+                if raw_order and raw_order.id:
                     order_id = raw_order.id
                     try:
-                        # Brief wait for market order to execute
-                        await asyncio.sleep(0.1)
+                        # Wait for market order to execute
+                        # Bybit needs longer wait than Binance due to API propagation delay
+                        wait_time = 0.5 if exchange == 'bybit' else 0.1
+                        await asyncio.sleep(wait_time)
 
-                        # Fetch actual order status
+                        # Fetch complete order data
                         fetched_order = await exchange_instance.fetch_order(order_id, symbol)
 
                         if fetched_order:
                             logger.info(
-                                f"✅ Fetched Binance order status: "
-                                f"id={order_id}, status={fetched_order.status}, "
+                                f"✅ Fetched {exchange} order data: "
+                                f"id={order_id}, "
+                                f"side={fetched_order.side}, "
+                                f"status={fetched_order.status}, "
                                 f"filled={fetched_order.filled}/{fetched_order.amount}, "
                                 f"avgPrice={fetched_order.price}"
                             )
@@ -536,45 +742,36 @@ class AtomicPositionManager:
                 except Exception as e:
                     logger.error(f"❌ Failed to log entry trade to DB: {e}")
 
-                # FIX: Verify position exists on exchange before SL placement
-                # Add 3s delay for order settlement (increased from 1s - Error #2 fix)
-                logger.debug(f"Waiting 3s for position settlement on {exchange}...")
-                await asyncio.sleep(3.0)
-
-                # Verify position actually exists
+                # Step 2.5: Multi-source position verification
                 try:
-                    # CRITICAL FIX: Bybit V5 API requires category parameter
-                    if exchange == 'bybit':
-                        positions = await exchange_instance.fetch_positions(
-                            symbols=[symbol],
-                            params={'category': 'linear'}
-                        )
-                    else:
-                        positions = await exchange_instance.fetch_positions([symbol])
+                    logger.info(f"🔍 Verifying position exists for {symbol}...")
 
-                    active_position = next(
-                        (p for p in positions if p.get('contracts', 0) > 0 or p.get('size', 0) > 0),
-                        None
+                    position_exists = await self._verify_position_exists_multi_source(
+                        exchange_instance=exchange_instance,
+                        symbol=symbol,
+                        exchange=exchange,
+                        entry_order=entry_order,
+                        expected_quantity=quantity,
+                        timeout=10.0  # 10 second timeout (was 3s wait before)
                     )
 
-                    if not active_position:
-                        logger.error(
-                            f"❌ Position not found for {symbol} after order. "
-                            f"Order status: {entry_order.status}, filled: {entry_order.filled}"
-                        )
+                    if not position_exists:
+                        # Confirmed: position does NOT exist (order failed/rejected)
                         raise AtomicPositionError(
-                            f"Position not found after order - order may have failed. "
-                            f"Order status: {entry_order.status}"
+                            f"Position verification failed for {symbol}. "
+                            f"Order {entry_order.id} appears to have been rejected or cancelled. "
+                            f"Cannot proceed with SL placement."
                         )
 
-                    logger.debug(f"✅ Position verified for {symbol}: {active_position.get('contracts', 0)} contracts")
+                    logger.info(f"✅ Position verified for {symbol}")
 
+                except AtomicPositionError:
+                    # Re-raise atomic errors (position verification failed)
+                    raise
                 except Exception as e:
-                    # If position verification fails, log warning but continue
-                    # (exchange might have different position reporting)
-                    if isinstance(e, AtomicPositionError):
-                        raise  # Re-raise our own errors
-                    logger.warning(f"⚠️ Could not verify position for {symbol}: {e}")
+                    # Unexpected error during verification
+                    logger.error(f"❌ Unexpected error during position verification: {e}")
+                    raise AtomicPositionError(f"Position verification error: {e}")
 
                 # Step 3: Размещение stop-loss с retry
                 logger.info(f"🛡️ Placing stop-loss for {symbol} at {stop_loss_price}")
@@ -775,12 +972,141 @@ class AtomicPositionManager:
                                 await asyncio.sleep(1.0)  # Poll every 1s (increased from 0.5s - Error #2 fix)
 
                         if our_position:
-                            # Закрываем market ордером
-                            close_side = 'sell' if entry_order.side == 'buy' else 'buy'
+                            # CRITICAL FIX: Validate entry_order.side before calculating close_side
+                            # entry_order.side should ALWAYS be 'buy' or 'sell' (enforced by FIX #1.2)
+                            # But defensive check in case it somehow becomes invalid
+
+                            if entry_order.side not in ('buy', 'sell'):
+                                logger.critical(
+                                    f"❌ CRITICAL: entry_order.side is INVALID: '{entry_order.side}' for {symbol}!\n"
+                                    f"  This should NEVER happen (normalize_order should fail-fast).\n"
+                                    f"  Cannot calculate close_side safely.\n"
+                                    f"  Will use position.side from exchange as source of truth."
+                                )
+
+                                # FALLBACK: Use position side from exchange (most reliable source)
+                                position_side = our_position.get('side', '').lower()
+
+                                if position_side == 'long':
+                                    close_side = 'sell'
+                                    logger.critical(f"✅ Using position.side='long' → close_side='sell'")
+                                elif position_side == 'short':
+                                    close_side = 'buy'
+                                    logger.critical(f"✅ Using position.side='short' → close_side='buy'")
+                                else:
+                                    # Even position.side is invalid - this is catastrophic!
+                                    logger.critical(
+                                        f"❌ CATASTROPHIC: Both entry_order.side and position.side are invalid!\n"
+                                        f"  entry_order.side: '{entry_order.side}'\n"
+                                        f"  position.side: '{position_side}'\n"
+                                        f"  Cannot determine correct close_side.\n"
+                                        f"  ABORTING ROLLBACK - position will remain open without SL!"
+                                    )
+                                    raise AtomicPositionError(
+                                        f"Cannot rollback {symbol}: Both entry_order.side ('{entry_order.side}') "
+                                        f"and position.side ('{position_side}') are invalid. "
+                                        f"Cannot determine correct close direction!"
+                                    )
+                            else:
+                                # Normal case: entry_order.side is valid
+                                close_side = 'sell' if entry_order.side == 'buy' else 'buy'
+
+                            # Log intended close order for audit
+                            logger.critical(
+                                f"📤 Rollback: Creating close order for {symbol}:\n"
+                                f"  entry_order.side: '{entry_order.side}'\n"
+                                f"  position.side: '{our_position.get('side')}'\n"
+                                f"  close_side: '{close_side}'\n"
+                                f"  quantity: {quantity}"
+                            )
+
+                            # Create close order
                             close_order = await exchange_instance.create_market_order(
                                 symbol, close_side, quantity
                             )
                             logger.info(f"✅ Emergency close executed: {close_order.id}")
+
+                            # CRITICAL FIX: Verify position was actually closed
+                            logger.info(f"🔍 Verifying {symbol} position was closed by rollback...")
+
+                            # Small delay for order execution
+                            await asyncio.sleep(1.0)
+
+                            # Multi-attempt verification (position should be 0 or not found)
+                            verification_successful = False
+                            max_verification_attempts = 10
+
+                            for verify_attempt in range(max_verification_attempts):
+                                try:
+                                    # Check all available sources
+
+                                    # Source 1: WebSocket
+                                    if self.position_manager and hasattr(self.position_manager, 'get_cached_position'):
+                                        try:
+                                            ws_position = self.position_manager.get_cached_position(symbol, exchange)
+                                            if not ws_position or float(ws_position.get('quantity', 0)) == 0:
+                                                logger.info(
+                                                    f"✅ [WebSocket] Confirmed {symbol} position closed "
+                                                    f"(attempt {verify_attempt + 1})"
+                                                )
+                                                verification_successful = True
+                                                break
+                                        except Exception as e:
+                                            logger.debug(f"WebSocket check failed: {e}")
+
+                                    # Source 2: REST API
+                                    if exchange == 'bybit':
+                                        positions = await exchange_instance.fetch_positions(
+                                            symbols=[symbol],
+                                            params={'category': 'linear'}
+                                        )
+                                    else:
+                                        positions = await exchange_instance.fetch_positions([symbol])
+
+                                    # Check if position still exists
+                                    position_found = False
+                                    for pos in positions:
+                                        if pos['symbol'] == symbol or pos.get('info', {}).get('symbol') == symbol.replace('/', ''):
+                                            contracts = float(pos.get('contracts', 0))
+                                            if contracts > 0:
+                                                position_found = True
+                                                logger.warning(
+                                                    f"⚠️ Position {symbol} still open: {contracts} contracts "
+                                                    f"(attempt {verify_attempt + 1}/{max_verification_attempts})"
+                                                )
+                                                break
+
+                                    if not position_found:
+                                        logger.info(
+                                            f"✅ [REST API] Confirmed {symbol} position closed "
+                                            f"(attempt {verify_attempt + 1})"
+                                        )
+                                        verification_successful = True
+                                        break
+
+                                    # Still open - wait before retry
+                                    if verify_attempt < max_verification_attempts - 1:
+                                        await asyncio.sleep(1.0)
+
+                                except Exception as e:
+                                    logger.error(f"Error verifying position closure: {e}")
+                                    if verify_attempt < max_verification_attempts - 1:
+                                        await asyncio.sleep(1.0)
+
+                            # Check verification result
+                            if verification_successful:
+                                logger.info(f"✅ VERIFIED: {symbol} position successfully closed by rollback")
+                            else:
+                                logger.critical(
+                                    f"❌ CRITICAL: Could not verify {symbol} position was closed after rollback!\n"
+                                    f"  Close order ID: {close_order.id}\n"
+                                    f"  Verification attempts: {max_verification_attempts}\n"
+                                    f"  Position may still be open on exchange!\n"
+                                    f"  ⚠️ POTENTIAL ORPHANED POSITION - MANUAL VERIFICATION REQUIRED!"
+                                )
+
+                                # TODO: Send critical alert to administrator
+                                # This is a serious issue that needs immediate attention
                         else:
                             logger.critical(f"❌ Position {symbol} not found after {max_attempts} attempts!")
                             logger.critical(f"⚠️ ALERT: Open position without SL may exist on exchange!")

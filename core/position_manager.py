@@ -1712,6 +1712,60 @@ class PositionManager:
             )
             logger.info(f"⚡ Pre-registered {symbol} for WebSocket updates")
 
+    def get_cached_position(self, symbol: str, exchange: str) -> Optional[Dict]:
+        """
+        Get cached position data from WebSocket updates.
+
+        Used by multi-source verification to check position existence
+        without hitting REST API.
+
+        Args:
+            symbol: Normalized symbol (e.g., 'BTCUSDT')
+            exchange: Exchange name (e.g., 'binance', 'bybit')
+
+        Returns:
+            Dict with position data if found, None otherwise
+
+        Example:
+            >>> pm.get_cached_position('BTCUSDT', 'binance')
+            {
+                'symbol': 'BTCUSDT',
+                'exchange': 'binance',
+                'quantity': 1.0,
+                'side': 'long',
+                'entry_price': 50000.0,
+                'current_price': 51000.0,
+                'unrealized_pnl': 1000.0,
+                'unrealized_pnl_percent': 2.0
+            }
+        """
+        if symbol not in self.positions:
+            return None
+
+        position = self.positions[symbol]
+
+        # Verify exchange matches (safety check)
+        if position.exchange != exchange:
+            logger.warning(
+                f"get_cached_position: Exchange mismatch for {symbol}. "
+                f"Requested: {exchange}, Cached: {position.exchange}"
+            )
+            return None
+
+        # Return position data as dict
+        return {
+            'symbol': symbol,
+            'exchange': position.exchange,
+            'quantity': position.quantity,
+            'side': position.side,
+            'entry_price': position.entry_price,
+            'current_price': position.current_price,
+            'unrealized_pnl': position.unrealized_pnl,
+            'unrealized_pnl_percent': position.unrealized_pnl_percent,
+            'position_id': position.id,
+            'opened_at': position.opened_at
+        }
+
     def _calculate_position_age_hours(self, position) -> float:
         """Calculate position age in hours for aged detection"""
         if not hasattr(position, 'opened_at') or not position.opened_at:
@@ -2162,16 +2216,36 @@ class PositionManager:
         async with self.position_update_locks[symbol]:
             position = self.positions[symbol]
 
-            # ⚠️ CRITICAL FIX: Skip all operations on pre-registered positions
+            # ⚠️ CRITICAL FIX: Update in-memory state for pre-registered positions
             # Pre-registered positions have id="pending" and are not yet in database.
             # They will be fully initialized after order fills and database insert completes.
             if position.id == "pending":
                 logger.debug(
-                    f"⏳ {symbol}: Skipping WebSocket update processing - "
-                    f"position is pre-registered (waiting for database creation)"
+                    f"⏳ {symbol}: Processing WebSocket update for pre-registered position"
                 )
-                # Still update the in-memory state from WebSocket
-                # but skip database operations and event logging
+
+                # FIX #2: UPDATE QUANTITY from WebSocket (CRITICAL for verification!)
+                if 'contracts' in data or 'quantity' in data:
+                    old_quantity = position.quantity
+                    position.quantity = float(data.get('contracts', data.get('quantity', position.quantity)))
+                    if position.quantity != old_quantity:
+                        logger.info(
+                            f"  → Quantity updated for pre-registered {symbol}: "
+                            f"{old_quantity} → {position.quantity}"
+                        )
+
+                # FIX #2: UPDATE CURRENT PRICE from WebSocket
+                if 'mark_price' in data:
+                    old_price = position.current_price
+                    position.current_price = float(data.get('mark_price', position.current_price))
+                    if position.current_price != old_price:
+                        logger.debug(
+                            f"  → Price updated for pre-registered {symbol}: "
+                            f"{old_price} → {position.current_price}"
+                        )
+
+                # Skip database operations and event logging (position not in DB yet)
+                # But in-memory state IS updated now
                 return
 
             # Update position state
