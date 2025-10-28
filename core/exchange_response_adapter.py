@@ -102,9 +102,25 @@ class ExchangeResponseAdapter:
         else:
             status = status_map.get(raw_status) or data.get('status') or 'unknown'
 
-        # Для market orders Bybit может не возвращать side
-        # Извлекаем из info или используем дефолт
-        side = data.get('side') or info.get('side', '').lower() or 'unknown'
+        # Extract side from response
+        side = data.get('side') or info.get('side', '').lower()
+
+        # CRITICAL FIX: Fail-fast if side is missing
+        # This should NEVER happen if fetch_order was called (FIX #1.1)
+        # If it does happen, it indicates a serious issue that must not be silently ignored
+        if not side or side == 'unknown':
+            logger.critical(
+                f"❌ CRITICAL: Bybit order missing required 'side' field!\n"
+                f"  Order ID: {order_id}\n"
+                f"  This indicates minimal response was used.\n"
+                f"  fetch_order should have been called but may have failed.\n"
+                f"  Cannot proceed with 'unknown' side - would cause incorrect rollback!"
+            )
+            raise ValueError(
+                f"Order {order_id} missing 'side' field. "
+                f"Minimal response detected - fetch_order likely failed or was not called. "
+                f"Cannot create position with unknown side (would break rollback logic)."
+            )
 
         # Amount может быть в qty или cumExecQty
         amount = (
@@ -170,6 +186,20 @@ class ExchangeResponseAdapter:
         status = status_map.get(raw_status) or data.get('status') or 'unknown'
 
         side = data.get('side', '').lower()
+
+        # CRITICAL FIX: Fail-fast if side is missing
+        # This should NEVER happen if fetch_order was called (FIX #1.1)
+        if not side:
+            logger.critical(
+                f"❌ CRITICAL: Binance order missing required 'side' field!\n"
+                f"  Order ID: {order_id}\n"
+                f"  Cannot proceed without side - would cause incorrect rollback!"
+            )
+            raise ValueError(
+                f"Order {order_id} missing 'side' field. "
+                f"Cannot create position with unknown side (would break rollback logic)."
+            )
+
         amount = data.get('amount') or float(info.get('origQty', 0))
         filled = data.get('filled') or float(info.get('executedQty', 0))
         price = data.get('price') or float(info.get('price', 0))
