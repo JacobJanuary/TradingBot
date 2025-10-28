@@ -494,7 +494,26 @@ class PositionManager:
                             current_price = ticker.get('last') if ticker else position.current_price
 
                             # Calculate stop loss price
-                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            # Get params from DB
+                            try:
+                                exchange_params = await self.repository.get_params_by_exchange_name(position.exchange)
+
+                                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                                    stop_loss_percent = to_decimal(exchange_params['stop_loss_filter'])
+                                    logger.debug(
+                                        f"📊 {position.symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
+                                    )
+                                else:
+                                    # Fallback
+                                    logger.warning(
+                                        f"⚠️  {position.symbol}: stop_loss_filter not in DB, using .env fallback"
+                                    )
+                                    stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+
+                            except Exception as e:
+                                logger.error(f"❌ {position.symbol}: Error loading params from DB: {e}. Using .env")
+                                stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+
                             stop_loss_price = calculate_stop_loss(
                                 to_decimal(position.entry_price), position.side, stop_loss_percent
                             )
@@ -789,7 +808,26 @@ class PositionManager:
 
                         # Check if stop loss needs to be set
                         if not position_state.has_stop_loss:
-                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            # Get params from DB
+                            try:
+                                exchange_params = await self.repository.get_params_by_exchange_name(exchange_name)
+
+                                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                                    stop_loss_percent = to_decimal(exchange_params['stop_loss_filter'])
+                                    logger.debug(
+                                        f"📊 {symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
+                                    )
+                                else:
+                                    # Fallback
+                                    logger.warning(
+                                        f"⚠️  {symbol}: stop_loss_filter not in DB, using .env fallback"
+                                    )
+                                    stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+
+                            except Exception as e:
+                                logger.error(f"❌ {symbol}: Error loading params from DB: {e}. Using .env")
+                                stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+
                             stop_loss_price = calculate_stop_loss(
                                 to_decimal(entry_price), side, stop_loss_percent
                             )
@@ -851,7 +889,26 @@ class PositionManager:
                                 # ВОПРОС: Закрыть позицию или оставить с Protection SL?
 
                         # Set stop loss for new position
-                        stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                        # Get params from DB
+                        try:
+                            exchange_params = await self.repository.get_params_by_exchange_name(exchange_name)
+
+                            if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                                stop_loss_percent = to_decimal(exchange_params['stop_loss_filter'])
+                                logger.debug(
+                                    f"📊 {symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
+                                )
+                            else:
+                                # Fallback
+                                logger.warning(
+                                    f"⚠️  {symbol}: stop_loss_filter not in DB, using .env fallback"
+                                )
+                                stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+
+                        except Exception as e:
+                            logger.error(f"❌ {symbol}: Error loading params from DB: {e}. Using .env")
+                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+
                         stop_loss_price = calculate_stop_loss(
                             to_decimal(entry_price), side, stop_loss_percent
                         )
@@ -1070,7 +1127,33 @@ class PositionManager:
                 position_side = request.side.lower()
                 order_side = request.side.lower()
 
-            stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+            # Get per-exchange params from monitoring.params
+            try:
+                exchange_params = await self.repository.get_params_by_exchange_name(request.exchange)
+
+                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                    # Use stop_loss_filter from DB
+                    db_stop_loss_percent = float(exchange_params['stop_loss_filter'])
+                    logger.debug(
+                        f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
+                    )
+                    stop_loss_percent = request.stop_loss_percent or db_stop_loss_percent
+                else:
+                    # Fallback to .env if DB params not available
+                    logger.warning(
+                        f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
+                        f"using .env fallback: {self.config.stop_loss_percent}%"
+                    )
+                    stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+
+            except Exception as e:
+                # Fallback to .env on error
+                logger.error(
+                    f"❌ Failed to load params from DB for {request.exchange}: {e}. "
+                    f"Using .env fallback: {self.config.stop_loss_percent}%"
+                )
+                stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+
             stop_loss_price = calculate_stop_loss(
                 to_decimal(request.entry_price), position_side, to_decimal(stop_loss_percent)
             )
@@ -1337,7 +1420,33 @@ class PositionManager:
             if position.id is not None and hasattr(position, 'has_stop_loss') and position.has_stop_loss:
                 logger.info(f"✅ Stop loss already set atomically for {symbol}")
             else:
-                stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+                # Get per-exchange params from monitoring.params
+                try:
+                    exchange_params = await self.repository.get_params_by_exchange_name(request.exchange)
+
+                    if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                        # Use stop_loss_filter from DB
+                        db_stop_loss_percent = float(exchange_params['stop_loss_filter'])
+                        logger.debug(
+                            f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
+                        )
+                        stop_loss_percent = request.stop_loss_percent or db_stop_loss_percent
+                    else:
+                        # Fallback to .env if DB params not available
+                        logger.warning(
+                            f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
+                            f"using .env fallback: {self.config.stop_loss_percent}%"
+                        )
+                        stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+
+                except Exception as e:
+                    # Fallback to .env on error
+                    logger.error(
+                        f"❌ Failed to load params from DB for {request.exchange}: {e}. "
+                        f"Using .env fallback: {self.config.stop_loss_percent}%"
+                    )
+                    stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+
                 stop_loss_price = calculate_stop_loss(
                     to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
                 )
@@ -3035,7 +3144,26 @@ class PositionManager:
                         # STEP 3: Choose base price for SL calculation
                         # If price drifted more than STOP_LOSS_PERCENT, use current price
                         # This prevents creating invalid SL that would be rejected by exchange
-                        stop_loss_percent = self.config.stop_loss_percent
+                        # Get params from DB
+                        try:
+                            exchange_params = await self.repository.get_params_by_exchange_name(position.exchange)
+
+                            if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                                stop_loss_percent = float(exchange_params['stop_loss_filter'])
+                                logger.debug(
+                                    f"📊 {position.symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
+                                )
+                            else:
+                                # Fallback
+                                logger.warning(
+                                    f"⚠️  {position.symbol}: stop_loss_filter not in DB, using .env fallback"
+                                )
+                                stop_loss_percent = self.config.stop_loss_percent
+
+                        except Exception as e:
+                            logger.error(f"❌ {position.symbol}: Error loading params from DB: {e}. Using .env")
+                            stop_loss_percent = self.config.stop_loss_percent
+
                         stop_loss_percent_decimal = float(stop_loss_percent) / 100  # Convert from percent to decimal (e.g. 2.0 -> 0.02)
 
                         if price_drift_pct > stop_loss_percent_decimal:

@@ -287,6 +287,32 @@ class Repository:
 
             return {row['exchange_id']: dict(row) for row in rows}
 
+    async def get_params_by_exchange_name(self, exchange_name: str) -> Optional[Dict]:
+        """
+        Get trading params for exchange by exchange name
+
+        Convenience wrapper around get_params() that handles exchange_name → exchange_id mapping.
+
+        Args:
+            exchange_name: Exchange name ('binance', 'bybit')
+
+        Returns:
+            Dict with params or None if not found
+
+        Example:
+            >>> params = await repo.get_params_by_exchange_name('binance')
+            >>> params['stop_loss_filter']
+            4.0
+        """
+        from utils.exchange_helpers import exchange_name_to_id
+
+        try:
+            exchange_id = exchange_name_to_id(exchange_name)
+            return await self.get_params(exchange_id=exchange_id)
+        except ValueError as e:
+            logger.error(f"Invalid exchange name '{exchange_name}': {e}")
+            return None
+
     # ============== Trade Operations ==============
 
     async def create_trade(self, trade_data: Dict) -> int:
