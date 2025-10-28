@@ -842,7 +842,9 @@ class PositionManager:
                             'exchange': exchange_name,
                             'side': side,
                             'quantity': quantity,
-                            'entry_price': entry_price
+                            'entry_price': entry_price,
+                            'trailing_activation_percent': float(self.config.trailing_activation_percent),
+                            'trailing_callback_percent': float(self.config.trailing_callback_percent)
                         })
 
                         # Create position state
@@ -1158,6 +1160,41 @@ class PositionManager:
                 to_decimal(request.entry_price), position_side, to_decimal(stop_loss_percent)
             )
 
+            # Get trailing params from monitoring.params
+            trailing_activation_percent = None
+            trailing_callback_percent = None
+
+            if exchange_params:
+                # Try to get trailing params from DB
+                if exchange_params.get('trailing_activation_filter') is not None:
+                    trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
+                    logger.debug(
+                        f"📊 Using trailing_activation_filter from DB for {request.exchange}: "
+                        f"{trailing_activation_percent}%"
+                    )
+
+                if exchange_params.get('trailing_distance_filter') is not None:
+                    trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
+                    logger.debug(
+                        f"📊 Using trailing_distance_filter from DB for {request.exchange}: "
+                        f"{trailing_callback_percent}%"
+                    )
+
+            # Fallback to .env if not in DB
+            if trailing_activation_percent is None:
+                trailing_activation_percent = float(self.config.trailing_activation_percent)
+                logger.warning(
+                    f"⚠️  trailing_activation_filter not in DB for {request.exchange}, "
+                    f"using .env fallback: {trailing_activation_percent}%"
+                )
+
+            if trailing_callback_percent is None:
+                trailing_callback_percent = float(self.config.trailing_callback_percent)
+                logger.warning(
+                    f"⚠️  trailing_distance_filter not in DB for {request.exchange}, "
+                    f"using .env fallback: {trailing_callback_percent}%"
+                )
+
             logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity}")
             # COSMETIC FIX: Show scientific notation for small numbers instead of 0.0000
             # For numbers < 0.0001, .4f rounds to 0.0000 which is confusing
@@ -1389,7 +1426,9 @@ class PositionManager:
                     'exchange': exchange_name,
                     'side': position.side,
                     'quantity': position.quantity,
-                    'entry_price': position.entry_price
+                    'entry_price': position.entry_price,
+                    'trailing_activation_percent': trailing_activation_percent,
+                    'trailing_callback_percent': trailing_callback_percent
                 })
                 logger.info(f"🔍 DEBUG: Position created with ID={position_id} for {symbol}")
 

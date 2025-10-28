@@ -412,8 +412,10 @@ class Repository:
         query = """
             INSERT INTO monitoring.positions (
                 symbol, exchange, side, quantity,
-                entry_price, status, has_trailing_stop
-            ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE)
+                entry_price, status, has_trailing_stop,
+                trailing_activation_percent,
+                trailing_callback_percent
+            ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE, $6, $7)
             RETURNING id
         """
 
@@ -454,7 +456,9 @@ class Repository:
                         exchange,
                         position_data['side'],
                         position_data['quantity'],
-                        position_data['entry_price']
+                        position_data['entry_price'],
+                        position_data.get('trailing_activation_percent'),
+                        position_data.get('trailing_callback_percent')
                     )
 
                     logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {symbol}")

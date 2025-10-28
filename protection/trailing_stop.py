@@ -97,6 +97,10 @@ class TrailingStopInstance:
     side: str = 'long'  # 'long' or 'short'
     quantity: Decimal = Decimal('0')
 
+    # Per-position trailing params (from monitoring.positions)
+    activation_percent: Decimal = Decimal('0')  # Saved from position on creation
+    callback_percent: Decimal = Decimal('0')    # Saved from position on creation
+
 
 class SmartTrailingStopManager:
     """
@@ -197,8 +201,8 @@ class SmartTrailingStopManager:
                 'current_stop_price': float(ts.current_stop_price) if ts.current_stop_price else None,
                 'stop_order_id': ts.stop_order_id,
                 'activation_price': float(ts.activation_price) if ts.activation_price else None,
-                'activation_percent': float(self.config.activation_percent),
-                'callback_percent': float(self.config.callback_percent),
+                'activation_percent': float(ts.activation_percent),
+                'callback_percent': float(ts.callback_percent),
                 'entry_price': float(ts.entry_price),
                 'side': ts.side,
                 'quantity': float(ts.quantity),
@@ -448,7 +452,8 @@ class SmartTrailingStopManager:
                                    side: str,
                                    entry_price: float,
                                    quantity: float,
-                                   initial_stop: Optional[float] = None) -> TrailingStopInstance:
+                                   initial_stop: Optional[float] = None,
+                                   position_params: Optional[Dict] = None) -> TrailingStopInstance:
         """
         Create new trailing stop instance
 
@@ -461,12 +466,25 @@ class SmartTrailingStopManager:
             entry_price: Entry price of position
             quantity: Position size
             initial_stop: Initial stop loss price (optional)
+            position_params: Per-position trailing params (optional, from monitoring.positions)
         """
         # STEP 1: Quick check if already exists (with lock)
         async with self.lock:
             if symbol in self.trailing_stops:
                 logger.warning(f"Trailing stop for {symbol} already exists")
                 return self.trailing_stops[symbol]
+
+        # STEP 1.5: Determine trailing params (per-position or config fallback)
+        if position_params and position_params.get('trailing_activation_percent') is not None:
+            # Use per-position params from monitoring.positions
+            activation_percent = Decimal(str(position_params['trailing_activation_percent']))
+            callback_percent = Decimal(str(position_params.get('trailing_callback_percent', self.config.callback_percent)))
+            logger.debug(f"📊 {symbol}: Using per-position trailing params: activation={activation_percent}%, callback={callback_percent}%")
+        else:
+            # Fallback to config
+            activation_percent = self.config.activation_percent
+            callback_percent = self.config.callback_percent
+            logger.debug(f"📊 {symbol}: Using config trailing params (fallback): activation={activation_percent}%, callback={callback_percent}%")
 
         # STEP 2: Create instance (NO LOCK - thread-safe, no shared state modified)
         ts = TrailingStopInstance(
@@ -476,7 +494,9 @@ class SmartTrailingStopManager:
             highest_price=Decimal(str(entry_price)) if side == 'long' else UNINITIALIZED_PRICE_HIGH,
             lowest_price=UNINITIALIZED_PRICE_HIGH if side == 'long' else Decimal(str(entry_price)),
             side=side.lower(),
-            quantity=Decimal(str(quantity))
+            quantity=Decimal(str(quantity)),
+            activation_percent=activation_percent,
+            callback_percent=callback_percent
         )
 
         # STEP 3: Set initial stop if provided (NO LOCK - exchange API call)
@@ -487,9 +507,9 @@ class SmartTrailingStopManager:
 
         # STEP 4: Calculate activation price (NO LOCK - pure computation)
         if side == 'long':
-            ts.activation_price = ts.entry_price * (1 + self.config.activation_percent / 100)
+            ts.activation_price = ts.entry_price * (1 + activation_percent / 100)
         else:
-            ts.activation_price = ts.entry_price * (1 - self.config.activation_percent / 100)
+            ts.activation_price = ts.entry_price * (1 - activation_percent / 100)
 
         # STEP 5: Log creation (NO LOCK - event queue is async/thread-safe)
         # FIX #5: Improved logging with side validation
@@ -511,8 +531,8 @@ class SmartTrailingStopManager:
                     'entry_price': float(entry_price),
                     'activation_price': float(ts.activation_price),
                     'initial_stop': float(initial_stop) if initial_stop else None,
-                    'activation_percent': float(self.config.activation_percent),
-                    'callback_percent': float(self.config.callback_percent)
+                    'activation_percent': float(activation_percent),
+                    'callback_percent': float(callback_percent)
                 },
                 symbol=symbol,
                 exchange=self.exchange_name,
@@ -921,9 +941,9 @@ class SmartTrailingStopManager:
 
                     if price_change_rate > self.config.momentum_threshold:
                         # Tighten stop on strong momentum
-                        return self.config.callback_percent * Decimal('0.7')
+                        return ts.callback_percent * Decimal('0.7')
 
-        return self.config.callback_percent
+        return ts.callback_percent
 
     def _calculate_profit_percent(self, ts: TrailingStopInstance) -> Decimal:
         """Calculate current profit percentage"""
