@@ -92,6 +92,45 @@ class TSActivationMonitor:
 
     async def get_ts_status(self):
         """Get current TS status"""
+        # Check if trailing_stops table exists
+        async with self.pool.acquire() as conn:
+            table_exists = await conn.fetchval("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = 'monitoring'
+                      AND table_name = 'trailing_stops'
+                )
+            """)
+
+        if not table_exists:
+            # If no trailing_stops table, get data from positions only
+            async with self.pool.acquire() as conn:
+                ts_data = await conn.fetch("""
+                    SELECT
+                        p.id as ts_id,
+                        p.symbol,
+                        p.exchange,
+                        p.side,
+                        'active' as state,
+                        p.entry_price,
+                        NULL as activation_price,
+                        NULL as ts_activation_percent,
+                        NULL as ts_callback_percent,
+                        NULL as current_stop_price,
+                        NULL as highest_price,
+                        NULL as lowest_price,
+                        p.id as position_id,
+                        p.quantity,
+                        p.trailing_activation_percent as position_activation_percent,
+                        p.trailing_callback_percent as position_callback_percent
+                    FROM monitoring.positions p
+                    WHERE p.status = 'active'
+                      AND p.has_trailing_stop = TRUE
+                    ORDER BY p.exchange, p.symbol
+                """)
+            return ts_data
+
+        # If table exists, get full TS data
         async with self.pool.acquire() as conn:
             ts_data = await conn.fetch("""
                 SELECT
@@ -154,7 +193,8 @@ class TSActivationMonitor:
             # From TS state (might be from config fallback)
             return f"⚠️  Config ({ts_activation}%)"
         else:
-            return "❓ Unknown"
+            # No params saved - legacy position
+            return "⚠️  Legacy (no params)"
 
     async def display_status(self, exchange_params):
         """Display current status"""
@@ -198,10 +238,21 @@ class TSActivationMonitor:
                 else:
                     current_price = ts['lowest_price'] or ts['entry_price']
 
+                # Calculate activation_price if not available (when using positions table only)
+                activation_price = ts['activation_price']
+                if activation_price is None and ts['position_activation_percent'] is not None:
+                    # Calculate from position params
+                    entry_price = Decimal(str(ts['entry_price']))
+                    activation_pct = Decimal(str(ts['position_activation_percent']))
+                    if ts['side'] == 'long':
+                        activation_price = float(entry_price * (1 + activation_pct / 100))
+                    else:
+                        activation_price = float(entry_price * (1 - activation_pct / 100))
+
                 # Calculate distance to activation
                 distance = self.calculate_distance_to_activation(
                     current_price,
-                    ts['activation_price'],
+                    activation_price,
                     ts['side']
                 )
 
@@ -229,14 +280,17 @@ class TSActivationMonitor:
                 # State indicator
                 state_icon = "⏳" if ts['state'] == 'waiting' else "✅"
 
+                # Use callback percent (from TS state or position)
+                callback_pct = ts['ts_callback_percent'] or ts['position_callback_percent'] or "N/A"
+
                 table_data.append([
                     ts['symbol'],
                     ts['side'].upper(),
                     f"{current_price:.8f}",
-                    f"{ts['activation_price']:.8f}" if ts['activation_price'] else "N/A",
+                    f"{activation_price:.8f}" if activation_price else "N/A",
                     distance_str,
                     param_source,
-                    f"{ts['ts_callback_percent']}%",
+                    f"{callback_pct}%" if callback_pct != "N/A" else "N/A",
                     f"{state_icon} {ts['state']}",
                     f"{ts['current_stop_price']:.8f}" if ts['current_stop_price'] else "N/A"
                 ])
@@ -251,6 +305,7 @@ class TSActivationMonitor:
         print("  ✅ DB (X%) - Activation % loaded from monitoring.params (CORRECT)")
         print("  📌 Position (X%) - Activation % saved in position (per-position params)")
         print("  ⚠️  Config (X%) - Activation % from .env fallback (SHOULD BE RARE!)")
+        print("  ⚠️  Legacy (no params) - Old position created before migration (uses .env)")
         print("\nPress Ctrl+C to exit")
 
     async def monitor_loop(self):
