@@ -673,6 +673,28 @@ class PositionManager:
 
             logger.info(f"🔄 Syncing positions from {exchange_name}...")
 
+            # Load trailing params from monitoring.params (PHASE 3 FIX)
+            exchange_params = None
+            trailing_activation_percent = None
+            trailing_callback_percent = None
+
+            try:
+                exchange_params = await self.repository.get_params_by_exchange_name(exchange_name)
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to load exchange params for {exchange_name}: {e}")
+
+            if exchange_params:
+                if exchange_params.get('trailing_activation_filter') is not None:
+                    trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
+                if exchange_params.get('trailing_distance_filter') is not None:
+                    trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
+
+            # Fallback to config if not in DB
+            if trailing_activation_percent is None:
+                trailing_activation_percent = float(self.config.trailing_activation_percent)
+            if trailing_callback_percent is None:
+                trailing_callback_percent = float(self.config.trailing_callback_percent)
+
             # Get positions from exchange
             positions = await exchange.fetch_positions()
             # CRITICAL FIX: fetch_positions() returns 'contracts' key, not 'quantity'
@@ -843,8 +865,8 @@ class PositionManager:
                             'side': side,
                             'quantity': quantity,
                             'entry_price': entry_price,
-                            'trailing_activation_percent': float(self.config.trailing_activation_percent),
-                            'trailing_callback_percent': float(self.config.trailing_callback_percent)
+                            'trailing_activation_percent': trailing_activation_percent,
+                            'trailing_callback_percent': trailing_callback_percent
                         })
 
                         # Create position state

@@ -226,6 +226,48 @@ class AtomicPositionManager:
 
         async with self.atomic_operation(operation_id):
             try:
+                # Step 0.5: Load trailing params from monitoring.params (PHASE 3)
+                exchange_params = None
+                trailing_activation_percent = None
+                trailing_callback_percent = None
+
+                try:
+                    exchange_params = await self.repository.get_params_by_exchange_name(exchange)
+                except Exception as e:
+                    logger.warning(f"⚠️  Failed to load exchange params for {exchange}: {e}")
+
+                if exchange_params:
+                    # Try to get trailing params from DB
+                    if exchange_params.get('trailing_activation_filter') is not None:
+                        trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
+                        logger.debug(
+                            f"📊 Using trailing_activation_filter from DB for {exchange}: "
+                            f"{trailing_activation_percent}%"
+                        )
+
+                    if exchange_params.get('trailing_distance_filter') is not None:
+                        trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
+                        logger.debug(
+                            f"📊 Using trailing_distance_filter from DB for {exchange}: "
+                            f"{trailing_callback_percent}%"
+                        )
+
+                # Fallback to config if not in DB
+                if self.config:
+                    if trailing_activation_percent is None:
+                        trailing_activation_percent = float(self.config.trading.trailing_activation_percent)
+                        logger.warning(
+                            f"⚠️  trailing_activation_filter not in DB for {exchange}, "
+                            f"using .env fallback: {trailing_activation_percent}%"
+                        )
+
+                    if trailing_callback_percent is None:
+                        trailing_callback_percent = float(self.config.trading.trailing_callback_percent)
+                        logger.warning(
+                            f"⚠️  trailing_distance_filter not in DB for {exchange}, "
+                            f"using .env fallback: {trailing_callback_percent}%"
+                        )
+
                 # Step 1: Создание записи позиции в состоянии PENDING_ENTRY
                 logger.info(f"📝 Creating position record for {symbol}")
                 position_data = {
@@ -233,7 +275,9 @@ class AtomicPositionManager:
                     'exchange': exchange,
                     'side': 'long' if side.lower() == 'buy' else 'short',
                     'quantity': quantity,
-                    'entry_price': entry_price
+                    'entry_price': entry_price,
+                    'trailing_activation_percent': trailing_activation_percent,
+                    'trailing_callback_percent': trailing_callback_percent
                 }
 
                 position_id = await self.repository.create_position(position_data)
