@@ -351,18 +351,41 @@ class ExchangeManager:
         Fetch open positions
         Returns standardized position format
 
+        CRITICAL FIX 2025-10-29: Convert symbols to exchange format (unified) before CCXT
+        Example: "DBRUSDT" (raw) → "DBR/USDT:USDT" (unified)
+        Without conversion, CCXT filter_by_array filters out positions!
+
         Args:
             symbols: List of symbols to fetch (optional)
             params: Additional parameters (e.g., {'category': 'linear'} for Bybit)
         """
+        # FIX: Convert raw symbols to exchange format (same pattern as set_leverage)
+        converted_symbols = None
+        if symbols:
+            converted_symbols = []
+            for symbol in symbols:
+                exchange_symbol = self.find_exchange_symbol(symbol)
+                if exchange_symbol:
+                    converted_symbols.append(exchange_symbol)
+                    logger.debug(
+                        f"Symbol conversion for fetch_positions: {symbol} → {exchange_symbol}"
+                    )
+                else:
+                    # Fallback: use original symbol if conversion fails
+                    converted_symbols.append(symbol)
+                    logger.warning(
+                        f"⚠️  Could not convert symbol {symbol} to exchange format, using as-is. "
+                        f"This may cause fetch_positions to return empty list!"
+                    )
+
         # CRITICAL FIX: Support params for Bybit category='linear'
         if params:
             positions = await self.rate_limiter.execute_request(
-                self.exchange.fetch_positions, symbols, params
+                self.exchange.fetch_positions, converted_symbols, params
             )
         else:
             positions = await self.rate_limiter.execute_request(
-                self.exchange.fetch_positions, symbols
+                self.exchange.fetch_positions, converted_symbols
             )
 
         # Standardize position format
