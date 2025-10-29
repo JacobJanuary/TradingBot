@@ -504,7 +504,7 @@ class WaveSignalProcessor:
                                 return True, reason
 
                 except Exception as e:
-                    logger.warning(f"Error applying new filters to {symbol}: {e}")
+                    logger.warning(f"Error applying new filters to {symbol}: {e}", exc_info=True)
                     # Don't filter on error - graceful degradation
 
             # All checks passed
