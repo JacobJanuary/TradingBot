@@ -382,6 +382,14 @@ class WaveSignalProcessor:
 
             if signal_timestamp_str and direction:
                 try:
+                    # CRITICAL FIX 2025-10-29: Ensure timestamp is string before calling .replace()
+                    # If signal['timestamp'] is already datetime object, convert to ISO string first
+                    if isinstance(signal_timestamp_str, datetime):
+                        signal_timestamp_str = signal_timestamp_str.isoformat()
+                    elif not isinstance(signal_timestamp_str, str):
+                        # Convert any other type (int, float, etc.) to string
+                        signal_timestamp_str = str(signal_timestamp_str)
+
                     # Parse timestamp
                     signal_timestamp = datetime.fromisoformat(signal_timestamp_str.replace('+00', '+00:00'))
 
