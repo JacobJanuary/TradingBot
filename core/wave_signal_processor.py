@@ -648,6 +648,25 @@ class WaveSignalProcessor:
             Open Interest in USDT or None if not available
         """
         try:
+            # FIX 2025-10-29: Bybit-specific handling
+            # CCXT fetch_open_interest() returns openInterestValue=None for Bybit
+            # Use ticker['info']['openInterest'] instead
+            if exchange_name.lower() == 'bybit':
+                try:
+                    ticker = await exchange_manager.fetch_ticker(symbol)
+                    if ticker and ticker.get('info'):
+                        oi_contracts = float(ticker['info'].get('openInterest', 0))
+                        if oi_contracts and current_price:
+                            oi_usd = oi_contracts * current_price
+                            logger.debug(
+                                f"Bybit OI: {symbol} - contracts: {oi_contracts:,.2f}, "
+                                f"price: ${current_price:,.2f}, USD: ${oi_usd:,.0f}"
+                            )
+                            return oi_usd
+                except Exception as e:
+                    logger.debug(f"Bybit OI fetch failed for {symbol}: {e}")
+                    # Fall through to generic methods below
+                    pass
             # Method 1-3: Try fetch_open_interest
             try:
                 oi_data = await exchange_manager.exchange.fetch_open_interest(
