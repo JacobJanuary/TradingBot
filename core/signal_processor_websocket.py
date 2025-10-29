@@ -930,70 +930,96 @@ class WebSocketSignalProcessor:
                 f"(target={max_trades}, buffer={buffer_size}, params_source={exchange_params.get('source')})"
             )
 
-            # Step 2a: Select top (max_trades + buffer_fixed) signals
-            signals_to_process = exchange_signals[:buffer_size]
+            # Step 2a-c: Iterative processing until target reached or signals exhausted
+            successful_signals = []
+            all_failed_signals = []
+            all_skipped_signals = []
+            processed_count = 0
+            iteration = 0
+            max_iterations = 10  # Safety limit
 
-            logger.debug(
-                f"{exchange_name}: Selected {len(signals_to_process)}/{len(exchange_signals)} signals for validation"
-            )
+            # Iterative loop to process signals until target reached
+            while len(successful_signals) < max_trades and processed_count < len(exchange_signals):
+                iteration += 1
 
-            # Step 2b: Validate signals (duplicate check, etc.)
-            result = await self.wave_processor.process_wave_signals(
-                signals=signals_to_process,
-                wave_timestamp=wave_timestamp
-            )
+                # Safety check: max iterations
+                if iteration > max_iterations:
+                    logger.warning(
+                        f"⚠️ {exchange_name}: Max iterations ({max_iterations}) reached, stopping"
+                    )
+                    break
 
-            successful_signals = result.get('successful', [])
-            failed_signals = result.get('failed', [])
-            skipped_signals = result.get('skipped', [])
-
-            logger.info(
-                f"{exchange_name}: Validation complete - "
-                f"{len(successful_signals)} successful, {len(failed_signals)} failed, "
-                f"{len(skipped_signals)} skipped (duplicates)"
-            )
-
-            # Step 2c: Top-up if needed (same logic as current implementation)
-            topped_up_count = 0
-
-            if len(successful_signals) < max_trades and len(exchange_signals) > buffer_size:
+                # Calculate batch size for this iteration
                 remaining_needed = max_trades - len(successful_signals)
-
-                logger.info(
-                    f"⚠️ {exchange_name}: Only {len(successful_signals)}/{max_trades} successful, "
-                    f"attempting to top-up {remaining_needed} more signals"
+                batch_size_iteration = min(
+                    remaining_needed + buffer_size,  # Target + buffer
+                    len(exchange_signals) - processed_count  # Remaining signals
                 )
 
-                # Calculate extra size with margin (same as current: *1.5)
-                extra_size = int(remaining_needed * 1.5)
+                # Get next batch
+                batch_start = processed_count
+                batch_end = processed_count + batch_size_iteration
+                batch = exchange_signals[batch_start:batch_end]
 
-                # Get next batch from remaining signals
-                next_batch = exchange_signals[buffer_size : buffer_size + extra_size]
+                if not batch:
+                    logger.debug(f"{exchange_name}: No more signals to process")
+                    break
 
-                if next_batch:
-                    logger.debug(
-                        f"{exchange_name}: Processing {len(next_batch)} extra signals for top-up"
-                    )
+                logger.info(
+                    f"🔄 {exchange_name}: Iteration {iteration}: Processing {len(batch)} signals "
+                    f"(successful: {len(successful_signals)}/{max_trades}, "
+                    f"total processed: {processed_count}/{len(exchange_signals)})"
+                )
 
-                    extra_result = await self.wave_processor.process_wave_signals(
-                        next_batch,
-                        wave_timestamp
-                    )
+                # Process batch
+                result = await self.wave_processor.process_wave_signals(
+                    signals=batch,
+                    wave_timestamp=wave_timestamp
+                )
 
-                    extra_successful = extra_result.get('successful', [])
+                # Accumulate results
+                batch_successful = result.get('successful', [])
+                batch_failed = result.get('failed', [])
+                batch_skipped = result.get('skipped', [])
 
-                    # Add to successful (all of them, execution will stop at target)
-                    successful_signals.extend(extra_successful)
-                    topped_up_count = len(extra_successful)
+                successful_signals.extend(batch_successful)
+                all_failed_signals.extend(batch_failed)
+                all_skipped_signals.extend(batch_skipped)
+                processed_count += len(batch)
 
-                    logger.info(
-                        f"✅ {exchange_name}: Topped up {topped_up_count} signals, "
-                        f"total now: {len(successful_signals)} for execution"
-                    )
-                else:
+                logger.info(
+                    f"✅ {exchange_name}: Iteration {iteration} complete: "
+                    f"+{len(batch_successful)} successful, "
+                    f"+{len(batch_skipped)} skipped, "
+                    f"+{len(batch_failed)} failed"
+                )
+
+                # Check for insufficient funds - stop processing this exchange
+                if result.get('insufficient_funds', False):
                     logger.warning(
-                        f"⚠️ {exchange_name}: No more signals available for top-up"
+                        f"💰 {exchange_name}: Insufficient funds detected, stopping signal processing"
                     )
+                    break
+
+                # Early termination if target reached
+                if len(successful_signals) >= max_trades:
+                    logger.info(
+                        f"🎯 {exchange_name}: Target reached ({len(successful_signals)}/{max_trades}), "
+                        f"stopping after {iteration} iterations"
+                    )
+                    break
+
+            # Final summary for this exchange's validation phase
+            logger.info(
+                f"📊 {exchange_name}: Validation phase complete - "
+                f"{len(successful_signals)} successful, {len(all_failed_signals)} failed, "
+                f"{len(all_skipped_signals)} skipped across {iteration} iterations "
+                f"(processed {processed_count}/{len(exchange_signals)} signals)"
+            )
+
+            # Use accumulated results
+            failed_signals = all_failed_signals
+            skipped_signals = all_skipped_signals
 
             # Step 2d: Execute SEQUENTIALLY with stop at target (CRITICAL!)
             execution_result = await self._execute_signals_for_exchange(
@@ -1009,9 +1035,9 @@ class WebSocketSignalProcessor:
             results_by_exchange[exchange_id] = {
                 'exchange_name': exchange_name,
                 'total_signals': len(exchange_signals),
-                'selected_for_validation': len(signals_to_process),
-                'validated_successful': len(result.get('successful', [])),
-                'topped_up': topped_up_count,
+                'selected_for_validation': processed_count,
+                'validated_successful': len(successful_signals),
+                'iterations': iteration,
                 'total_for_execution': len(successful_signals),
                 'executed': executed_count,
                 'execution_failed': exec_failed_count,

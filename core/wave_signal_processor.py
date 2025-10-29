@@ -102,6 +102,7 @@ class WaveSignalProcessor:
         successful_signals = []
         failed_signals = []
         skipped_symbols = []
+        insufficient_funds_hit = False  # Track if InsufficientFunds occurred
 
         start_time = datetime.now(timezone.utc)
         wave_id = wave_timestamp or start_time.isoformat()
@@ -192,6 +193,7 @@ class WaveSignalProcessor:
                     'message': str(e),
                     'retryable': False
                 })
+                insufficient_funds_hit = True  # Set flag for caller
                 break  # ❌ Останавливаем - средства кончились
 
             except Exception as e:
@@ -218,7 +220,8 @@ class WaveSignalProcessor:
             'processed': len(successful_signals),
             'failed_count': len(failed_signals),
             'skipped_count': len(skipped_symbols),
-            'success_rate': len(successful_signals) / len(signals) if signals else 0
+            'success_rate': len(successful_signals) / len(signals) if signals else 0,
+            'insufficient_funds': insufficient_funds_hit  # Flag for iterative loop control
         }
 
         # Детальное логирование результатов
