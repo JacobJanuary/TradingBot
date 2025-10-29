@@ -1,0 +1,9 @@
+{
+  "test_raw_symbol": "PRCLUSDT",
+  "test_unified_symbol": "PRCL/USDT:USDT",
+  "found_with_raw": true,
+  "found_with_unified": true,
+  "position_exists": true,
+  "raw_result_count": 1,
+  "unified_result_count": 1
+}

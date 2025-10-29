@@ -1,0 +1,20 @@
+{
+  "test1_no_params": {
+    "status": "success",
+    "total_positions": 0,
+    "non_zero_positions": 0,
+    "symbols": []
+  },
+  "test2_category_linear": {
+    "status": "success",
+    "total_positions": 0,
+    "non_zero_positions": 0,
+    "symbols": []
+  },
+  "test3_subtype_linear": {
+    "status": "success",
+    "total_positions": 0,
+    "non_zero_positions": 0,
+    "symbols": []
+  }
+}
