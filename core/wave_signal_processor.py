@@ -305,7 +305,15 @@ class WaveSignalProcessor:
                 logger.debug(f"Ticker not available for {symbol}")
                 return True, f"Ticker not available for {symbol}"
 
-            current_price = ticker.get('last') or ticker.get('close', 0)
+            # DEFENSIVE FIX 2025-10-29: Convert ticker price to float explicitly
+            # Some exchanges return prices as strings, causing type errors in calculations
+            price_raw = ticker.get('last') or ticker.get('close', 0)
+            try:
+                current_price = float(price_raw)
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Invalid price format for {symbol}: {price_raw} ({type(price_raw).__name__}), error: {e}")
+                return True, f"Invalid price for {symbol}"
+
             if not current_price or current_price <= 0:
                 logger.debug(f"Invalid price for {symbol}: {current_price}")
                 return True, f"Invalid price for {symbol}"
@@ -382,7 +390,7 @@ class WaveSignalProcessor:
                         oi_usdt = await self._fetch_open_interest_usdt(
                             exchange_manager, symbol, exchange, current_price
                         )
-                        min_oi = getattr(self.config, 'signal_min_open_interest_usdt', 1_000_000)
+                        min_oi = float(getattr(self.config, 'signal_min_open_interest_usdt', 1_000_000))
 
                         if oi_usdt is not None and oi_usdt < min_oi:
                             logger.info(
@@ -416,7 +424,7 @@ class WaveSignalProcessor:
                         volume_1h_usdt = await self._fetch_1h_volume_usdt(
                             exchange_manager, symbol, signal_timestamp
                         )
-                        min_volume = getattr(self.config, 'signal_min_volume_1h_usdt', 50_000)
+                        min_volume = float(getattr(self.config, 'signal_min_volume_1h_usdt', 50_000))
 
                         if volume_1h_usdt is not None and volume_1h_usdt < min_volume:
                             logger.info(
@@ -450,7 +458,7 @@ class WaveSignalProcessor:
                         price_at_signal, price_5min_before = await self._fetch_price_5min_before(
                             exchange_manager, symbol, signal_timestamp
                         )
-                        max_change = getattr(self.config, 'signal_max_price_change_5min_percent', 4.0)
+                        max_change = float(getattr(self.config, 'signal_max_price_change_5min_percent', 4.0))
 
                         if price_at_signal and price_5min_before and price_5min_before > 0:
                             price_change_percent = ((price_at_signal - price_5min_before) / price_5min_before) * 100
