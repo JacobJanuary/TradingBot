@@ -360,6 +360,7 @@ class AtomicPositionManager:
                                     f"  Side: {ws_side}\n"
                                     f"  Verification time: {elapsed:.2f}s"
                                 )
+                                sources_tried['websocket'] = True  # Mark as tried on success
                                 return True  # SUCCESS!
                             else:
                                 logger.warning(
@@ -368,9 +369,11 @@ class AtomicPositionManager:
                                     f"  Got: {ws_quantity}\n"
                                     f"  Difference: {quantity_diff}"
                                 )
+                                sources_tried['websocket'] = True  # Mark as tried on mismatch
 
-                    # Помечаем source как tried
-                    sources_tried['websocket'] = True
+                    # CRITICAL FIX 2025-10-29: DON'T mark as tried if ws_position == None
+                    # This allows retry on next attempt when WebSocket data arrives
+                    # Old code marked as tried here → prevented retries
 
                 except AttributeError as e:
                     logger.debug(f"⚠️ [SOURCE 2] WebSocket not available: {e}")
@@ -398,8 +401,17 @@ class AtomicPositionManager:
 
                     # Find our position
                     for pos in positions:
-                        if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
-                            contracts = float(pos.get('contracts', 0))
+                        # CRITICAL FIX 2025-10-29: Use raw symbol format for Bybit (same as Entry block)
+                        # Bybit: pos['symbol'] = "ZBCN/USDT:USDT" (unified), need pos['info']['symbol'] = "ZBCNUSDT" (raw)
+                        # Binance: pos['symbol'] = unified format works
+                        if exchange == 'bybit':
+                            pos_symbol = pos.get('info', {}).get('symbol', '')  # Raw format
+                        else:
+                            pos_symbol = pos.get('symbol', '')  # Unified format
+
+                        contracts = float(pos.get('contracts', 0))
+
+                        if pos_symbol == symbol and contracts > 0:
                             logger.info(
                                 f"✅ [SOURCE 3] REST API CONFIRMED position exists!\n"
                                 f"  Symbol: {symbol}\n"
