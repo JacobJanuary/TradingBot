@@ -302,8 +302,55 @@ class Config:
 
         return constants
 
+    def _read_pgpass(self, host: str, port: int, database: str, user: str) -> Optional[str]:
+        """
+        Read password from .pgpass file (PostgreSQL standard).
+
+        Format: hostname:port:database:username:password
+        Wildcards (*) are supported for hostname, port, database.
+
+        Returns:
+            Password from .pgpass or None if not found
+        """
+        import pathlib
+
+        # Determine .pgpass file location
+        if os.name == 'nt':  # Windows
+            pgpass_path = pathlib.Path(os.getenv('APPDATA', '')) / 'postgresql' / 'pgpass.conf'
+        else:  # Linux/Mac
+            pgpass_path = pathlib.Path.home() / '.pgpass'
+
+        if not pgpass_path.exists():
+            return None
+
+        try:
+            with open(pgpass_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+
+                    parts = line.split(':')
+                    if len(parts) != 5:
+                        continue
+
+                    pg_host, pg_port, pg_db, pg_user, pg_pass = parts
+
+                    # Check if line matches our connection parameters
+                    if (pg_host in ('*', host)) and \
+                       (pg_port in ('*', str(port))) and \
+                       (pg_db in ('*', database)) and \
+                       (pg_user in ('*', user)):
+                        logger.info(f"✅ Found password in .pgpass for {user}@{host}:{port}/{database}")
+                        return pg_pass
+
+            return None
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to read .pgpass: {e}")
+            return None
+
     def _init_database(self) -> DatabaseConfig:
-        """Initialize database configuration from .env ONLY"""
+        """Initialize database configuration from .env and .pgpass"""
         config = DatabaseConfig()
 
         if val := os.getenv('DB_HOST'):
@@ -314,8 +361,17 @@ class Config:
             config.database = val
         if val := os.getenv('DB_USER'):
             config.user = val
+
+        # Priority: DB_PASSWORD env var > .pgpass file > empty string
         if val := os.getenv('DB_PASSWORD'):
             config.password = val
+            logger.info("🔑 Using password from DB_PASSWORD env var")
+        elif pgpass_password := self._read_pgpass(config.host, config.port, config.database, config.user):
+            config.password = pgpass_password
+            logger.info("🔑 Using password from .pgpass file")
+        else:
+            logger.warning("⚠️ No password found in env or .pgpass - using empty password")
+
         if val := os.getenv('DB_POOL_SIZE'):
             config.pool_size = int(val)
         if val := os.getenv('DB_MAX_OVERFLOW'):
