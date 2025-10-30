@@ -204,11 +204,12 @@ class RiskManager:
         
         for position in positions:
             try:
-                # This would actually close the position
-                # For now, just mark as closed
-                position.status = 'closed'
-                position.exit_reason = 'emergency_liquidation'
-                await self.repository.update_position(position)
+                # Close position properly
+                await self.repository.close_position(
+                    position.id,
+                    pnl=0,  # Unknown PNL in emergency
+                    reason='emergency_liquidation'
+                )
                 closed += 1
             except Exception as e:
                 logger.error(f"Failed to close position {position.id}: {e}")
