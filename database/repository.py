@@ -362,35 +362,6 @@ class Repository:
             rows = await conn.fetch(query, statuses)
             return [dict(row) for row in rows]
 
-    async def update_position(self, position_id: int, updates: Dict) -> bool:
-        """Update position with given data"""
-        import logging
-        logger = logging.getLogger(__name__)
-
-        if not updates:
-            return False
-
-        # Build dynamic UPDATE query
-        set_clauses = []
-        values = []
-        for i, (key, value) in enumerate(updates.items(), 1):
-            set_clauses.append(f"{key} = ${i}")
-            values.append(value)
-
-        values.append(position_id)  # Add position_id as last parameter
-
-        query = f"""
-            UPDATE monitoring.positions
-            SET {', '.join(set_clauses)}
-            WHERE id = ${len(values)}
-        """
-
-        logger.info(f"[REPO] update_position(id={position_id}, updates={updates})")
-        async with self.pool.acquire() as conn:
-            result = await conn.execute(query, *values)
-            logger.info(f"[REPO] Query result: {result}")
-            return True
-
     async def create_position(self, position_data: Dict) -> int:
         """
         Create new position record with advisory lock to prevent race conditions.
