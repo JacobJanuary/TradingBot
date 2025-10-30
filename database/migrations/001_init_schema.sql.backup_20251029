@@ -1,31 +1,28 @@
 -- ═══════════════════════════════════════════════════════════════
 -- TRADING BOT DATABASE SCHEMA - FULL INITIALIZATION
--- Updated: 2025-10-29
+-- Created: 2025-10-27
 -- PostgreSQL 15.x+
 -- ═══════════════════════════════════════════════════════════════
 --
 -- This script creates the complete database structure from scratch:
 --
 -- SCHEMAS:
---   - monitoring: Main operational schema (14 tables)
+--   - monitoring: Main operational schema (12 tables)
 --   - public: Functions and triggers
 --
--- TABLES:
---   monitoring schema:
---     1. positions - Active and historical positions
---     2. orders - Order execution history
---     3. trades - Completed trades
---     4. trailing_stop_state - Trailing stop management
---     5. orders_cache - Orders cache for fast access
---     6. aged_positions - Aged positions tracking
---     7. aged_monitoring_events - Aged position events
---     8. risk_events - Risk management events
---     9. risk_violations - Risk limit violations
---    10. events - Main event log
---    11. event_performance_metrics - Performance metrics
---    12. transaction_log - Audit transaction log
---    13. performance_metrics - Performance tracking
---    14. params - Backtest filter parameters per exchange
+-- TABLES (monitoring schema):
+--   1. positions - Active and historical positions
+--   2. orders - Order execution history
+--   3. trades - Completed trades
+--   4. trailing_stop_state - Trailing stop management
+--   5. orders_cache - Orders cache for fast access
+--   6. aged_positions - Aged positions tracking
+--   7. aged_monitoring_events - Aged position events
+--   8. risk_events - Risk management events
+--   9. risk_violations - Risk limit violations
+--  10. events - Main event log
+--  11. event_performance_metrics - Performance metrics
+--  12. transaction_log - Audit transaction log
 --
 -- FUNCTIONS:
 --   - normalize_trailing_stop_side() - Auto-lowercase side column
@@ -33,11 +30,10 @@
 --
 -- TRIGGERS:
 --   - normalize_side_trigger - On trailing_stop_state
---   - update_params_updated_at - On params
 --   - update_positions_updated_at - On positions
 --   - update_trades_updated_at - On trades
 --
--- INDEXES: 35+ indexes for optimal query performance
+-- INDEXES: 30+ indexes for optimal query performance
 --
 -- Usage:
 --   createdb fox_crypto
@@ -45,11 +41,19 @@
 --
 -- ═══════════════════════════════════════════════════════════════
 
--- PostgreSQL Settings
+--
+-- PostgreSQL database dump
+--
+
+\restrict XO6pF4P3zcHAfWi2Bdyx9QnvzxWA1grOoQpTyt3OaNTd2N6c4BtCBpWbeLmCnA4
+
+-- Dumped from database version 15.13 (Homebrew)
+-- Dumped by pg_dump version 18.0
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
--- SET transaction_timeout = 0;  -- Not available in all PostgreSQL builds
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -58,17 +62,18 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
--- ═══════════════════════════════════════════════════════════════
--- SCHEMAS
--- ═══════════════════════════════════════════════════════════════
+--
+-- Name: monitoring; Type: SCHEMA; Schema: -; Owner: -
+--
 
-CREATE SCHEMA IF NOT EXISTS monitoring;
+CREATE SCHEMA monitoring;
 
--- ═══════════════════════════════════════════════════════════════
--- FUNCTIONS
--- ═══════════════════════════════════════════════════════════════
 
-CREATE OR REPLACE FUNCTION public.normalize_trailing_stop_side() RETURNS trigger
+--
+-- Name: normalize_trailing_stop_side(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.normalize_trailing_stop_side() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -80,7 +85,12 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.update_updated_at_column() RETURNS trigger
+
+--
+-- Name: update_updated_at_column(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -89,11 +99,17 @@ BEGIN
 END;
 $$;
 
+
+--
+-- Name: FUNCTION update_updated_at_column(); Type: COMMENT; Schema: public; Owner: -
+--
+
 COMMENT ON FUNCTION public.update_updated_at_column() IS 'Trigger function to automatically set updated_at = NOW() on UPDATE. Used by multiple triggers in monitoring schema.';
 
-SET default_tablespace = '';
-SET default_table_access_method = heap;
 
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
 
 --
 -- Name: aged_monitoring_events; Type: TABLE; Schema: monitoring; Owner: -
@@ -403,75 +419,6 @@ ALTER SEQUENCE monitoring.orders_id_seq OWNED BY monitoring.orders.id;
 
 
 --
--- Name: params; Type: TABLE; Schema: monitoring; Owner: -
---
-
-CREATE TABLE monitoring.params (
-    exchange_id integer NOT NULL,
-    max_trades_filter integer,
-    stop_loss_filter numeric(10,4),
-    trailing_activation_filter numeric(10,4),
-    trailing_distance_filter numeric(10,4),
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT valid_exchange_id CHECK ((exchange_id = ANY (ARRAY[1, 2]))),
-    CONSTRAINT valid_max_trades CHECK (((max_trades_filter > 0) OR (max_trades_filter IS NULL))),
-    CONSTRAINT valid_stop_loss CHECK (((stop_loss_filter > (0)::numeric) OR (stop_loss_filter IS NULL))),
-    CONSTRAINT valid_trailing_activation CHECK (((trailing_activation_filter > (0)::numeric) OR (trailing_activation_filter IS NULL))),
-    CONSTRAINT valid_trailing_distance CHECK (((trailing_distance_filter > (0)::numeric) OR (trailing_distance_filter IS NULL)))
-);
-
-
---
--- Name: TABLE params; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON TABLE monitoring.params IS 'Backtest filter parameters per exchange. Updated on each wave reception from WebSocket.';
-
-
---
--- Name: COLUMN params.exchange_id; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.params.exchange_id IS 'Exchange identifier: 1=Binance, 2=Bybit';
-
-
---
--- Name: COLUMN params.max_trades_filter; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.params.max_trades_filter IS 'Maximum trades per wave from backtest optimization';
-
-
---
--- Name: COLUMN params.stop_loss_filter; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.params.stop_loss_filter IS 'Stop loss percentage from backtest (e.g., 2.5 = 2.5%)';
-
-
---
--- Name: COLUMN params.trailing_activation_filter; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.params.trailing_activation_filter IS 'Trailing stop activation percentage from backtest (e.g., 3.0 = 3.0%)';
-
-
---
--- Name: COLUMN params.trailing_distance_filter; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.params.trailing_distance_filter IS 'Trailing stop distance percentage from backtest (e.g., 1.5 = 1.5%)';
-
-
---
--- Name: COLUMN params.updated_at; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.params.updated_at IS 'Timestamp of last parameter update';
-
-
---
 -- Name: performance_metrics; Type: TABLE; Schema: monitoring; Owner: -
 --
 
@@ -547,24 +494,8 @@ CREATE TABLE monitoring.positions (
     last_error_at timestamp with time zone,
     has_trailing_stop boolean DEFAULT true NOT NULL,
     has_stop_loss boolean DEFAULT false,
-    exchange_order_id character varying(100),
-    trailing_activation_percent numeric(10,4),
-    trailing_callback_percent numeric(10,4)
+    exchange_order_id character varying(100)
 );
-
-
---
--- Name: COLUMN positions.trailing_activation_percent; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.positions.trailing_activation_percent IS 'Trailing stop activation percentage for THIS position (saved on creation from monitoring.params)';
-
-
---
--- Name: COLUMN positions.trailing_callback_percent; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON COLUMN monitoring.positions.trailing_callback_percent IS 'Trailing stop callback/distance percentage for THIS position (saved on creation from monitoring.params)';
 
 
 --
@@ -1000,14 +931,6 @@ ALTER TABLE ONLY monitoring.orders
 
 
 --
--- Name: params params_pkey; Type: CONSTRAINT; Schema: monitoring; Owner: -
---
-
-ALTER TABLE ONLY monitoring.params
-    ADD CONSTRAINT params_pkey PRIMARY KEY (exchange_id);
-
-
---
 -- Name: performance_metrics performance_metrics_pkey; Type: CONSTRAINT; Schema: monitoring; Owner: -
 --
 
@@ -1228,13 +1151,6 @@ CREATE INDEX idx_orders_status ON monitoring.orders USING btree (status);
 
 
 --
--- Name: idx_params_updated_at; Type: INDEX; Schema: monitoring; Owner: -
---
-
-CREATE INDEX idx_params_updated_at ON monitoring.params USING btree (updated_at DESC);
-
-
---
 -- Name: idx_positions_exchange_order; Type: INDEX; Schema: monitoring; Owner: -
 --
 
@@ -1347,20 +1263,6 @@ CREATE TRIGGER normalize_side_trigger BEFORE INSERT OR UPDATE ON monitoring.trai
 
 
 --
--- Name: params update_params_updated_at; Type: TRIGGER; Schema: monitoring; Owner: -
---
-
-CREATE TRIGGER update_params_updated_at BEFORE UPDATE ON monitoring.params FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
-
-
---
--- Name: TRIGGER update_params_updated_at ON params; Type: COMMENT; Schema: monitoring; Owner: -
---
-
-COMMENT ON TRIGGER update_params_updated_at ON monitoring.params IS 'Auto-updates updated_at column on any UPDATE';
-
-
---
 -- Name: positions update_positions_updated_at; Type: TRIGGER; Schema: monitoring; Owner: -
 --
 
@@ -1400,4 +1302,5 @@ ALTER TABLE ONLY monitoring.trailing_stop_state
 -- PostgreSQL database dump complete
 --
 
+\unrestrict XO6pF4P3zcHAfWi2Bdyx9QnvzxWA1grOoQpTyt3OaNTd2N6c4BtCBpWbeLmCnA4
 
