@@ -690,15 +690,28 @@ class Repository:
         Update position with arbitrary fields
 
         Args:
-            position_id: Position ID to update
+            position_id: Position ID to update (must be integer)
             **kwargs: Field names and values to update
 
         Returns:
-            bool: True if update successful
+            bool: True if update successful, False if validation fails
 
         Example:
             await repo.update_position(123, current_price=50.5, pnl=10.0)
+
+        Raises:
+            ValueError: If position_id is not an integer
         """
+        # Validation: Check position_id type
+        if not isinstance(position_id, int):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(
+                f"❌ CRITICAL: update_position called with invalid position_id type! "
+                f"Expected int, got {type(position_id).__name__} (value: {position_id})"
+            )
+            return False
+
         if not kwargs:
             return False
 
