@@ -207,40 +207,49 @@ class Repository:
         Returns:
             bool: True if updated, False if failed
         """
-        # Build dynamic UPDATE query (only update provided fields)
-        updates = []
+        # Build dynamic UPSERT query (only update provided fields)
+        field_names = []
+        field_placeholders = []
         params = [exchange_id]
         param_idx = 2
 
         if max_trades_filter is not None:
-            updates.append(f"max_trades_filter = ${param_idx}")
+            field_names.append("max_trades_filter")
+            field_placeholders.append(f"${param_idx}")
             params.append(max_trades_filter)
             param_idx += 1
 
         if stop_loss_filter is not None:
-            updates.append(f"stop_loss_filter = ${param_idx}")
+            field_names.append("stop_loss_filter")
+            field_placeholders.append(f"${param_idx}")
             params.append(stop_loss_filter)
             param_idx += 1
 
         if trailing_activation_filter is not None:
-            updates.append(f"trailing_activation_filter = ${param_idx}")
+            field_names.append("trailing_activation_filter")
+            field_placeholders.append(f"${param_idx}")
             params.append(trailing_activation_filter)
             param_idx += 1
 
         if trailing_distance_filter is not None:
-            updates.append(f"trailing_distance_filter = ${param_idx}")
+            field_names.append("trailing_distance_filter")
+            field_placeholders.append(f"${param_idx}")
             params.append(trailing_distance_filter)
             param_idx += 1
 
-        if not updates:
+        if not field_names:
             logger.warning(f"No parameters to update for exchange_id={exchange_id}")
             return False
 
+        # Build UPDATE clauses for ON CONFLICT
+        update_clauses = [f"{name} = EXCLUDED.{name}" for name in field_names]
+
         # updated_at is auto-updated by trigger
         query = f"""
-            UPDATE monitoring.params
-            SET {', '.join(updates)}
-            WHERE exchange_id = $1
+            INSERT INTO monitoring.params (exchange_id, {', '.join(field_names)})
+            VALUES ($1, {', '.join(field_placeholders)})
+            ON CONFLICT (exchange_id)
+            DO UPDATE SET {', '.join(update_clauses)}
             RETURNING exchange_id
         """
 
@@ -250,12 +259,12 @@ class Repository:
 
                 if result:
                     logger.info(
-                        f"✅ Updated params for exchange_id={exchange_id}: "
-                        f"{', '.join(updates)}"
+                        f"✅ Upserted params for exchange_id={exchange_id}: "
+                        f"{', '.join(field_names)}"
                     )
                     return True
                 else:
-                    logger.warning(f"No row found for exchange_id={exchange_id}")
+                    logger.warning(f"Failed to upsert params for exchange_id={exchange_id}")
                     return False
 
         except Exception as e:
