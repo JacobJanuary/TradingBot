@@ -8,7 +8,7 @@ CRITICAL: Этот модуль обеспечивает атомарность 
 """
 import asyncio
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TYPE_CHECKING
 from enum import Enum
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -18,6 +18,9 @@ import uuid
 from database.transactional_repository import TransactionalRepository
 from core.event_logger import EventLogger, EventType, log_event
 from core.exchange_response_adapter import ExchangeResponseAdapter
+
+if TYPE_CHECKING:
+    from config.settings import TradingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +85,17 @@ class AtomicPositionManager:
     3. Recovery для незавершенных операций
     """
 
-    def __init__(self, repository, exchange_manager, stop_loss_manager, position_manager=None, config=None):
+    def __init__(self, repository, exchange_manager, stop_loss_manager, position_manager=None, config: Optional['TradingConfig'] = None):
+        """
+        Initialize AtomicPositionManager
+
+        Args:
+            repository: Database repository
+            exchange_manager: Exchange manager dict
+            stop_loss_manager: Stop loss manager instance
+            position_manager: Optional position manager reference
+            config: Optional TradingConfig object (NOT Config!) for leverage and trailing stop fallback
+        """
         self.repository = repository
         self.exchange_manager = exchange_manager
         self.stop_loss_manager = stop_loss_manager
@@ -517,14 +530,14 @@ class AtomicPositionManager:
                 # Fallback to config if not in DB
                 if self.config:
                     if trailing_activation_percent is None:
-                        trailing_activation_percent = float(self.config.trading.trailing_activation_percent)
+                        trailing_activation_percent = float(self.config.trailing_activation_percent)
                         logger.warning(
                             f"⚠️  trailing_activation_filter not in DB for {exchange}, "
                             f"using .env fallback: {trailing_activation_percent}%"
                         )
 
                     if trailing_callback_percent is None:
-                        trailing_callback_percent = float(self.config.trading.trailing_callback_percent)
+                        trailing_callback_percent = float(self.config.trailing_callback_percent)
                         logger.warning(
                             f"⚠️  trailing_distance_filter not in DB for {exchange}, "
                             f"using .env fallback: {trailing_callback_percent}%"
