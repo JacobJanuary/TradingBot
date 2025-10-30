@@ -269,9 +269,24 @@ class Config:
         if val := os.getenv('SIGNAL_BUFFER_FIXED'):
             config.signal_buffer_fixed = int(val)
 
+        # FIX: 2025-10-30 - Добавлена загрузка SIGNAL фильтров из .env
+        if val := os.getenv('SIGNAL_MIN_OPEN_INTEREST_USDT'):
+            config.signal_min_open_interest_usdt = int(val)
+        if val := os.getenv('SIGNAL_MIN_VOLUME_1H_USDT'):
+            config.signal_min_volume_1h_usdt = int(val)
+        if val := os.getenv('SIGNAL_MAX_PRICE_CHANGE_5MIN_PERCENT'):
+            config.signal_max_price_change_5min_percent = float(val)
+        if val := os.getenv('SIGNAL_FILTER_OI_ENABLED'):
+            config.signal_filter_oi_enabled = val.lower() == 'true'
+        if val := os.getenv('SIGNAL_FILTER_VOLUME_ENABLED'):
+            config.signal_filter_volume_enabled = val.lower() == 'true'
+        if val := os.getenv('SIGNAL_FILTER_PRICE_CHANGE_ENABLED'):
+            config.signal_filter_price_change_enabled = val.lower() == 'true'
+
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
         logger.info(f"Wave limits: max_trades={config.max_trades_per_15min} (fallback), buffer_fixed=+{config.signal_buffer_fixed}")
         logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
+        logger.info(f"Signal filters: min_oi=${config.signal_min_open_interest_usdt}, min_vol_1h=${config.signal_min_volume_1h_usdt}, max_price_change_5m={config.signal_max_price_change_5min_percent}%")
         return config
 
     def _init_safety_constants(self) -> TradingSafetyConstants:
