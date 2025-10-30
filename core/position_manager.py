@@ -2882,7 +2882,7 @@ class PositionManager:
                     # Import truncate helper from atomic_position_manager
                     from core.atomic_position_manager import truncate_exit_reason
 
-                    await self.repository.update_position(position.id, {
+                    await self.repository.update_position(position.id, **{
                         'pending_close_order_id': order['id'],
                         'pending_close_price': to_decimal(target_price),
                         'exit_reason': truncate_exit_reason(reason)
