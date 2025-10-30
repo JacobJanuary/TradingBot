@@ -138,6 +138,10 @@ class AgedPositionAdapter:
             del self.monitoring_positions[symbol]
             logger.debug(f"Aged position {symbol} unregistered")
 
+        # ✅ FIX: Also remove from aged_monitor.aged_targets
+        if self.aged_monitor and symbol in self.aged_monitor.aged_targets:
+            del self.aged_monitor.aged_targets[symbol]
+
     async def _verify_subscription_active(self, symbol: str, timeout: int = 30) -> bool:
         """
         ✅ PHASE 2: Verify subscription is receiving data
