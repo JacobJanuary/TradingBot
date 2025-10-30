@@ -291,7 +291,7 @@ class WebSocketSignalProcessor:
                                 f"  • {stats['exchange_name']}: "
                                 f"{stats['executed']}/{stats['target']} positions "
                                 f"(validated: {stats['validated_successful']}, "
-                                f"topped up: {stats['topped_up']}, "
+                                f"topped up: {stats.get('topped_up', 0)}, "
                                 f"duplicates: {stats['duplicates']}, "
                                 f"buffer: {buffer_info}, "
                                 f"params: {stats['params_source']})"
