@@ -139,14 +139,14 @@ class PositionState:
     symbol: str
     exchange: str
     side: str  # 'long' or 'short'
-    quantity: float
-    entry_price: float
-    current_price: float
-    unrealized_pnl: float
+    quantity: Decimal
+    entry_price: Decimal
+    current_price: Decimal
+    unrealized_pnl: Decimal
     unrealized_pnl_percent: float
 
     has_stop_loss: bool = False
-    stop_loss_price: Optional[float] = None
+    stop_loss_price: Optional[Decimal] = None
 
     has_trailing_stop: bool = False
     trailing_activated: bool = False
@@ -157,9 +157,9 @@ class PositionState:
     # NEW: TS health tracking for fallback
     ts_last_update_time: Optional[datetime] = None  # Last TS update
 
-    opened_at: datetime = None
+    opened_at: Optional[datetime] = None
     age_hours: float = 0
-    
+
     # Pending close order info
     pending_close_order: Optional[Dict] = None
 
@@ -419,7 +419,7 @@ class PositionManager:
                     quantity=pos['quantity'],
                     entry_price=pos['entry_price'],
                     current_price=pos['current_price'] or pos['entry_price'],
-                    unrealized_pnl=pos['pnl'] or 0,
+                    unrealized_pnl=pos['pnl'] or Decimal('0'),
                     unrealized_pnl_percent=pos['pnl_percentage'] or 0,
                     has_stop_loss=pos['stop_loss'] is not None,
                     stop_loss_price=pos['stop_loss'],
@@ -812,10 +812,10 @@ class PositionManager:
                             symbol=symbol,
                             exchange=exchange_name,
                             side=side,
-                            quantity=quantity,
-                            entry_price=entry_price,
-                            current_price=entry_price,
-                            unrealized_pnl=0,
+                            quantity=to_decimal(quantity),
+                            entry_price=to_decimal(entry_price),
+                            current_price=to_decimal(entry_price),
+                            unrealized_pnl=Decimal('0'),
                             unrealized_pnl_percent=0,
                             has_stop_loss=db_position.get('has_stop_loss', True),
                             stop_loss_price=to_decimal(db_position.get('stop_loss_price')) if db_position.get('stop_loss_price') else None,
@@ -875,10 +875,10 @@ class PositionManager:
                             symbol=symbol,
                             exchange=exchange_name,
                             side=side,
-                            quantity=quantity,
-                            entry_price=entry_price,
-                            current_price=entry_price,
-                            unrealized_pnl=0,
+                            quantity=to_decimal(quantity),
+                            entry_price=to_decimal(entry_price),
+                            current_price=to_decimal(entry_price),
+                            unrealized_pnl=Decimal('0'),
                             unrealized_pnl_percent=0,
                             has_stop_loss=False,
                             stop_loss_price=None,
@@ -1259,10 +1259,10 @@ class PositionManager:
                         symbol=symbol,
                         exchange=exchange_name,
                         side=atomic_result['side'],
-                        quantity=atomic_result['quantity'],
-                        entry_price=atomic_result['entry_price'],
-                        current_price=atomic_result['entry_price'],
-                        unrealized_pnl=0,
+                        quantity=to_decimal(atomic_result['quantity']),
+                        entry_price=to_decimal(atomic_result['entry_price']),
+                        current_price=to_decimal(atomic_result['entry_price']),
+                        unrealized_pnl=Decimal('0'),
                         unrealized_pnl_percent=0,
                         opened_at=datetime.now(timezone.utc)
                     )
@@ -1414,10 +1414,10 @@ class PositionManager:
                     symbol=symbol,
                     exchange=exchange_name,
                     side='long' if request.side == 'BUY' else 'short',
-                    quantity=order.filled,
-                    entry_price=order.price,
-                    current_price=order.price,
-                    unrealized_pnl=0,
+                    quantity=to_decimal(order.filled),
+                    entry_price=to_decimal(order.price),
+                    current_price=to_decimal(order.price),
+                    unrealized_pnl=Decimal('0'),
                     unrealized_pnl_percent=0,
                     opened_at=datetime.now(timezone.utc)
                 )
@@ -1703,10 +1703,10 @@ class PositionManager:
                 symbol=symbol,
                 exchange=exchange,
                 side="pending",
-                quantity=0,
-                entry_price=0,
-                current_price=0,
-                unrealized_pnl=0,
+                quantity=Decimal('0'),
+                entry_price=Decimal('0'),
+                current_price=Decimal('0'),
+                unrealized_pnl=Decimal('0'),
                 unrealized_pnl_percent=0,
                 opened_at=datetime.now(timezone.utc)
             )
