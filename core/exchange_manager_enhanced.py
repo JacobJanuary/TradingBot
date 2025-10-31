@@ -472,8 +472,12 @@ class EnhancedExchangeManager:
         # Step 4: Create new order if needed
         if amount > 0:
             min_amount = self._get_min_order_amount(symbol)
-            if amount < min_amount:
+            if min_amount and min_amount > 0 and amount < min_amount:
                 logger.warning(f"⚠️ Remaining amount {amount} below minimum {min_amount}")
+                return None
+
+            if new_price is None:
+                logger.error("Cannot create exit order: new_price is None")
                 return None
 
             return await self.create_limit_exit_order(

@@ -113,8 +113,8 @@ class StopLossManager:
             # 1. Initial fixed stop loss
             if stop_config.use_fixed_stop:
                 fixed_stop = await self._create_fixed_stop(
-                    symbol, side, entry_price, quantity, 
-                    stop_config.fixed_stop_percentage
+                    symbol, side, entry_price, quantity,
+                    Decimal(str(stop_config.fixed_stop_percentage))
                 )
                 stops.append(fixed_stop)
             
@@ -136,15 +136,16 @@ class StopLossManager:
             
             # Place orders on exchange
             placed_stops = await self._place_stop_orders(symbol, stops)
-            
+
             # Store in active stops
-            self.active_stops[position.id] = placed_stops
-            
+            position_id_str = str(position.id)
+            self.active_stops[position_id_str] = placed_stops
+
             # Initialize price tracking
             if side == 'long':
-                self.highest_prices[position.id] = entry_price
+                self.highest_prices[position_id_str] = entry_price
             else:
-                self.lowest_prices[position.id] = entry_price
+                self.lowest_prices[position_id_str] = entry_price
             
             logger.info(f"Setup {len(placed_stops)} stop losses for position {position.id}")
             return placed_stops
@@ -161,14 +162,14 @@ class StopLossManager:
         Update stop losses based on current market conditions
         """
         try:
-            position_id = position.id
+            position_id_str = str(position.id)
             side = position.side
             entry_price = Decimal(str(position.entry_price))
-            
-            if position_id not in self.active_stops:
-                logger.warning(f"No active stops for position {position_id}")
+
+            if position_id_str not in self.active_stops:
+                logger.warning(f"No active stops for position {position_id_str}")
                 return {'updated': 0, 'errors': []}
-            
+
             updates = {
                 'updated': 0,
                 'moved_to_breakeven': False,
@@ -176,16 +177,16 @@ class StopLossManager:
                 'partials_triggered': 0,
                 'errors': []
             }
-            
+
             # Update price tracking
             if side == 'long':
-                if current_price > self.highest_prices.get(position_id, entry_price):
-                    self.highest_prices[position_id] = current_price
-                high_water = self.highest_prices[position_id]
+                if current_price > self.highest_prices.get(position_id_str, entry_price):
+                    self.highest_prices[position_id_str] = current_price
+                high_water = self.highest_prices[position_id_str]
             else:
-                if current_price < self.lowest_prices.get(position_id, entry_price):
-                    self.lowest_prices[position_id] = current_price
-                high_water = self.lowest_prices[position_id]
+                if current_price < self.lowest_prices.get(position_id_str, entry_price):
+                    self.lowest_prices[position_id_str] = current_price
+                high_water = self.lowest_prices[position_id_str]
             
             # Calculate profit percentage
             if side == 'long':
@@ -194,7 +195,7 @@ class StopLossManager:
                 profit_pct = ((entry_price - current_price) / entry_price) * 100
             
             # Process each stop level
-            for stop in self.active_stops[position_id]:
+            for stop in self.active_stops[position_id_str]:
                 if not stop.is_active:
                     continue
                 

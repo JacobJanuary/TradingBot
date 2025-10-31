@@ -150,7 +150,7 @@ class LogRotationManager:
 
     def get_log_stats(self) -> Dict:
         """Get statistics about current logs"""
-        stats = {
+        stats: Dict[str, Any] = {
             'total_size': 0,
             'file_count': 0,
             'largest_file': None,

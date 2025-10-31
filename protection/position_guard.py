@@ -163,7 +163,8 @@ class PositionGuard:
             
             # Initialize monitoring
             self.monitored_positions[position_id] = position
-            self.position_peaks[position_id] = Decimal(str(position.entry_price))
+            position_id_str = str(position.id)
+            self.position_peaks[position_id_str] = Decimal(str(position.entry_price))
             
             # Perform initial health check
             health = await self._calculate_position_health(position)
@@ -247,7 +248,8 @@ class PositionGuard:
                 pnl_pct = ((entry_price - current_price) / entry_price) * 100
             
             # Calculate drawdown from peak
-            peak = self.position_peaks.get(position.id, entry_price)
+            position_id_str = str(position.id)
+            peak = self.position_peaks.get(position_id_str, entry_price)
             if position.side == 'long':
                 drawdown_pct = ((peak - current_price) / peak) * 100
             else:
@@ -684,9 +686,9 @@ class PositionGuard:
             
             if result:
                 logger.info(f"Partially closed {close_ratio*100:.0f}% of position {position.id}")
-                
+
                 # Update position size
-                position.quantity = float(Decimal(str(position.quantity)) * (Decimal('1') - close_ratio))
+                position.quantity = float(Decimal(str(position.quantity)) * (Decimal('1') - close_ratio))  # type: ignore[assignment]
                 
         except Exception as e:
             logger.error(f"Failed to partially close position: {e}")
@@ -697,9 +699,10 @@ class PositionGuard:
         try:
             # Tighten stop if in profit
             if health.pnl_percentage > 1:
+                position_id_str = str(position.id)
                 await self.stop_loss_manager.update_stops(
                     position,
-                    self.position_peaks[position.id]
+                    self.position_peaks[position_id_str]
                 )
             
         except Exception as e:
@@ -715,7 +718,10 @@ class PositionGuard:
                 await self.stop_loss_manager.update_stops(position, current_price)
             
             # Reduce position size if large
-            if abs(position.quantity) > self.risk_manager.max_position_size * 0.5:
+            position_qty_decimal = Decimal(str(abs(position.quantity)))
+            max_size_decimal = Decimal(str(self.risk_manager.max_position_size))
+            threshold = max_size_decimal * Decimal('0.5')
+            if position_qty_decimal > threshold:
                 await self._partial_close_position(position, Decimal('0.3'))
             
         except Exception as e:

@@ -368,8 +368,14 @@ class AgedPositionMonitorV2:
             phase = target.phase
             stats['by_phase'][phase] = stats['by_phase'].get(phase, 0) + 1
 
-            if hasattr(target, 'hours_aged'):
-                stats['oldest_age_hours'] = max(stats['oldest_age_hours'], target.hours_aged)
+            if hasattr(target, 'hours_aged') and target.hours_aged is not None:
+                current_oldest = float(stats.get('oldest_age_hours', 0))
+                # Safely convert to float
+                try:
+                    new_age = float(target.hours_aged)
+                except (TypeError, ValueError):
+                    new_age = float(str(target.hours_aged))
+                stats['oldest_age_hours'] = max(current_oldest, new_age)
 
         return stats
 

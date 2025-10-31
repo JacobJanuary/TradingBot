@@ -1083,7 +1083,7 @@ class PositionManager:
             # 4. Calculate position size
             position_size_usd = request.position_size_usd or self.config.position_size_usd
             quantity = await self._calculate_position_size(
-                exchange, symbol, request.entry_price, position_size_usd
+                exchange, symbol, Decimal(str(request.entry_price)), Decimal(str(position_size_usd))
             )
 
             if not quantity:
@@ -1244,7 +1244,7 @@ class PositionManager:
                     symbol=symbol,
                     exchange=exchange_name,
                     side=order_side,
-                    quantity=quantity,
+                    quantity=float(quantity),
                     entry_price=float(request.entry_price),
                     stop_loss_percent=float(stop_loss_percent)  # FIX: Pass percent, not price
                 )
@@ -1940,7 +1940,7 @@ class PositionManager:
 
         # Check against maximum allowed
         # Phase 2: Use config value instead of os.getenv()
-        max_position_usd = float(self.config.max_position_size_usd)
+        max_position_usd = Decimal(str(self.config.max_position_size_usd))
         if size_usd > max_position_usd:
             logger.warning(f"Position size ${size_usd} exceeds maximum ${max_position_usd}")
             # Use maximum instead of failing
@@ -2047,7 +2047,7 @@ class PositionManager:
                 return None
 
         # Check if we can afford this position (margin/leverage validation)
-        can_open, reason = await exchange.can_open_position(symbol, size_usd)
+        can_open, reason = await exchange.can_open_position(symbol, float(size_usd))
         if not can_open:
             logger.warning(f"Cannot open {symbol} position: {reason}")
             return None
@@ -2257,7 +2257,7 @@ class PositionManager:
                 await handle_unified_price_update(
                     self.unified_protection,
                     symbol,
-                    position.current_price
+                    float(position.current_price)
                 )
 
             position.unrealized_pnl = data.get('unrealized_pnl', 0)
@@ -2642,7 +2642,8 @@ class PositionManager:
 
                 # Update statistics
                 self.stats['positions_closed'] += 1
-                self.stats['total_pnl'] += Decimal(str(realized_pnl))
+                current_total_pnl = Decimal(str(self.stats.get('total_pnl', 0)))
+                self.stats['total_pnl'] = current_total_pnl + Decimal(str(realized_pnl))
 
                 if realized_pnl > 0:
                     self.stats['win_count'] += 1
@@ -2848,7 +2849,7 @@ class PositionManager:
                     symbol=symbol,
                     side=order_side,
                     amount=position.quantity,
-                    price=target_price,
+                    price=Decimal(str(target_price)),
                     params={'clientOrderId': client_order_id}
                 )
             
@@ -3894,7 +3895,7 @@ class PositionManager:
             'total_exposure': to_decimal(self.total_exposure),
             'positions_opened': self.stats['positions_opened'],
             'positions_closed': self.stats['positions_closed'],
-            'total_pnl': to_decimal(self.stats['total_pnl']),
+            'total_pnl': to_decimal(str(self.stats.get('total_pnl', 0))),
             'win_rate': win_rate,
             'wins': self.stats['win_count'],
             'zombie_cleanup': {

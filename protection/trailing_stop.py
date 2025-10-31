@@ -1028,6 +1028,10 @@ class SmartTrailingStopManager:
             order_side = 'sell' if ts.side == 'long' else 'buy'
 
             # Place stop market order
+            if ts.current_stop_price is None:
+                logger.error(f"Cannot place stop order: stop_price is None for {ts.symbol}")
+                return False
+
             order = await self.exchange.create_stop_loss_order(
                 symbol=ts.symbol,
                 side=order_side,
@@ -1348,11 +1352,11 @@ class SmartTrailingStopManager:
                             'error_type': 'sl_direction_validation_failed',
                             'side': ts.side,
                             'current_price': float(current_price),
-                            'proposed_sl_price': float(sl_price),
+                            'proposed_sl_price': float(sl_price) if sl_price is not None else None,
                             'validation_error': validation_error,
                             'entry_price': float(ts.entry_price),
-                            'highest_price': float(ts.highest_price) if ts.side == 'long' else None,
-                            'lowest_price': float(ts.lowest_price) if ts.side == 'short' else None,
+                            'highest_price': float(ts.highest_price) if ts.side == 'long' and ts.highest_price is not None else None,
+                            'lowest_price': float(ts.lowest_price) if ts.side == 'short' and ts.lowest_price is not None else None,
                             'action': 'aborted_before_exchange_call'
                         },
                         symbol=ts.symbol,
@@ -1374,6 +1378,10 @@ class SmartTrailingStopManager:
             # ============================================================
 
             # Call atomic update (now safe)
+            if ts.current_stop_price is None:
+                logger.error(f"Cannot update SL: current_stop_price is None for {ts.symbol}")
+                return False
+
             result = await self.exchange.update_stop_loss_atomic(
                 symbol=ts.symbol,
                 new_sl_price=float(ts.current_stop_price),
@@ -1390,7 +1398,7 @@ class SmartTrailingStopManager:
                             'symbol': ts.symbol,
                             'method': result['method'],
                             'execution_time_ms': result['execution_time_ms'],
-                            'new_sl_price': float(ts.current_stop_price),
+                            'new_sl_price': float(ts.current_stop_price) if ts.current_stop_price is not None else None,
                             'old_sl_price': result.get('old_sl_price'),
                             'unprotected_window_ms': result.get('unprotected_window_ms', 0),
                             'side': ts.side,
@@ -1490,13 +1498,14 @@ class SmartTrailingStopManager:
                     profit_percent = (realized_pnl / (ts.entry_price * ts.quantity)) * Decimal('100')
 
                     # Update average
-                    current_avg = self.stats['average_profit_on_trigger']
-                    total = self.stats['total_triggered']
+                    current_avg = Decimal(str(self.stats['average_profit_on_trigger']))
+                    total = Decimal(str(self.stats['total_triggered']))
                     self.stats['average_profit_on_trigger'] = (
-                            (current_avg * (total - 1) + profit_percent) / total
+                            (current_avg * (total - Decimal('1')) + profit_percent) / total
                     )
 
-                    if profit_percent > self.stats['best_profit']:
+                    best_profit = Decimal(str(self.stats['best_profit']))
+                    if profit_percent > best_profit:
                         self.stats['best_profit'] = profit_percent
 
             # Log trailing stop removal

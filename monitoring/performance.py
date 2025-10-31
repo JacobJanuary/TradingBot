@@ -182,8 +182,8 @@ class PerformanceTracker:
         profit_factor = float(gross_profit / gross_loss) if gross_loss > 0 else 0.0
         
         # Best and worst trades
-        best_trade = Decimal(str(max((p.realized_pnl or 0 for p in positions), default=0)))
-        worst_trade = Decimal(str(min((p.realized_pnl or 0 for p in positions), default=0)))
+        best_trade = Decimal(str(max((float(p.realized_pnl or 0) for p in positions), default=0)))
+        worst_trade = Decimal(str(min((float(p.realized_pnl or 0) for p in positions), default=0)))
         
         # Duration analysis
         durations = []
@@ -341,7 +341,12 @@ class PerformanceTracker:
         for position in sorted_positions:
             if position.closed_at and position.realized_pnl:
                 equity += Decimal(str(position.realized_pnl))
-                curve.append((position.closed_at, equity))
+                # Convert Column[datetime] to datetime if needed
+                if hasattr(position.closed_at, '__class__') and 'Column' not in str(type(position.closed_at)):
+                    closed_at_dt = position.closed_at
+                else:
+                    closed_at_dt = datetime.fromisoformat(str(position.closed_at)) if isinstance(position.closed_at, str) else position.closed_at
+                curve.append((closed_at_dt, equity))
         
         self.equity_curve = curve
         return curve
@@ -365,7 +370,7 @@ class PerformanceTracker:
             
             if drawdown > max_dd:
                 max_dd = drawdown
-                max_dd_pct = drawdown_pct
+                max_dd_pct = float(drawdown_pct)
             
             # Track drawdown series
             self.drawdown_series.append((timestamp, drawdown))
@@ -549,7 +554,9 @@ class PerformanceTracker:
             mae = max(price_history) - entry
             mfe = entry - min(price_history)
         
-        return max(Decimal('0'), mae), max(Decimal('0'), mfe)
+        mae_decimal = Decimal(str(mae)) if not isinstance(mae, Decimal) else mae
+        mfe_decimal = Decimal(str(mfe)) if not isinstance(mfe, Decimal) else mfe
+        return max(Decimal('0'), mae_decimal), max(Decimal('0'), mfe_decimal)
     
     async def get_performance_summary(self) -> Dict[str, Any]:
         """Get comprehensive performance summary"""

@@ -811,7 +811,7 @@ class ExchangeManager:
         """
         start_time = now_utc()
 
-        result = {
+        result: Dict[str, Any] = {
             'success': False,
             'method': None,
             'execution_time_ms': 0,
