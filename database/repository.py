@@ -210,7 +210,7 @@ class Repository:
         # Build dynamic UPSERT query (only update provided fields)
         field_names = []
         field_placeholders = []
-        params = [exchange_id]
+        params: list[Union[int, float]] = [exchange_id]
         param_idx = 2
 
         if max_trades_filter is not None:
@@ -543,11 +543,11 @@ class Repository:
             await conn.execute(query, position_id)
 
     async def close_position(self, position_id: int,
-                            close_price: float = None,
-                            pnl: float = None,
-                            pnl_percentage: float = None,
-                            reason: str = None,
-                            exit_data: Dict = None):
+                            close_price: Optional[float] = None,
+                            pnl: Optional[float] = None,
+                            pnl_percentage: Optional[float] = None,
+                            reason: Optional[str] = None,
+                            exit_data: Optional[Dict[Any, Any]] = None):
         """
         Close position with exit details
 
@@ -1195,7 +1195,7 @@ class Repository:
         target_price: Decimal,
         phase: str,
         age_hours: float,
-        loss_tolerance: Decimal = None
+        loss_tolerance: Optional[Decimal] = None
     ) -> Dict:
         """Create new aged position entry in database
 
@@ -1291,10 +1291,10 @@ class Repository:
     async def update_aged_position(
         self,
         position_id: str,
-        phase: str = None,
-        target_price: Decimal = None,
-        hours_aged: float = None,
-        loss_tolerance: Decimal = None
+        phase: Optional[str] = None,
+        target_price: Optional[Decimal] = None,
+        hours_aged: Optional[float] = None,
+        loss_tolerance: Optional[Decimal] = None
     ) -> bool:
         """Update aged position fields
 
@@ -1314,7 +1314,7 @@ class Repository:
 
         # Build SET clause and parameter list dynamically
         set_fields = ['updated_at = NOW()']
-        params = []  # List for positional params
+        params: list[Union[str, Decimal, float]] = []  # List for positional params
         param_idx = 1  # asyncpg uses $1, $2, $3, ...
 
         # Track parameter names for logging
@@ -1372,13 +1372,13 @@ class Repository:
         self,
         aged_position_id: str,
         event_type: str,
-        market_price: Decimal = None,
-        target_price: Decimal = None,
-        price_distance_percent: Decimal = None,
-        action_taken: str = None,
-        success: bool = None,
-        error_message: str = None,
-        event_metadata: Dict = None
+        market_price: Optional[Decimal] = None,
+        target_price: Optional[Decimal] = None,
+        price_distance_percent: Optional[Decimal] = None,
+        action_taken: Optional[str] = None,
+        success: Optional[bool] = None,
+        error_message: Optional[str] = None,
+        event_metadata: Optional[Dict[Any, Any]] = None
     ) -> bool:
         """Log aged position monitoring event
 

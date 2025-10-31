@@ -707,9 +707,15 @@ class SmartTrailingStopManager:
         should_activate = False
 
         if ts.side == 'long':
-            should_activate = ts.current_price >= ts.activation_price
+            should_activate = (
+                ts.activation_price is not None
+                and ts.current_price >= ts.activation_price
+            )
         else:
-            should_activate = ts.current_price <= ts.activation_price
+            should_activate = (
+                ts.activation_price is not None
+                and ts.current_price <= ts.activation_price
+            )
 
         # Time-based activation
         if self.config.time_based_activation and not should_activate:
@@ -798,7 +804,7 @@ class SmartTrailingStopManager:
             potential_stop = ts.highest_price * (1 - distance / 100)
 
             # Only update if new stop is higher than current
-            if potential_stop > ts.current_stop_price:
+            if ts.current_stop_price is not None and potential_stop > ts.current_stop_price:
                 new_stop_price = potential_stop
         else:  # SHORT позиция
             # For short: trail above lowest price
@@ -810,7 +816,7 @@ class SmartTrailingStopManager:
 
             if price_at_or_below_minimum:
                 # Price is at minimum or making new low - can update SL
-                if potential_stop < ts.current_stop_price:
+                if ts.current_stop_price is not None and potential_stop < ts.current_stop_price:
                     new_stop_price = potential_stop
                     logger.debug(f"SHORT {ts.symbol}: updating SL on new low, {ts.current_stop_price:.8f} → {potential_stop:.8f}")
             else:
@@ -819,6 +825,20 @@ class SmartTrailingStopManager:
 
         if new_stop_price:
             old_stop = ts.current_stop_price
+
+            # Skip if old_stop is None (first time setting SL)
+            if old_stop is None:
+                logger.debug(f"{ts.symbol}: No old stop price, setting initial stop")
+                ts.current_stop_price = new_stop_price
+                ts.last_stop_update = datetime.now()
+                ts.update_count += 1
+                await self._update_stop_order(ts)
+                await self._save_state(ts)
+                return {
+                    'action': 'initial_set',
+                    'symbol': ts.symbol,
+                    'new_stop': float(new_stop_price)
+                }
 
             # NEW APPROACH: Check FIRST, modify AFTER (no rollback needed)
             try:
@@ -969,10 +989,10 @@ class SmartTrailingStopManager:
         if self.config.accelerate_on_momentum:
             # Calculate price change rate (simplified)
             if ts.last_stop_update:
-                time_diff = (datetime.now() - ts.last_stop_update).seconds / 60
+                time_diff = Decimal(str((datetime.now() - ts.last_stop_update).seconds / 60))
                 if time_diff > 0:
                     price_change_rate = abs(
-                        (ts.current_price - ts.entry_price) / ts.entry_price / time_diff * 100
+                        (ts.current_price - ts.entry_price) / ts.entry_price / time_diff * Decimal('100')
                     )
 
                     if price_change_rate > self.config.momentum_threshold:
@@ -1286,17 +1306,17 @@ class SmartTrailingStopManager:
 
             if ts.side == 'long':
                 # For LONG: SL must be < current price
-                if sl_price < current_price:
+                if sl_price is not None and sl_price < current_price:
                     is_sl_valid = True
                 else:
                     validation_error = (
                         f"LONG position requires SL < current_price, "
-                        f"but {sl_price:.8f} >= {current_price:.8f}"
+                        f"but {sl_price:.8f if sl_price is not None else 'None'} >= {current_price:.8f}"
                     )
 
             elif ts.side == 'short':
                 # For SHORT: SL must be > current price
-                if sl_price > current_price:
+                if sl_price is not None and sl_price > current_price:
                     is_sl_valid = True
                 else:
                     validation_error = (
@@ -1467,7 +1487,7 @@ class SmartTrailingStopManager:
                 self.stats['total_triggered'] += 1
 
                 if realized_pnl:
-                    profit_percent = (realized_pnl / float(ts.entry_price * ts.quantity)) * 100
+                    profit_percent = (realized_pnl / (ts.entry_price * ts.quantity)) * Decimal('100')
 
                     # Update average
                     current_avg = self.stats['average_profit_on_trigger']

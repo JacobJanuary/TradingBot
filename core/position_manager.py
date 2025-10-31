@@ -771,9 +771,9 @@ class PositionManager:
 
                         await self.repository.close_position(
                             pos_state.id,                           # position_id: int
-                            pos_state.current_price or 0.0,        # close_price: float
-                            pos_state.unrealized_pnl or 0.0,       # pnl: float
-                            pos_state.unrealized_pnl_percent or 0.0, # pnl_percentage: float
+                            float(pos_state.current_price) if pos_state.current_price else 0.0,        # close_price: float
+                            float(pos_state.unrealized_pnl) if pos_state.unrealized_pnl else 0.0,       # pnl: float
+                            float(pos_state.unrealized_pnl_percent) if pos_state.unrealized_pnl_percent else 0.0, # pnl_percentage: float
                             'sync_cleanup'                          # reason: str
                         )
                     # Remove from tracking
@@ -1161,14 +1161,14 @@ class PositionManager:
                     logger.debug(
                         f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
                     )
-                    stop_loss_percent = request.stop_loss_percent or db_stop_loss_percent
+                    stop_loss_percent: Decimal = to_decimal(request.stop_loss_percent or db_stop_loss_percent)
                 else:
                     # Fallback to .env if DB params not available
                     logger.warning(
                         f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
                         f"using .env fallback: {self.config.stop_loss_percent}%"
                     )
-                    stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+                    stop_loss_percent = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
 
             except Exception as e:
                 # Fallback to .env on error
@@ -1176,10 +1176,10 @@ class PositionManager:
                     f"❌ Failed to load params from DB for {request.exchange}: {e}. "
                     f"Using .env fallback: {self.config.stop_loss_percent}%"
                 )
-                stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+                stop_loss_percent = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
 
             stop_loss_price = calculate_stop_loss(
-                to_decimal(request.entry_price), position_side, to_decimal(stop_loss_percent)
+                to_decimal(request.entry_price), position_side, stop_loss_percent
             )
 
             # Get trailing params from monitoring.params
@@ -1491,14 +1491,14 @@ class PositionManager:
                         logger.debug(
                             f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
                         )
-                        stop_loss_percent = request.stop_loss_percent or db_stop_loss_percent
+                        stop_loss_percent_val: Decimal = to_decimal(request.stop_loss_percent or db_stop_loss_percent)
                     else:
                         # Fallback to .env if DB params not available
                         logger.warning(
                             f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
                             f"using .env fallback: {self.config.stop_loss_percent}%"
                         )
-                        stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+                        stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
 
                 except Exception as e:
                     # Fallback to .env on error
@@ -1506,17 +1506,17 @@ class PositionManager:
                         f"❌ Failed to load params from DB for {request.exchange}: {e}. "
                         f"Using .env fallback: {self.config.stop_loss_percent}%"
                     )
-                    stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
+                    stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
 
-                stop_loss_price = calculate_stop_loss(
-                    to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
+                stop_loss_price_val: Decimal = calculate_stop_loss(
+                    to_decimal(position.entry_price), position.side, stop_loss_percent_val
                 )
 
-                logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
+                logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent_val}% at ${stop_loss_price_val:.4f}")
 
-                if await self._set_stop_loss(exchange, position, stop_loss_price):
+                if await self._set_stop_loss(exchange, position, stop_loss_price_val):
                     position.has_stop_loss = True
-                    position.stop_loss_price = stop_loss_price
+                    position.stop_loss_price = stop_loss_price_val
                     logger.info(f"✅ Stop loss confirmed for {symbol}")
 
                     # Log stop loss placed
@@ -1539,7 +1539,7 @@ class PositionManager:
 
                     try:
                         await self.repository.update_position_stop_loss(
-                            position.id, stop_loss_price, ""
+                            position.id, float(stop_loss_price), ""
                         )
                     except Exception as db_error:
                         logger.error(f"Failed to update stop loss in database for {symbol}: {db_error}")
@@ -1915,8 +1915,8 @@ class PositionManager:
     async def _calculate_position_size(self,
                                        exchange: ExchangeManager,
                                        symbol: str,
-                                       price: float,
-                                       size_usd: float) -> Optional[float]:
+                                       price: Decimal,
+                                       size_usd: Decimal) -> Optional[Decimal]:
         """
         Calculate position size with exchange constraints.
         Uses FIXED position size from config (POSITION_SIZE_USD).
@@ -1967,7 +1967,7 @@ class PositionManager:
             # Phase 3: Use config tolerance instead of hardcoded 1.1
             from config.settings import config as global_config
             tolerance_factor = 1 + (float(global_config.safety.POSITION_SIZE_TOLERANCE_PERCENT) / 100)
-            tolerance = size_usd * Decimal(str(tolerance_factor))  # 10% over budget allowed
+            tolerance: Decimal = size_usd * Decimal(str(tolerance_factor))  # 10% over budget allowed
 
             if min_cost <= tolerance:
                 logger.info(f"Using minimum quantity {min_amount} for {symbol} (cost: ${min_cost:.2f}, tolerance: ${tolerance:.2f})")
@@ -1991,13 +1991,13 @@ class PositionManager:
                 if step_size > 0:
                     # Calculate steps needed
                     steps = int((required_qty - float(adjusted_quantity)) / step_size) + 1
-                    adjusted_quantity = float(adjusted_quantity) + (steps * step_size)
+                    adjusted_quantity = to_decimal(float(adjusted_quantity) + (steps * step_size))
                 else:
-                    adjusted_quantity = required_qty
+                    adjusted_quantity = to_decimal(required_qty)
 
                 # Re-check tolerance
                 new_cost = float(adjusted_quantity) * float(price)
-                tolerance = size_usd * tolerance_factor
+                tolerance = size_usd * Decimal(str(tolerance_factor))
 
                 if new_cost <= tolerance:
                     logger.info(
@@ -2013,8 +2013,7 @@ class PositionManager:
                     return None
 
         # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
-        formatted_qty = exchange.amount_to_precision(symbol, adjusted_quantity)
-        formatted_qty = float(formatted_qty)
+        formatted_qty: Decimal = to_decimal(exchange.amount_to_precision(symbol, adjusted_quantity))
 
         # FIX: Re-validate after precision formatting (amount_to_precision may truncate below minimum)
         if formatted_qty < min_amount:
@@ -2022,12 +2021,11 @@ class PositionManager:
             step_size = exchange.get_step_size(symbol)
             if step_size > 0:
                 # Calculate steps needed to reach minimum
-                steps_needed = int((min_amount - formatted_qty) / step_size) + 1
-                adjusted_qty = formatted_qty + (steps_needed * step_size)
+                steps_needed = int((float(min_amount) - float(formatted_qty)) / step_size) + 1
+                adjusted_qty: Decimal = formatted_qty + to_decimal(steps_needed * step_size)
 
                 # Re-apply precision to ensure stepSize alignment
-                formatted_qty = exchange.amount_to_precision(symbol, adjusted_qty)
-                formatted_qty = float(formatted_qty)
+                formatted_qty = to_decimal(exchange.amount_to_precision(symbol, adjusted_qty))
 
                 # Final check: if still below minimum after adjustment, cannot trade
                 if formatted_qty < min_amount:
@@ -2099,7 +2097,7 @@ class PositionManager:
     async def _set_stop_loss(self,
                              exchange: ExchangeManager,
                              position: PositionState,
-                             stop_price: float) -> bool:
+                             stop_price: Decimal) -> bool:
         """
         Set stop loss order using unified StopLossManager.
 
@@ -2228,7 +2226,7 @@ class PositionManager:
                 # FIX #2: UPDATE QUANTITY from WebSocket (CRITICAL for verification!)
                 if 'contracts' in data or 'quantity' in data:
                     old_quantity = position.quantity
-                    position.quantity = float(data.get('contracts', data.get('quantity', position.quantity)))
+                    position.quantity: Decimal = to_decimal(data.get('contracts', data.get('quantity', position.quantity)))
                     if position.quantity != old_quantity:
                         logger.info(
                             f"  → Quantity updated for pre-registered {symbol}: "
@@ -2238,7 +2236,7 @@ class PositionManager:
                 # FIX #2: UPDATE CURRENT PRICE from WebSocket
                 if 'mark_price' in data:
                     old_price = position.current_price
-                    position.current_price = float(data.get('mark_price', position.current_price))
+                    position.current_price: Decimal = to_decimal(data.get('mark_price', position.current_price))
                     if position.current_price != old_price:
                         logger.debug(
                             f"  → Price updated for pre-registered {symbol}: "
@@ -2251,7 +2249,7 @@ class PositionManager:
 
             # Update position state
             old_price = position.current_price
-            position.current_price = float(data.get('mark_price', position.current_price))
+            position.current_price: Decimal = to_decimal(data.get('mark_price', position.current_price))
             logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
 
             # UNIFIED PRICE UPDATE (if enabled)
@@ -2636,9 +2634,9 @@ class PositionManager:
                 # Update database
                 await self.repository.close_position(
                     position.id,                    # position_id: int
-                    exit_price,                     # close_price: float
-                    realized_pnl,                   # pnl: float
-                    realized_pnl_percent,           # pnl_percentage: float
+                    float(exit_price),              # close_price: float
+                    float(realized_pnl),            # pnl: float
+                    float(realized_pnl_percent),    # pnl_percentage: float
                     reason                          # reason: str
                 )
 

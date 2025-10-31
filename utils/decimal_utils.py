@@ -29,7 +29,7 @@ def round_decimal(value: Decimal, precision: int = 8, rounding=ROUND_DOWN) -> De
     return value.quantize(quantizer, rounding=rounding)
 
 
-def to_decimal(value: Union[str, int, float, Decimal], precision: int = 8) -> Decimal:
+def to_decimal(value: Union[str, int, float, Decimal, None], precision: int = 8) -> Decimal:
     """
     Safely convert any numeric type to Decimal
 
