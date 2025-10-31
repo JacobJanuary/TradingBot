@@ -2136,11 +2136,12 @@ class PositionManager:
                 # No SL exists - create it using unified set_stop_loss
                 order_side = 'sell' if position.side == 'long' else 'buy'
 
+                from utils.position_helpers import to_decimal
                 result = await sl_manager.set_stop_loss(
                     symbol=position.symbol,
                     side=order_side,
-                    amount=float(position.quantity),
-                    stop_price=stop_price
+                    amount=position.quantity,
+                    stop_price=to_decimal(stop_price)
                 )
 
                 if result['status'] in ['created', 'already_exists']:

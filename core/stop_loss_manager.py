@@ -158,8 +158,8 @@ class StopLossManager:
         self,
         symbol: str,
         side: str,
-        amount: float,
-        stop_price: float
+        amount: Decimal,
+        stop_price: Decimal
     ) -> Dict:
         """
         ЕДИНСТВЕННАЯ функция установки Stop Loss.
@@ -184,11 +184,12 @@ class StopLossManager:
             if has_sl:
                 # CRITICAL FIX: Validate existing SL before reusing
                 # This prevents reusing old SL from previous positions with different entry prices
+                from utils.position_helpers import to_decimal
                 is_valid, reason = self._validate_existing_sl(
-                    existing_sl_price=float(existing_sl),
-                    target_sl_price=float(stop_price),
+                    existing_sl_price=to_decimal(existing_sl),
+                    target_sl_price=stop_price,
                     side=side,
-                    tolerance_percent=5.0
+                    tolerance_percent=Decimal("5.0")
                 )
 
                 if is_valid:
@@ -211,7 +212,7 @@ class StopLossManager:
                     )
 
                     # Cancel the invalid SL
-                    await self._cancel_existing_sl(symbol, float(existing_sl))
+                    await self._cancel_existing_sl(symbol, to_decimal(existing_sl))
 
                     # Fall through to create new SL below
 
@@ -229,7 +230,7 @@ class StopLossManager:
     async def verify_and_fix_missing_sl(
         self,
         position,
-        stop_price: float,
+        stop_price: Decimal,
         max_retries: int = 3
     ):
         """
@@ -278,10 +279,11 @@ class StopLossManager:
             # STEP 3: Retry SL creation
             for attempt in range(max_retries):
                 try:
+                    from utils.position_helpers import to_decimal
                     result = await self.set_stop_loss(
                         symbol=symbol,
                         side=order_side,
-                        amount=float(position.quantity),
+                        amount=to_decimal(position.quantity),
                         stop_price=stop_price
                     )
 
@@ -324,7 +326,7 @@ class StopLossManager:
             self.logger.error(f"Error in verify_and_fix_missing_sl for {symbol}: {e}")
             return False, None  # CRITICAL FIX: Return tuple
 
-    async def _set_bybit_stop_loss(self, symbol: str, stop_price: float) -> Dict:
+    async def _set_bybit_stop_loss(self, symbol: str, stop_price: Decimal) -> Dict:
         """
         Установка Stop Loss для Bybit через position-attached method.
 
@@ -444,8 +446,8 @@ class StopLossManager:
         self,
         symbol: str,
         side: str,
-        amount: float,
-        stop_price: float
+        amount: Decimal,
+        stop_price: Decimal
     ) -> Dict:
         """
         Установка Stop Loss для других бирж через conditional orders.
@@ -459,7 +461,7 @@ class StopLossManager:
         from decimal import Decimal, ROUND_DOWN, ROUND_UP
 
         max_retries = 3
-        stop_price_decimal = Decimal(str(stop_price))
+        stop_price_decimal = stop_price
 
         for attempt in range(max_retries):
             try:
@@ -467,12 +469,13 @@ class StopLossManager:
                 ticker = await self.exchange.fetch_ticker(symbol)
 
                 # Use mark price for Binance Futures (critical for accuracy)
+                from utils.position_helpers import to_decimal
                 if self.exchange_name == 'binance':
-                    current_price = Decimal(
-                        str(ticker.get('info', {}).get('markPrice', ticker['last']))
+                    current_price = to_decimal(
+                        ticker.get('info', {}).get('markPrice', ticker['last'])
                     )
                 else:
-                    current_price = Decimal(str(ticker['last']))
+                    current_price = to_decimal(ticker['last'])
 
                 # STEP 2: Validate and adjust stop price with safety buffer
                 min_buffer_pct = Decimal('0.1')  # 0.1% minimum distance
@@ -714,10 +717,10 @@ class StopLossManager:
 
     def _validate_existing_sl(
         self,
-        existing_sl_price: float,
-        target_sl_price: float,
+        existing_sl_price: Decimal,
+        target_sl_price: Decimal,
         side: str,
-        tolerance_percent: float = 5.0
+        tolerance_percent: Decimal = Decimal("5.0")
     ) -> tuple:
         """
         CRITICAL FIX: Validate if existing SL is acceptable for current position
@@ -746,7 +749,7 @@ class StopLossManager:
             tuple: (is_valid: bool, reason: str)
         """
         # Calculate difference percentage
-        diff_pct = abs(existing_sl_price - target_sl_price) / target_sl_price * 100
+        diff_pct = abs(existing_sl_price - target_sl_price) / target_sl_price * Decimal("100")
 
         # Determine position side from order side
         # side='sell' means closing LONG position
@@ -797,7 +800,7 @@ class StopLossManager:
                     f"target {target_sl_price} ({diff_pct:.2f}% difference)"
                 )
 
-    async def _cancel_existing_sl(self, symbol: str, sl_price: float):
+    async def _cancel_existing_sl(self, symbol: str, sl_price: Decimal):
         """
         CRITICAL FIX: Cancel existing (invalid) SL order
 
@@ -823,7 +826,8 @@ class StopLossManager:
 
                     if order_stop_price:
                         # Match by price (within 1% tolerance)
-                        price_diff = abs(float(order_stop_price) - float(sl_price)) / float(sl_price)
+                        from utils.position_helpers import to_decimal
+                        price_diff = abs(to_decimal(order_stop_price) - sl_price) / sl_price
 
                         if price_diff < 0.01:  # Within 1%
                             self.logger.info(f"Cancelling old SL order {order['id']} at {order_stop_price}")
@@ -863,8 +867,8 @@ async def set_stop_loss_unified(
     exchange_name: str,
     symbol: str,
     side: str,
-    amount: float,
-    stop_price: float
+    amount: Decimal,
+    stop_price: Decimal
 ) -> Dict:
     """
     Унифицированная функция установки SL для использования в старых модулях.
