@@ -184,7 +184,7 @@ class StopLossManager:
             if has_sl:
                 # CRITICAL FIX: Validate existing SL before reusing
                 # This prevents reusing old SL from previous positions with different entry prices
-                from utils.position_helpers import to_decimal
+                from utils.decimal_utils import to_decimal
                 is_valid, reason = self._validate_existing_sl(
                     existing_sl_price=to_decimal(existing_sl),
                     target_sl_price=stop_price,
@@ -279,7 +279,7 @@ class StopLossManager:
             # STEP 3: Retry SL creation
             for attempt in range(max_retries):
                 try:
-                    from utils.position_helpers import to_decimal
+                    from utils.decimal_utils import to_decimal
                     result = await self.set_stop_loss(
                         symbol=symbol,
                         side=order_side,
@@ -469,7 +469,7 @@ class StopLossManager:
                 ticker = await self.exchange.fetch_ticker(symbol)
 
                 # Use mark price for Binance Futures (critical for accuracy)
-                from utils.position_helpers import to_decimal
+                from utils.decimal_utils import to_decimal
                 if self.exchange_name == 'binance':
                     current_price = to_decimal(
                         ticker.get('info', {}).get('markPrice', ticker['last'])
@@ -826,7 +826,7 @@ class StopLossManager:
 
                     if order_stop_price:
                         # Match by price (within 1% tolerance)
-                        from utils.position_helpers import to_decimal
+                        from utils.decimal_utils import to_decimal
                         price_diff = abs(to_decimal(order_stop_price) - sl_price) / sl_price
 
                         if price_diff < 0.01:  # Within 1%
