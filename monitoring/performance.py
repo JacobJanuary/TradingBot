@@ -340,7 +340,7 @@ class PerformanceTracker:
         
         for position in sorted_positions:
             if position.closed_at and position.realized_pnl:
-                equity += position.realized_pnl
+                equity += Decimal(str(position.realized_pnl))
                 curve.append((position.closed_at, equity))
         
         self.equity_curve = curve
@@ -498,26 +498,26 @@ class PerformanceTracker:
                 max_loss = (max(price_history) - position.entry_price) * abs(position.quantity)
             
             analysis = PositionAnalysis(
-                position_id=position.id,
-                symbol=position.symbol,
-                side=position.side,
-                entry_price=position.entry_price,
-                exit_price=position.exit_price,
-                size=position.quantity,
-                pnl=position.realized_pnl or Decimal('0'),
-                pnl_percentage=(position.realized_pnl / (position.entry_price * abs(position.quantity)) * 100)
+                position_id=str(position.id),
+                symbol=str(position.symbol),
+                side=str(position.side),
+                entry_price=Decimal(str(position.entry_price)),
+                exit_price=Decimal(str(position.exit_price)) if position.exit_price else None,
+                size=Decimal(str(position.quantity)),
+                pnl=Decimal(str(position.realized_pnl)) if position.realized_pnl else Decimal('0'),
+                pnl_percentage=(Decimal(str(position.realized_pnl)) / (Decimal(str(position.entry_price)) * abs(Decimal(str(position.quantity)))) * 100)
                               if position.realized_pnl else Decimal('0'),
                 duration=position.closed_at - position.opened_at if position.closed_at else timedelta(),
-                max_profit=max_profit,
-                max_loss=max_loss,
-                fees=position.fees or Decimal('0'),
+                max_profit=Decimal(str(max_profit)),
+                max_loss=Decimal(str(max_loss)),
+                fees=Decimal(str(position.fees)) if position.fees else Decimal('0'),
                 risk_reward_ratio=rr_ratio,
                 mae=mae,
                 mfe=mfe
             )
             
             # Cache analysis
-            self.position_analysis[position.id] = analysis
+            self.position_analysis[str(position.id)] = analysis
             
             return analysis
             
@@ -530,7 +530,7 @@ class PerformanceTracker:
         
         # This should fetch actual price data
         # For now, returning mock data
-        return [position.entry_price]
+        return [Decimal(str(position.entry_price))]
     
     def _calculate_mae_mfe(self, 
                           position: Position,
@@ -592,7 +592,7 @@ class PerformanceTracker:
         """Record completed trade for session tracking"""
         
         if position.realized_pnl:
-            self.session_pnl += position.realized_pnl
+            self.session_pnl += Decimal(str(position.realized_pnl))
             self.session_trades += 1
     
     async def export_performance_report(self, filepath: str):

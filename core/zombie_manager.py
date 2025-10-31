@@ -673,7 +673,7 @@ class ZombieOrderMonitor:
         self.manager = manager
         self.alert_threshold = 10  # Alert if more than 10 zombies
         self.check_interval = 300  # 5 minutes
-        self.last_alert = None
+        self.last_alert: Optional[float] = None
 
     async def monitor_loop(self):
         """Continuous monitoring loop"""

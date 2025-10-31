@@ -411,7 +411,7 @@ class ExchangeManager:
     # ============== Order Management ==============
 
     async def create_order(self, symbol: str, type: str, side: str, amount: float,
-                          price: float = None, params: Dict = None) -> Dict:
+                          price: Optional[float] = None, params: Optional[Dict] = None) -> Dict:
         """
         Universal order creation method - REQUIRED for aged_position_manager
 
@@ -477,7 +477,7 @@ class ExchangeManager:
         """
         try:
             # Check and adjust amount to exchange limits
-            amount = await self._validate_and_adjust_amount(symbol, float(amount))
+            validated_amount = await self._validate_and_adjust_amount(symbol, float(amount))
 
             # CRITICAL FIX: Convert symbol to exchange-specific format
             exchange_symbol = self.find_exchange_symbol(symbol)
@@ -489,7 +489,7 @@ class ExchangeManager:
                 self.exchange.create_market_order,
                 symbol=exchange_symbol,  # ✅ Use exchange-specific format
                 side=side.lower(),
-                amount=amount,
+                amount=validated_amount,
                 params=params or {}
             )
 
@@ -637,7 +637,7 @@ class ExchangeManager:
         """
         try:
             # CRITICAL: Validate and adjust amount to prevent Binance error -4005
-            amount = await self._validate_and_adjust_amount(symbol, float(amount))
+            validated_amount = await self._validate_and_adjust_amount(symbol, float(amount))
 
             # Binance futures stop loss implementation
             if self.name == 'binance':
@@ -659,7 +659,7 @@ class ExchangeManager:
                     symbol=symbol,
                     type='STOP_MARKET',  # Correct type for Binance futures stop loss
                     side=side.lower(),
-                    amount=amount,
+                    amount=validated_amount,
                     price=None,  # No price needed for STOP_MARKET
                     params=params
                 )
@@ -1003,7 +1003,7 @@ class ExchangeManager:
                         )
 
                         cancel_duration = (now_utc() - cancel_start).total_seconds() * 1000
-                        total_cancel_time += cancel_duration
+                        total_cancel_time += int(cancel_duration)
 
                         logger.info(
                             f"🗑️  Cancelled SL order {sl_order['id'][:8]}... "
@@ -1026,7 +1026,7 @@ class ExchangeManager:
             create_start = now_utc()
 
             # Get position size - CRITICAL FIX: Check cache first
-            amount = 0
+            amount: float = 0.0
 
             # Try cache first (instant, no API call)
             if symbol in self.positions and float(self.positions[symbol].get('contracts', 0)) > 0:
@@ -1079,8 +1079,8 @@ class ExchangeManager:
                 }
             )
 
-            result['create_time_ms'] = (now_utc() - create_start).total_seconds() * 1000
-            result['unprotected_window_ms'] = (now_utc() - unprotected_start).total_seconds() * 1000
+            result['create_time_ms'] = int((now_utc() - create_start).total_seconds() * 1000)
+            result['unprotected_window_ms'] = int((now_utc() - unprotected_start).total_seconds() * 1000)
 
             result['success'] = True
 
@@ -1333,10 +1333,10 @@ class ExchangeManager:
             symbol=order['symbol'],
             side=order['side'],
             type=order['type'],
-            amount=order['amount'],
-            price=order['price'] or 0,
-            filled=order.get('filled', 0),
-            remaining=order.get('remaining', order['amount']),
+            amount=to_decimal(order['amount']),
+            price=to_decimal(order['price'] or 0),
+            filled=to_decimal(order.get('filled', 0)),
+            remaining=to_decimal(order.get('remaining', order['amount'])),
             status=order['status'],
             timestamp=timestamp,
             info=order['info']
@@ -1559,7 +1559,7 @@ class ExchangeManager:
             logger.error(f"Error checking if can open position for {symbol}: {e}")
             return False, f"Validation error: {e}"
 
-    async def validate_order(self, symbol: str, side: str, amount: Decimal, price: Decimal = None) -> Tuple[bool, str]:
+    async def validate_order(self, symbol: str, side: str, amount: Decimal, price: Optional[Decimal] = None) -> Tuple[bool, str]:
         """
         Validate order parameters before submission
         Returns (is_valid, error_message)

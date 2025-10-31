@@ -129,13 +129,13 @@ class RiskManager:
             'risk_level': self.classify_risk_level(risk_score)
         }
     
-    def _calculate_risk_score(self, 
+    def _calculate_risk_score(self,
                              exposure: Decimal,
                              pnl: Decimal,
                              position_count: int) -> float:
         """Calculate risk score 0-100"""
-        
-        score = 0
+
+        score: float = 0.0
         
         # Exposure component (40%)
         exposure_ratio = float(exposure / self.max_position_size)

@@ -166,7 +166,7 @@ class AgedPositionAdapter:
         )
 
         # Wait for update
-        elapsed = 0
+        elapsed: float = 0.0
         while elapsed < timeout:
             await asyncio.sleep(1)
             elapsed = time.time() - start_time

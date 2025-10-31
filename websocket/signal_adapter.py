@@ -189,7 +189,7 @@ class SignalAdapter:
         """
         try:
             # Extract filter fields
-            params = {}
+            params: Dict[str, int | float] = {}
 
             # Optional fields - only include if present
             if 'max_trades_filter' in ws_signal and ws_signal['max_trades_filter'] is not None:

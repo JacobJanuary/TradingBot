@@ -410,7 +410,7 @@ class AgedPositionManager:
         except Exception as e:
             logger.error(f"Error processing aged position {position.symbol}: {e}", exc_info=True)
 
-    def _calculate_target_price(self, position, hours_over_limit: float, current_price: float) -> Tuple[str, float, float, str]:
+    def _calculate_target_price(self, position, hours_over_limit: float, current_price: float) -> Tuple[str, Decimal, Decimal, str]:
         """
         Calculate target price based on position age and determine order type
 
