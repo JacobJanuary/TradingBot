@@ -236,7 +236,7 @@ class SmartTrailingStopManager:
             symbol: Trading symbol
             position_data: Optional position data from position_manager (avoids exchange fetch during startup)
                           If provided, will validate against this cached data instead of calling fetch_positions()
-                          Format: {'symbol': str, 'side': str, 'size': float, 'entryPrice': float}
+                          Format: {'symbol': str, 'side': str, 'size': Decimal, 'entryPrice': Decimal}
 
         Returns:
             TrailingStopInstance if state exists in DB, None otherwise
@@ -486,9 +486,9 @@ class SmartTrailingStopManager:
     async def create_trailing_stop(self,
                                    symbol: str,
                                    side: str,
-                                   entry_price: float,
-                                   quantity: float,
-                                   initial_stop: Optional[float] = None,
+                                   entry_price: Decimal,
+                                   quantity: Decimal,
+                                   initial_stop: Optional[Decimal] = None,
                                    position_params: Optional[Dict] = None) -> TrailingStopInstance:
         """
         Create new trailing stop instance
@@ -525,19 +525,19 @@ class SmartTrailingStopManager:
         # STEP 2: Create instance (NO LOCK - thread-safe, no shared state modified)
         ts = TrailingStopInstance(
             symbol=symbol,
-            entry_price=Decimal(str(entry_price)),
-            current_price=Decimal(str(entry_price)),
-            highest_price=Decimal(str(entry_price)) if side == 'long' else UNINITIALIZED_PRICE_HIGH,
-            lowest_price=UNINITIALIZED_PRICE_HIGH if side == 'long' else Decimal(str(entry_price)),
+            entry_price=entry_price,
+            current_price=entry_price,
+            highest_price=entry_price if side == 'long' else UNINITIALIZED_PRICE_HIGH,
+            lowest_price=UNINITIALIZED_PRICE_HIGH if side == 'long' else entry_price,
             side=side.lower(),
-            quantity=Decimal(str(quantity)),
+            quantity=quantity,
             activation_percent=activation_percent,
             callback_percent=callback_percent
         )
 
         # STEP 3: Set initial stop if provided (NO LOCK - exchange API call)
         if initial_stop:
-            ts.current_stop_price = Decimal(str(initial_stop))
+            ts.current_stop_price = initial_stop
             # Place initial stop order
             await self._place_stop_order(ts)
 
@@ -603,7 +603,7 @@ class SmartTrailingStopManager:
 
         return ts
 
-    async def update_price(self, symbol: str, price: float) -> Optional[Dict]:
+    async def update_price(self, symbol: str, price: Decimal) -> Optional[Dict]:
         """
         Update price and check trailing stop logic
         Called from WebSocket on every price update
@@ -618,7 +618,7 @@ class SmartTrailingStopManager:
         async with self.lock:
             ts = self.trailing_stops[symbol]
             old_price = ts.current_price
-            ts.current_price = Decimal(str(price))
+            ts.current_price = price
 
             # Update highest/lowest
             peak_updated = False
@@ -1444,7 +1444,7 @@ class SmartTrailingStopManager:
             logger.error(f"❌ Failed to update stop order for {ts.symbol}: {e}", exc_info=True)
             return False
 
-    async def on_position_closed(self, symbol: str, realized_pnl: float = None):
+    async def on_position_closed(self, symbol: str, realized_pnl: Optional[Decimal] = None):
         """Handle position closure
 
         FIX #3: Always clean database state, even if TS not in memory
