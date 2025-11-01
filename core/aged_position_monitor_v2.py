@@ -145,7 +145,7 @@ class AgedPositionMonitorV2:
 
         try:
             # Get exchange manager
-            exchange = self.position_manager.exchange_managers.get(exchange_name)
+            exchange = self.position_manager.exchanges.get(exchange_name)
             if not exchange:
                 error_msg = f"Exchange {exchange_name} not found in managers"
                 logger.error(f"❌ {symbol}: {error_msg}")

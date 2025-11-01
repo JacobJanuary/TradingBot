@@ -946,6 +946,13 @@ class WebSocketSignalProcessor:
                     'target': max_trades,
                     'total_signals': len(exchange_signals),
                     'filtered': filter_stats['filtered'],
+                    'duplicates': filter_reasons['duplicates'],  # FIX: Add missing key
+                    'filtered_oi': filter_reasons['low_oi'],
+                    'filtered_volume': filter_reasons['low_volume'],
+                    'filtered_price': filter_reasons['price_change'],
+                    'validated_successful': 0,  # FIX: Add missing key
+                    'failed': 0,
+                    'params_source': params.get('source', 'unknown'),
                     'no_signals_after_filter': True
                 }
                 continue
