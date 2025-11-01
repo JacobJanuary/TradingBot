@@ -2660,40 +2660,22 @@ class PositionManager:
                 else:
                     self.stats['loss_count'] += 1
 
-                # Clean up tracking
-                del self.positions[symbol]
-                self.position_count -= 1
-                self.total_exposure -= Decimal(str(position.quantity * position.entry_price))
+                # ✅ REFACTOR: Use centralized cleanup method
+                cleanup_result = await self._cleanup_position_monitoring(
+                    symbol=symbol,
+                    exchange_name=position.exchange,
+                    position_data=position,
+                    realized_pnl=realized_pnl,
+                    reason=reason,
+                    skip_events=False  # Log all events
+                )
 
-                # Clean up trailing stop
-                trailing_manager = self.trailing_managers.get(position.exchange)
-                if trailing_manager:
-                    await trailing_manager.on_position_closed(symbol, realized_pnl)
-
-                    # Log trailing stop removal
-                    if position.has_trailing_stop:
-                        event_logger = get_event_logger()
-                        if event_logger:
-                            await event_logger.log_event(
-                                EventType.TRAILING_STOP_REMOVED,
-                                {
-                                    'symbol': symbol,
-                                    'position_id': position.id,
-                                    'reason': 'position_closed',
-                                    'realized_pnl': float(realized_pnl)
-                                },
-                                position_id=position.id,
-                                symbol=symbol,
-                                exchange=position.exchange,
-                                severity='INFO'
-                            )
-
-                # ✅ FIX: Clean up aged position monitoring
-                if self.unified_protection:
-                    aged_adapter = self.unified_protection.get('aged_adapter')
-                    if aged_adapter and symbol in aged_adapter.monitoring_positions:
-                        await aged_adapter.remove_aged_position(symbol)
-                        logger.debug(f"Removed {symbol} from aged monitoring on closure")
+                # Check for cleanup errors
+                if cleanup_result['errors']:
+                    logger.warning(
+                        f"⚠️ Position closed but cleanup had errors: "
+                        f"{', '.join(cleanup_result['errors'])}"
+                    )
 
                 logger.info(
                     f"Position closed: {symbol} {reason} "
