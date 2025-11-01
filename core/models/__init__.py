@@ -1,0 +1,3 @@
+"""
+Core models module.
+"""
