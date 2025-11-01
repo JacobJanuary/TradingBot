@@ -158,6 +158,8 @@ class OrderExecutor:
             )
 
         # Determine close side (opposite of position)
+        # LONG position → close with SELL order
+        # SHORT position → close with BUY order
         close_side = 'sell' if position_side in ['long', 'buy'] else 'buy'
 
         # Try each order type in sequence
@@ -409,13 +411,16 @@ class OrderExecutor:
         if current_price <= 0:
             raise Exception(f"Invalid ticker price for {symbol}: {current_price}")
 
-        # Calculate aggressive price (with slippage)
+        # Calculate aggressive price (with slippage to ensure execution)
+        # IMPORTANT: When closing positions:
+        # - side='buy' means closing a SHORT position (need to buy back)
+        # - side='sell' means closing a LONG position (need to sell)
         if side == 'buy':
-            # For buy, use higher price
-            limit_price = current_price * (Decimal('1') + self.slippage_percent / Decimal('100'))
-        else:
-            # For sell, use lower price
+            # For buy (closing SHORT), use lower price for aggressive fill
             limit_price = current_price * (Decimal('1') - self.slippage_percent / Decimal('100'))
+        else:
+            # For sell (closing LONG), use higher price to cover fees
+            limit_price = current_price * (Decimal('1') + self.slippage_percent / Decimal('100'))
 
         # Round to exchange precision
         limit_price = self._round_price(limit_price, symbol)
@@ -466,7 +471,12 @@ class OrderExecutor:
             raise Exception("Order book is empty")
 
         # Use best bid/ask for maker order
+        # IMPORTANT: When closing positions as maker:
+        # - side='buy' means closing a SHORT position (need to buy back)
+        # - side='sell' means closing a LONG position (need to sell)
+        # We place at the best bid/ask to be a maker and get maker fees
         if side == 'buy':
+            # For buy (closing SHORT), place at top of bid to be best buyer
             # Check bids exist and are valid
             if not order_book.get('bids') or len(order_book['bids']) == 0:
                 raise Exception("No bids in order book")
@@ -475,6 +485,7 @@ class OrderExecutor:
             # Place at top of bid
             limit_price = Decimal(str(order_book['bids'][0][0]))
         else:
+            # For sell (closing LONG), place at top of ask to be best seller
             # Check asks exist and are valid
             if not order_book.get('asks') or len(order_book['asks']) == 0:
                 raise Exception("No asks in order book")
