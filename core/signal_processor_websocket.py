@@ -900,32 +900,92 @@ class WebSocketSignalProcessor:
             max_trades = params.get('max_trades', 5)
             buffer_size = params.get('buffer_size', max_trades + 5)
 
-            # Sort signals by combined score
-            sorted_signals = sorted(
-                exchange_signals,
+            # 1. Применяем фильтры ко ВСЕМ сигналам
+            logger.info(f"{exchange_name_cap}: Applying filters to {len(exchange_signals)} signals")
+
+            filter_result = await self.wave_processor.process_wave_signals(
+                signals=exchange_signals,  # ВСЕ сигналы
+                wave_timestamp=wave_timestamp,
+                mode='filter'  # Только фильтрация, без side effects
+            )
+
+            # 2. Извлекаем прошедшие фильтры
+            filtered_signals = [
+                s['signal_data'] for s in filter_result.get('successful', [])
+            ]
+
+            # 3. Собираем статистику фильтрации
+            filter_stats = {
+                'total': len(exchange_signals),
+                'passed': len(filtered_signals),
+                'filtered': len(filter_result.get('skipped', [])),
+                'failed': len(filter_result.get('failed', []))
+            }
+
+            # Детализация по причинам
+            skipped = filter_result.get('skipped', [])
+            filter_reasons = {
+                'duplicates': len([s for s in skipped if 'already exists' in s.get('reason', '').lower()]),
+                'low_oi': len([s for s in skipped if 'oi' in s.get('reason', '').lower()]),
+                'low_volume': len([s for s in skipped if 'volume' in s.get('reason', '').lower()]),
+                'price_change': len([s for s in skipped if 'price' in s.get('reason', '').lower() and 'oi' not in s.get('reason', '').lower()])
+            }
+
+            logger.info(
+                f"{exchange_name_cap}: Filtered {filter_stats['filtered']}/{filter_stats['total']} "
+                f"(Dup:{filter_reasons['duplicates']}, OI:{filter_reasons['low_oi']}, "
+                f"Vol:{filter_reasons['low_volume']}, Price:{filter_reasons['price_change']})"
+            )
+
+            # 4. Проверка: есть ли сигналы после фильтрации
+            if not filtered_signals:
+                logger.warning(f"⚠️ {exchange_name_cap}: All signals filtered out!")
+                results_by_exchange[exchange_id] = {
+                    'exchange_name': exchange_name_cap,
+                    'executed': 0,
+                    'target': max_trades,
+                    'total_signals': len(exchange_signals),
+                    'filtered': filter_stats['filtered'],
+                    'no_signals_after_filter': True
+                }
+                continue
+
+            # Edge case: недостаточно сигналов после фильтрации
+            if len(filtered_signals) < max_trades:
+                logger.warning(
+                    f"⚠️ {exchange_name_cap}: Only {len(filtered_signals)} signals passed filters, "
+                    f"target was {max_trades}. Will open max possible positions."
+                )
+
+            # 5. Сортируем ОТФИЛЬТРОВАННЫЕ по score
+            sorted_filtered = sorted(
+                filtered_signals,
                 key=lambda s: (s.get('score_week', 0) + s.get('score_month', 0)),
                 reverse=True
             )
 
-            # Select top signals with buffer
-            signals_to_process = sorted_signals[:buffer_size]
+            # 6. Выбираем топ N для исполнения
+            # Берём немного больше target для компенсации возможных ошибок исполнения
+            execution_buffer = min(3, len(sorted_filtered) - max_trades) if len(sorted_filtered) > max_trades else 0
+            signals_to_execute = sorted_filtered[:max_trades + execution_buffer]
 
             logger.info(
-                f"{exchange_name_cap}: Processing {len(signals_to_process)}/{len(exchange_signals)} "
-                f"top signals (target: {max_trades}, buffer: {buffer_size})"
+                f"{exchange_name_cap}: Selected top {len(signals_to_execute)} from {len(filtered_signals)} "
+                f"filtered signals (target: {max_trades})"
             )
 
-            # Process through WaveSignalProcessor (applies filters)
-            wave_result = await self.wave_processor.process_wave_signals(
-                signals=signals_to_process,
-                wave_timestamp=wave_timestamp
+            # 7. Полная обработка выбранных сигналов
+            process_result = await self.wave_processor.process_wave_signals(
+                signals=signals_to_execute,
+                wave_timestamp=wave_timestamp,
+                mode='process'  # Полная обработка с записью в БД
             )
 
             # Execute successful signals until target reached
             executed = 0
             failed = 0
 
-            for signal_result in wave_result.get('successful', []):
+            for signal_result in process_result.get('successful', []):
                 if executed >= max_trades:
                     logger.info(f"✅ {exchange_name_cap}: Target {max_trades} reached, stopping")
                     break
@@ -1022,40 +1082,36 @@ class WebSocketSignalProcessor:
                         logger.error(f"Error executing signal: {e}")
                         failed += 1
 
-            # Count duplicates and filtered
-            skipped = wave_result.get('skipped', [])
-            # Count different filter reasons
-            duplicates = len([s for s in skipped if 'Position already exists' in s.get('reason', '')])
-            filtered_oi = len([s for s in skipped if 'OI' in s.get('reason', '') or 'open_interest' in s.get('reason', '')])
-            filtered_volume = len([s for s in skipped if 'volume' in s.get('reason', '')])
-            filtered_other = len(skipped) - duplicates - filtered_oi - filtered_volume
-
+            # Статистика уже собрана в filter_reasons из filter phase
             results_by_exchange[exchange_id] = {
                 'exchange_name': exchange_name_cap,
                 'executed': executed,
                 'target': max_trades,
                 'buffer_size': buffer_size,
                 'total_signals': len(exchange_signals),
-                'selected_for_validation': len(signals_to_process),
-                'validated_successful': len(wave_result.get('successful', [])),
-                'duplicates': duplicates,
-                'filtered': filtered_oi + filtered_volume + filtered_other,
-                'filtered_oi': filtered_oi,
-                'filtered_volume': filtered_volume,
-                'failed': failed + len(wave_result.get('failed', [])),
+                'after_filters': len(filtered_signals),  # NEW
+                'selected_for_execution': len(signals_to_execute),  # RENAMED
+                'validated_successful': len(process_result.get('successful', [])),
+                'duplicates': filter_reasons['duplicates'],  # FROM filter phase
+                'filtered': filter_stats['filtered'],
+                'filtered_oi': filter_reasons['low_oi'],
+                'filtered_volume': filter_reasons['low_volume'],
+                'filtered_price': filter_reasons['price_change'],  # NEW
+                'failed': failed + len(process_result.get('failed', [])),
                 'target_reached': executed >= max_trades,
-                'buffer_saved_us': executed == max_trades and len(wave_result.get('successful', [])) > max_trades,
+                'buffer_saved_us': executed == max_trades and len(process_result.get('successful', [])) > max_trades,
                 'params_source': params.get('source', 'unknown')
             }
 
             total_executed += executed
-            total_failed += failed + len(wave_result.get('failed', []))
-            total_validated += len(wave_result.get('successful', []))
+            total_failed += failed + len(process_result.get('failed', []))
+            total_validated += len(process_result.get('successful', []))
 
             logger.info(
                 f"{exchange_name_cap}: Executed {executed}/{max_trades}, "
-                f"filtered: {filtered_oi + filtered_volume + filtered_other} "
-                f"(OI: {filtered_oi}, volume: {filtered_volume}), duplicates: {duplicates}"
+                f"filtered: {filter_stats['filtered']} "
+                f"(OI: {filter_reasons['low_oi']}, Vol: {filter_reasons['low_volume']}, "
+                f"Dup: {filter_reasons['duplicates']}, Price: {filter_reasons['price_change']})"
             )
 
         # Return final results in expected format

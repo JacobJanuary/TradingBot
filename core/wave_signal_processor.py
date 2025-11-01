@@ -75,7 +75,8 @@ class WaveSignalProcessor:
     async def process_wave_signals(
         self,
         signals: List[Dict],
-        wave_timestamp: str = None
+        wave_timestamp: str = None,
+        mode: str = 'process'  # NEW: 'filter' or 'process'
     ) -> Dict[str, Any]:
         """
         Обрабатывает волну сигналов с graceful degradation.
@@ -104,6 +105,9 @@ class WaveSignalProcessor:
         skipped_symbols = []
         insufficient_funds_hit = False  # Track if InsufficientFunds occurred
 
+        # Сохраняем текущий режим для использования в методах
+        self._current_mode = mode
+
         start_time = datetime.now(timezone.utc)
         wave_id = wave_timestamp or start_time.isoformat()
 
@@ -115,13 +119,19 @@ class WaveSignalProcessor:
         # ✅ ГЛАВНОЕ ИЗМЕНЕНИЕ: используем try-except с continue
         # Based on: Freqtrade pattern for batch processing
         for idx, signal in enumerate(signals, 1):
-            symbol = signal.get('symbol', signal.get('pair_symbol', 'UNKNOWN'))
+            # В режиме filter работаем с копией чтобы не модифицировать оригинал
+            if mode == 'filter':
+                signal_to_check = signal.copy()
+            else:
+                signal_to_check = signal
+
+            symbol = signal_to_check.get('symbol', signal_to_check.get('pair_symbol', 'UNKNOWN'))
 
             try:
                 logger.debug(f"Processing signal {idx}/{len(signals)}: {symbol}")
 
                 # Проверяем на дубликаты
-                is_duplicate, reason = await self._is_duplicate(signal, wave_id)
+                is_duplicate, reason = await self._is_duplicate(signal_to_check, wave_id)
 
                 # ✅ Обрабатываем результат проверки позиции
                 # Если вернулся dict с ошибкой - символ невалидный
@@ -149,15 +159,19 @@ class WaveSignalProcessor:
                     })
                     continue  # ✅ Продолжаем со следующим сигналом
 
-                # Обрабатываем сигнал
-                result = await self._process_single_signal(signal, wave_id)
+                # Обрабатываем сигнал (только в режиме process)
+                if mode == 'process':
+                    result = await self._process_single_signal(signal_to_check, wave_id)
+                else:
+                    # В режиме filter просто помечаем как прошедший фильтры
+                    result = {'status': 'filtered', 'symbol': symbol}
 
                 if result:
                     successful_signals.append({
                         'signal_number': idx,
                         'symbol': symbol,
                         'result': result,
-                        'signal_data': signal  # Добавляем оригинальный сигнал для последующего исполнения
+                        'signal_data': signal  # Всегда оригинальный, не копия
                     })
                     logger.info(f"✅ Signal {idx} ({symbol}) processed successfully")
                 else:
@@ -356,24 +370,26 @@ class WaveSignalProcessor:
                     else:
                         source = 'fallback_10usd'
 
-                    await event_logger.log_event(
-                        EventType.SIGNAL_FILTERED,
-                        {
-                            'signal_id': signal.get('id'),
-                            'symbol': symbol,
-                            'exchange': exchange,
-                            'filter_reason': 'below_minimum_notional',
-                            'position_size_usd': position_size_usd,
-                            'notional_value': float(notional_value),
-                            'min_cost_required': float(min_cost),
-                            'current_price': float(current_price),
-                            'quantity': float(quantity),
-                            'min_cost_source': source
-                        },
-                        symbol=symbol,
-                        exchange=exchange,
-                        severity='INFO'
-                    )
+                    # Log event (только в режиме process)
+                    if getattr(self, '_current_mode', 'process') == 'process':
+                        await event_logger.log_event(
+                            EventType.SIGNAL_FILTERED,
+                            {
+                                'signal_id': signal.get('id'),
+                                'symbol': symbol,
+                                'exchange': exchange,
+                                'filter_reason': 'below_minimum_notional',
+                                'position_size_usd': position_size_usd,
+                                'notional_value': float(notional_value),
+                                'min_cost_required': float(min_cost),
+                                'current_price': float(current_price),
+                                'quantity': float(quantity),
+                                'min_cost_source': source
+                            },
+                            symbol=symbol,
+                            exchange=exchange,
+                            severity='INFO'
+                        )
 
                 return True, f"Position size (${position_size_usd:.2f}) below exchange minimum (${min_cost:.2f})"
 
@@ -408,10 +424,10 @@ class WaveSignalProcessor:
                                 f"⏭️ Signal skipped: {symbol} OI ${oi_usdt:,.0f} < ${min_oi:,} on {exchange}"
                             )
 
-                            # Log event
+                            # Log event (только в режиме process)
                             from core.event_logger import get_event_logger, EventType
                             event_logger = get_event_logger()
-                            if event_logger:
+                            if event_logger and getattr(self, '_current_mode', 'process') == 'process':
                                 await event_logger.log_event(
                                     EventType.SIGNAL_FILTERED,
                                     {
@@ -442,10 +458,10 @@ class WaveSignalProcessor:
                                 f"⏭️ Signal skipped: {symbol} 1h volume ${volume_1h_usdt:,.0f} < ${min_volume:,} on {exchange}"
                             )
 
-                            # Log event
+                            # Log event (только в режиме process)
                             from core.event_logger import get_event_logger, EventType
                             event_logger = get_event_logger()
-                            if event_logger:
+                            if event_logger and getattr(self, '_current_mode', 'process') == 'process':
                                 await event_logger.log_event(
                                     EventType.SIGNAL_FILTERED,
                                     {
@@ -489,10 +505,10 @@ class WaveSignalProcessor:
                                     f"⏭️ Signal skipped: {symbol} {reason} on {exchange}"
                                 )
 
-                                # Log event
+                                # Log event (только в режиме process)
                                 from core.event_logger import get_event_logger, EventType
                                 event_logger = get_event_logger()
-                                if event_logger:
+                                if event_logger and getattr(self, '_current_mode', 'process') == 'process':
                                     await event_logger.log_event(
                                         EventType.SIGNAL_FILTERED,
                                         {
