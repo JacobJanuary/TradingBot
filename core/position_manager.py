@@ -3657,9 +3657,15 @@ class PositionManager:
                                 continue  # Early exit prevents logging with "pending"
 
                             try:
-                                # Remove from local cache
-                                if symbol in self.positions:
-                                    del self.positions[symbol]
+                                # ✅ REFACTOR: Use centralized cleanup method for phantom positions
+                                cleanup_result = await self._cleanup_position_monitoring(
+                                    symbol=symbol,
+                                    exchange_name=exchange_name,
+                                    position_data=position,
+                                    realized_pnl=None,
+                                    reason='phantom_cleanup',
+                                    skip_events=False  # Log cleanup event
+                                )
 
                                 # Update database - mark as closed
                                 await self.repository.update_position_status(
@@ -3670,7 +3676,7 @@ class PositionManager:
 
                                 logger.info(f"✅ Cleaned phantom position: {symbol}")
 
-                                # Log successful cleanup
+                                # Log phantom position closed event (in addition to cleanup event)
                                 event_logger = get_event_logger()
                                 if event_logger:
                                     await event_logger.log_event(
@@ -3679,7 +3685,8 @@ class PositionManager:
                                             'symbol': symbol,
                                             'position_id': position.id,
                                             'reason': 'not_on_exchange',
-                                            'cleanup_action': 'marked_closed'
+                                            'cleanup_action': 'marked_closed',
+                                            'cleanup_status': cleanup_result
                                         },
                                         position_id=position.id,
                                         symbol=symbol,
