@@ -15,7 +15,6 @@ from core.wave_signal_processor import WaveSignalProcessor
 from core.symbol_filter import SymbolFilter
 from models.validation import validate_signal, OrderSide
 from core.event_logger import get_event_logger, EventType
-from core.signal_processing.signal_pipeline import SignalPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +92,6 @@ class WebSocketSignalProcessor:
         # Wave tracking (как в старом SignalProcessor)
         self.processed_waves = {}  # {wave_timestamp: {'signal_ids': set(), 'count': int}}
 
-        # Initialize new SignalPipeline for filtering fix
-        self.signal_pipeline = SignalPipeline(config)
         
         # Statistics
         self.stats = {
@@ -869,11 +866,11 @@ class WebSocketSignalProcessor:
         """
         Process wave signals with per-exchange logic
 
-        NEW: Uses SignalPipeline for filtering and processing
-        1. Apply filters to ALL signals BEFORE selection
-        2. Sort by combined score
-        3. Select top signals per exchange
-        4. Execute with retry logic
+        Uses WaveSignalProcessor for filtering and validation:
+        1. Sort signals by combined score
+        2. Select top signals with buffer
+        3. Apply filters (OI, volume, duplicates) via WaveSignalProcessor
+        4. Execute validated signals until target reached
 
         Args:
             wave_signals: All signals in wave
@@ -883,71 +880,191 @@ class WebSocketSignalProcessor:
         Returns:
             Dict with results per exchange and totals
         """
-        logger.info(f"🌊 Processing wave {wave_timestamp} with NEW SignalPipeline")
+        logger.info(f"🌊 Processing wave {wave_timestamp} with WaveSignalProcessor")
 
-        # Get exchange managers
-        exchange_managers = {
-            'binance': self.position_manager.exchanges.get('binance'),
-            'bybit': self.position_manager.exchanges.get('bybit')
-        }
+        # Group signals by exchange
+        signals_by_exchange = self._group_signals_by_exchange(wave_signals)
 
-        # Process through new pipeline
-        pipeline_result = await self.signal_pipeline.process_wave(
-            raw_signals=wave_signals,
-            exchange_params=params_by_exchange,
-            exchange_managers=exchange_managers,
-            position_manager=self.position_manager
-        )
-
-        # Convert pipeline results to expected format for compatibility
+        # Process each exchange separately
         results_by_exchange = {}
-        total_executed = pipeline_result['summary']['executed']
+        total_executed = 0
         total_failed = 0
-        total_validated = pipeline_result['summary']['validated']
+        total_validated = 0
 
-        # Build per-exchange results for backward compatibility
-        for exchange_id in params_by_exchange.keys():
-            exchange_name = 'Binance' if exchange_id == 1 else 'Bybit'
-            max_trades = params_by_exchange[exchange_id]['max_trades']
+        for exchange_id, exchange_signals in signals_by_exchange.items():
+            exchange_name = 'binance' if exchange_id == 1 else 'bybit'
+            exchange_name_cap = 'Binance' if exchange_id == 1 else 'Bybit'
+            params = params_by_exchange.get(exchange_id, {})
 
-            # Count exchange-specific results from execution_results
-            exchange_executed = 0
-            exchange_failed = 0
-            for result in pipeline_result.get('execution_results', []):
-                if result and isinstance(result, dict):
-                    if result.get('success'):
-                        exchange_executed += 1
-                    else:
-                        exchange_failed += 1
+            # Get target and buffer
+            max_trades = params.get('max_trades', 5)
+            buffer_size = params.get('buffer_size', max_trades + 5)
+
+            # Sort signals by combined score
+            sorted_signals = sorted(
+                exchange_signals,
+                key=lambda s: (s.get('score_week', 0) + s.get('score_month', 0)),
+                reverse=True
+            )
+
+            # Select top signals with buffer
+            signals_to_process = sorted_signals[:buffer_size]
+
+            logger.info(
+                f"{exchange_name_cap}: Processing {len(signals_to_process)}/{len(exchange_signals)} "
+                f"top signals (target: {max_trades}, buffer: {buffer_size})"
+            )
+
+            # Process through WaveSignalProcessor (applies filters)
+            wave_result = await self.wave_processor.process_wave_signals(
+                signals=signals_to_process,
+                wave_timestamp=wave_timestamp
+            )
+
+            # Execute successful signals until target reached
+            executed = 0
+            failed = 0
+
+            for signal_result in wave_result.get('successful', []):
+                if executed >= max_trades:
+                    logger.info(f"✅ {exchange_name_cap}: Target {max_trades} reached, stopping")
+                    break
+
+                signal_data = signal_result.get('signal_data')
+                if signal_data:
+                    # Open position using PositionManager
+                    try:
+                        from core.position_manager import PositionRequest
+
+                        # Create position request
+                        from decimal import Decimal
+
+                        # Get signal direction - CRITICAL: must be explicit
+                        side = signal_data.get('signal_type') or signal_data.get('recommended_action') or signal_data.get('action')
+                        if not side:
+                            logger.error(f"❌ Signal has no direction/side field: {signal_data}")
+                            failed += 1
+                            continue  # Skip this signal - cannot open position without direction
+
+                        # Normalize side to BUY/SELL
+                        side = side.upper()
+                        if side not in ['BUY', 'SELL', 'LONG', 'SHORT']:
+                            logger.error(f"❌ Unknown signal direction: {side} for signal: {signal_data}")
+                            failed += 1
+                            continue
+
+                        # Convert LONG/SHORT to BUY/SELL
+                        if side == 'LONG':
+                            side = 'BUY'
+                        elif side == 'SHORT':
+                            side = 'SELL'
+
+                        # Get symbol and exchange
+                        symbol = signal_data.get('symbol', signal_data.get('pair_symbol'))
+                        exchange_name = signal_data.get('exchange', signal_data.get('exchange_name'))
+
+                        # Get entry price - CRITICAL: must be > 0
+                        entry_price_raw = signal_data.get('entry_price') or signal_data.get('price')
+
+                        if entry_price_raw and float(entry_price_raw) > 0:
+                            entry_price = Decimal(str(entry_price_raw))
+                        else:
+                            # No valid price in signal - fetch current market price
+                            logger.warning(f"⚠️ Signal {signal_data.get('id')} has no valid entry_price, fetching current market price")
+
+                            try:
+                                exchange_manager = self.position_manager.exchanges.get(exchange_name)
+                                if exchange_manager:
+                                    ticker = await exchange_manager.fetch_ticker(symbol)
+                                    current_price = ticker.get('last') or ticker.get('close')
+                                    if current_price and float(current_price) > 0:
+                                        entry_price = Decimal(str(current_price))
+                                        logger.info(f"Using current market price: {entry_price} for {symbol}")
+                                    else:
+                                        logger.error(f"❌ Cannot get valid market price for {symbol}: {ticker}")
+                                        failed += 1
+                                        continue
+                                else:
+                                    logger.error(f"❌ Exchange {exchange_name} not available to fetch price")
+                                    failed += 1
+                                    continue
+                            except Exception as e:
+                                logger.error(f"❌ Error fetching market price for {symbol}: {e}")
+                                failed += 1
+                                continue
+
+                        # Final validation - price must be positive
+                        if entry_price <= 0:
+                            logger.error(f"❌ Invalid entry price {entry_price} for signal {signal_data.get('id')}")
+                            failed += 1
+                            continue
+
+                        position_request = PositionRequest(
+                            signal_id=signal_data.get('id') or signal_data.get('signal_id'),
+                            symbol=symbol,
+                            exchange=exchange_name,
+                            side=side,
+                            entry_price=entry_price
+                        )
+
+                        # Open position
+                        result = await self.position_manager.open_position(position_request)
+
+                        if result and not isinstance(result, dict):
+                            executed += 1
+                            logger.info(f"✅ Opened position for {position_request.symbol}")
+                        else:
+                            failed += 1
+                            if isinstance(result, dict):
+                                logger.warning(f"Failed to open position: {result.get('error', 'Unknown error')}")
+
+                    except Exception as e:
+                        logger.error(f"Error executing signal: {e}")
+                        failed += 1
+
+            # Count duplicates and filtered
+            skipped = wave_result.get('skipped', [])
+            # Count different filter reasons
+            duplicates = len([s for s in skipped if 'Position already exists' in s.get('reason', '')])
+            filtered_oi = len([s for s in skipped if 'OI' in s.get('reason', '') or 'open_interest' in s.get('reason', '')])
+            filtered_volume = len([s for s in skipped if 'volume' in s.get('reason', '')])
+            filtered_other = len(skipped) - duplicates - filtered_oi - filtered_volume
 
             results_by_exchange[exchange_id] = {
-                'exchange_name': exchange_name,
-                'total_signals': pipeline_result['summary']['total_signals'],
-                'selected_for_validation': pipeline_result['summary']['selected'],
-                'validated_successful': pipeline_result['summary']['validated'],
-                'executed': min(exchange_executed, max_trades) if exchange_id == 1 else max(0, exchange_executed - max_trades),
+                'exchange_name': exchange_name_cap,
+                'executed': executed,
                 'target': max_trades,
-                'buffer_size': params_by_exchange[exchange_id]['buffer_size'],
-                'target_reached': exchange_executed >= max_trades,
-                'params_source': params_by_exchange[exchange_id].get('source', 'unknown')
+                'buffer_size': buffer_size,
+                'total_signals': len(exchange_signals),
+                'selected_for_validation': len(signals_to_process),
+                'validated_successful': len(wave_result.get('successful', [])),
+                'duplicates': duplicates,
+                'filtered': filtered_oi + filtered_volume + filtered_other,
+                'filtered_oi': filtered_oi,
+                'filtered_volume': filtered_volume,
+                'failed': failed + len(wave_result.get('failed', [])),
+                'target_reached': executed >= max_trades,
+                'buffer_saved_us': executed == max_trades and len(wave_result.get('successful', [])) > max_trades,
+                'params_source': params.get('source', 'unknown')
             }
 
-            total_failed += exchange_failed
+            total_executed += executed
+            total_failed += failed + len(wave_result.get('failed', []))
+            total_validated += len(wave_result.get('successful', []))
 
-        # Log results
-        logger.info(
-            f"🌊 Wave complete: "
-            f"{pipeline_result['metrics']['executed']}/{pipeline_result['metrics']['total_signals']} executed, "
-            f"{pipeline_result['metrics']['filtered_out']} filtered, "
-            f"Filter rates: {dict(pipeline_result['metrics']['filter_rates'])}"
-        )
+            logger.info(
+                f"{exchange_name_cap}: Executed {executed}/{max_trades}, "
+                f"filtered: {filtered_oi + filtered_volume + filtered_other} "
+                f"(OI: {filtered_oi}, volume: {filtered_volume}), duplicates: {duplicates}"
+            )
 
         # Return final results in expected format
         return {
             'results_by_exchange': results_by_exchange,
             'total_executed': total_executed,
             'total_failed': total_failed,
-            'total_validated': total_validated
+            'total_validated': total_validated,
+            'duplicates': sum(r['duplicates'] for r in results_by_exchange.values())
         }
 
     async def _execute_signal(self, signal: Dict) -> bool:

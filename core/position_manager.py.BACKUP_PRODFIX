@@ -1080,12 +1080,7 @@ class PositionManager:
 
                 return None
 
-            # 4. Validate entry price
-            if not request.entry_price or request.entry_price <= 0:
-                logger.error(f"❌ Invalid entry price in request: {request.entry_price} for {symbol}")
-                return {'error': 'invalid_entry_price', 'message': f'Entry price must be > 0, got {request.entry_price}'}
-
-            # 5. Calculate position size
+            # 4. Calculate position size
             position_size_usd = request.position_size_usd or self.config.position_size_usd
             quantity = await self._calculate_position_size(
                 exchange, symbol, Decimal(str(request.entry_price)), Decimal(str(position_size_usd))
@@ -1951,11 +1946,6 @@ class PositionManager:
             # Use maximum instead of failing
             size_usd = max_position_usd
 
-        # Validate price before division
-        if price <= 0:
-            logger.error(f"Invalid price for position calculation: {price} for {symbol}")
-            return None
-
         # Simple calculation: size_usd / price
         # CRITICAL FIX: Ensure size_usd is Decimal to support both float and Decimal inputs
         # Python 3 doesn't support float / Decimal mixed-type arithmetic
@@ -2144,7 +2134,7 @@ class PositionManager:
                 # No SL exists - create it using unified set_stop_loss
                 order_side = 'sell' if position.side == 'long' else 'buy'
 
-                from utils.decimal_utils import to_decimal
+                from utils.position_helpers import to_decimal
                 result = await sl_manager.set_stop_loss(
                     symbol=position.symbol,
                     side=order_side,

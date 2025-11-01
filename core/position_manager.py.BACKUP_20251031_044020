@@ -139,14 +139,14 @@ class PositionState:
     symbol: str
     exchange: str
     side: str  # 'long' or 'short'
-    quantity: Decimal
-    entry_price: Decimal
-    current_price: Decimal
-    unrealized_pnl: Decimal
+    quantity: float
+    entry_price: float
+    current_price: float
+    unrealized_pnl: float
     unrealized_pnl_percent: float
 
     has_stop_loss: bool = False
-    stop_loss_price: Optional[Decimal] = None
+    stop_loss_price: Optional[float] = None
 
     has_trailing_stop: bool = False
     trailing_activated: bool = False
@@ -157,9 +157,9 @@ class PositionState:
     # NEW: TS health tracking for fallback
     ts_last_update_time: Optional[datetime] = None  # Last TS update
 
-    opened_at: Optional[datetime] = None
+    opened_at: datetime = None
     age_hours: float = 0
-
+    
     # Pending close order info
     pending_close_order: Optional[Dict] = None
 
@@ -419,7 +419,7 @@ class PositionManager:
                     quantity=pos['quantity'],
                     entry_price=pos['entry_price'],
                     current_price=pos['current_price'] or pos['entry_price'],
-                    unrealized_pnl=pos['pnl'] or Decimal('0'),
+                    unrealized_pnl=pos['pnl'] or 0,
                     unrealized_pnl_percent=pos['pnl_percentage'] or 0,
                     has_stop_loss=pos['stop_loss'] is not None,
                     stop_loss_price=pos['stop_loss'],
@@ -611,8 +611,8 @@ class PositionManager:
                         position_dict = {
                             'symbol': symbol,
                             'side': position.side,
-                            'size': safe_get_attr(position, 'quantity', 'qty', 'size', default=0),
-                            'entryPrice': position.entry_price
+                            'size': float(safe_get_attr(position, 'quantity', 'qty', 'size', default=0)),
+                            'entryPrice': float(position.entry_price)
                         }
                         restored_ts = await trailing_manager._restore_state(symbol, position_data=position_dict)
 
@@ -771,9 +771,9 @@ class PositionManager:
 
                         await self.repository.close_position(
                             pos_state.id,                           # position_id: int
-                            float(pos_state.current_price) if pos_state.current_price else 0.0,        # close_price: float
-                            float(pos_state.unrealized_pnl) if pos_state.unrealized_pnl else 0.0,       # pnl: float
-                            float(pos_state.unrealized_pnl_percent) if pos_state.unrealized_pnl_percent else 0.0, # pnl_percentage: float
+                            pos_state.current_price or 0.0,        # close_price: float
+                            pos_state.unrealized_pnl or 0.0,       # pnl: float
+                            pos_state.unrealized_pnl_percent or 0.0, # pnl_percentage: float
                             'sync_cleanup'                          # reason: str
                         )
                     # Remove from tracking
@@ -812,10 +812,10 @@ class PositionManager:
                             symbol=symbol,
                             exchange=exchange_name,
                             side=side,
-                            quantity=to_decimal(quantity),
-                            entry_price=to_decimal(entry_price),
-                            current_price=to_decimal(entry_price),
-                            unrealized_pnl=Decimal('0'),
+                            quantity=quantity,
+                            entry_price=entry_price,
+                            current_price=entry_price,
+                            unrealized_pnl=0,
                             unrealized_pnl_percent=0,
                             has_stop_loss=db_position.get('has_stop_loss', True),
                             stop_loss_price=to_decimal(db_position.get('stop_loss_price')) if db_position.get('stop_loss_price') else None,
@@ -875,10 +875,10 @@ class PositionManager:
                             symbol=symbol,
                             exchange=exchange_name,
                             side=side,
-                            quantity=to_decimal(quantity),
-                            entry_price=to_decimal(entry_price),
-                            current_price=to_decimal(entry_price),
-                            unrealized_pnl=Decimal('0'),
+                            quantity=quantity,
+                            entry_price=entry_price,
+                            current_price=entry_price,
+                            unrealized_pnl=0,
                             unrealized_pnl_percent=0,
                             has_stop_loss=False,
                             stop_loss_price=None,
@@ -898,8 +898,8 @@ class PositionManager:
                                 await trailing_manager.create_trailing_stop(
                                     symbol=symbol,
                                     side=side,
-                                    entry_price=to_decimal(entry_price),
-                                    quantity=to_decimal(quantity),
+                                    entry_price=entry_price,
+                                    quantity=quantity,
                                     initial_stop=stop_loss_price  # Использовать Protection SL как initial
                                 )
                                 position_state.has_trailing_stop = True
@@ -1080,15 +1080,10 @@ class PositionManager:
 
                 return None
 
-            # 4. Validate entry price
-            if not request.entry_price or request.entry_price <= 0:
-                logger.error(f"❌ Invalid entry price in request: {request.entry_price} for {symbol}")
-                return {'error': 'invalid_entry_price', 'message': f'Entry price must be > 0, got {request.entry_price}'}
-
-            # 5. Calculate position size
+            # 4. Calculate position size
             position_size_usd = request.position_size_usd or self.config.position_size_usd
             quantity = await self._calculate_position_size(
-                exchange, symbol, Decimal(str(request.entry_price)), Decimal(str(position_size_usd))
+                exchange, symbol, request.entry_price, position_size_usd
             )
 
             if not quantity:
@@ -1166,14 +1161,14 @@ class PositionManager:
                     logger.debug(
                         f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
                     )
-                    stop_loss_percent: Decimal = to_decimal(request.stop_loss_percent or db_stop_loss_percent)
+                    stop_loss_percent = request.stop_loss_percent or db_stop_loss_percent
                 else:
                     # Fallback to .env if DB params not available
                     logger.warning(
                         f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
                         f"using .env fallback: {self.config.stop_loss_percent}%"
                     )
-                    stop_loss_percent = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+                    stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
 
             except Exception as e:
                 # Fallback to .env on error
@@ -1181,10 +1176,10 @@ class PositionManager:
                     f"❌ Failed to load params from DB for {request.exchange}: {e}. "
                     f"Using .env fallback: {self.config.stop_loss_percent}%"
                 )
-                stop_loss_percent = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+                stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
 
             stop_loss_price = calculate_stop_loss(
-                to_decimal(request.entry_price), position_side, stop_loss_percent
+                to_decimal(request.entry_price), position_side, to_decimal(stop_loss_percent)
             )
 
             # Get trailing params from monitoring.params
@@ -1249,7 +1244,7 @@ class PositionManager:
                     symbol=symbol,
                     exchange=exchange_name,
                     side=order_side,
-                    quantity=float(quantity),
+                    quantity=quantity,
                     entry_price=float(request.entry_price),
                     stop_loss_percent=float(stop_loss_percent)  # FIX: Pass percent, not price
                 )
@@ -1264,10 +1259,10 @@ class PositionManager:
                         symbol=symbol,
                         exchange=exchange_name,
                         side=atomic_result['side'],
-                        quantity=to_decimal(atomic_result['quantity']),
-                        entry_price=to_decimal(atomic_result['entry_price']),
-                        current_price=to_decimal(atomic_result['entry_price']),
-                        unrealized_pnl=Decimal('0'),
+                        quantity=atomic_result['quantity'],
+                        entry_price=atomic_result['entry_price'],
+                        current_price=atomic_result['entry_price'],
+                        unrealized_pnl=0,
                         unrealized_pnl_percent=0,
                         opened_at=datetime.now(timezone.utc)
                     )
@@ -1303,7 +1298,7 @@ class PositionManager:
                                     side=position.side,
                                     entry_price=position.entry_price,
                                     quantity=position.quantity,
-                                    initial_stop=to_decimal(atomic_result['stop_loss_price'])  # TS manages SL from start
+                                    initial_stop=float(atomic_result['stop_loss_price'])  # TS manages SL from start
                                 ),
                                 timeout=10.0
                             )
@@ -1419,10 +1414,10 @@ class PositionManager:
                     symbol=symbol,
                     exchange=exchange_name,
                     side='long' if request.side == 'BUY' else 'short',
-                    quantity=to_decimal(order.filled),
-                    entry_price=to_decimal(order.price),
-                    current_price=to_decimal(order.price),
-                    unrealized_pnl=Decimal('0'),
+                    quantity=order.filled,
+                    entry_price=order.price,
+                    current_price=order.price,
+                    unrealized_pnl=0,
                     unrealized_pnl_percent=0,
                     opened_at=datetime.now(timezone.utc)
                 )
@@ -1496,14 +1491,14 @@ class PositionManager:
                         logger.debug(
                             f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
                         )
-                        stop_loss_percent_val: Decimal = to_decimal(request.stop_loss_percent or db_stop_loss_percent)
+                        stop_loss_percent = request.stop_loss_percent or db_stop_loss_percent
                     else:
                         # Fallback to .env if DB params not available
                         logger.warning(
                             f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
                             f"using .env fallback: {self.config.stop_loss_percent}%"
                         )
-                        stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+                        stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
 
                 except Exception as e:
                     # Fallback to .env on error
@@ -1511,17 +1506,17 @@ class PositionManager:
                         f"❌ Failed to load params from DB for {request.exchange}: {e}. "
                         f"Using .env fallback: {self.config.stop_loss_percent}%"
                     )
-                    stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+                    stop_loss_percent = request.stop_loss_percent or self.config.stop_loss_percent
 
-                stop_loss_price_val: Decimal = calculate_stop_loss(
-                    to_decimal(position.entry_price), position.side, stop_loss_percent_val
+                stop_loss_price = calculate_stop_loss(
+                    to_decimal(position.entry_price), position.side, to_decimal(stop_loss_percent)
                 )
 
-                logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent_val}% at ${stop_loss_price_val:.4f}")
+                logger.info(f"Setting stop loss for {symbol}: {stop_loss_percent}% at ${stop_loss_price:.4f}")
 
-                if await self._set_stop_loss(exchange, position, stop_loss_price_val):
+                if await self._set_stop_loss(exchange, position, stop_loss_price):
                     position.has_stop_loss = True
-                    position.stop_loss_price = stop_loss_price_val
+                    position.stop_loss_price = stop_loss_price
                     logger.info(f"✅ Stop loss confirmed for {symbol}")
 
                     # Log stop loss placed
@@ -1544,7 +1539,7 @@ class PositionManager:
 
                     try:
                         await self.repository.update_position_stop_loss(
-                            position.id, float(stop_loss_price), ""
+                            position.id, stop_loss_price, ""
                         )
                     except Exception as db_error:
                         logger.error(f"Failed to update stop loss in database for {symbol}: {db_error}")
@@ -1708,10 +1703,10 @@ class PositionManager:
                 symbol=symbol,
                 exchange=exchange,
                 side="pending",
-                quantity=Decimal('0'),
-                entry_price=Decimal('0'),
-                current_price=Decimal('0'),
-                unrealized_pnl=Decimal('0'),
+                quantity=0,
+                entry_price=0,
+                current_price=0,
+                unrealized_pnl=0,
                 unrealized_pnl_percent=0,
                 opened_at=datetime.now(timezone.utc)
             )
@@ -1920,8 +1915,8 @@ class PositionManager:
     async def _calculate_position_size(self,
                                        exchange: ExchangeManager,
                                        symbol: str,
-                                       price: Decimal,
-                                       size_usd: Decimal) -> Optional[Decimal]:
+                                       price: float,
+                                       size_usd: float) -> Optional[float]:
         """
         Calculate position size with exchange constraints.
         Uses FIXED position size from config (POSITION_SIZE_USD).
@@ -1945,16 +1940,11 @@ class PositionManager:
 
         # Check against maximum allowed
         # Phase 2: Use config value instead of os.getenv()
-        max_position_usd = Decimal(str(self.config.max_position_size_usd))
+        max_position_usd = float(self.config.max_position_size_usd)
         if size_usd > max_position_usd:
             logger.warning(f"Position size ${size_usd} exceeds maximum ${max_position_usd}")
             # Use maximum instead of failing
             size_usd = max_position_usd
-
-        # Validate price before division
-        if price <= 0:
-            logger.error(f"Invalid price for position calculation: {price} for {symbol}")
-            return None
 
         # Simple calculation: size_usd / price
         # CRITICAL FIX: Ensure size_usd is Decimal to support both float and Decimal inputs
@@ -1977,7 +1967,7 @@ class PositionManager:
             # Phase 3: Use config tolerance instead of hardcoded 1.1
             from config.settings import config as global_config
             tolerance_factor = 1 + (float(global_config.safety.POSITION_SIZE_TOLERANCE_PERCENT) / 100)
-            tolerance: Decimal = size_usd * Decimal(str(tolerance_factor))  # 10% over budget allowed
+            tolerance = size_usd * Decimal(str(tolerance_factor))  # 10% over budget allowed
 
             if min_cost <= tolerance:
                 logger.info(f"Using minimum quantity {min_amount} for {symbol} (cost: ${min_cost:.2f}, tolerance: ${tolerance:.2f})")
@@ -2001,13 +1991,13 @@ class PositionManager:
                 if step_size > 0:
                     # Calculate steps needed
                     steps = int((required_qty - float(adjusted_quantity)) / step_size) + 1
-                    adjusted_quantity = to_decimal(float(adjusted_quantity) + (steps * step_size))
+                    adjusted_quantity = float(adjusted_quantity) + (steps * step_size)
                 else:
-                    adjusted_quantity = to_decimal(required_qty)
+                    adjusted_quantity = required_qty
 
                 # Re-check tolerance
                 new_cost = float(adjusted_quantity) * float(price)
-                tolerance = size_usd * Decimal(str(tolerance_factor))
+                tolerance = size_usd * tolerance_factor
 
                 if new_cost <= tolerance:
                     logger.info(
@@ -2023,7 +2013,8 @@ class PositionManager:
                     return None
 
         # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
-        formatted_qty: Decimal = to_decimal(exchange.amount_to_precision(symbol, adjusted_quantity))
+        formatted_qty = exchange.amount_to_precision(symbol, adjusted_quantity)
+        formatted_qty = float(formatted_qty)
 
         # FIX: Re-validate after precision formatting (amount_to_precision may truncate below minimum)
         if formatted_qty < min_amount:
@@ -2031,11 +2022,12 @@ class PositionManager:
             step_size = exchange.get_step_size(symbol)
             if step_size > 0:
                 # Calculate steps needed to reach minimum
-                steps_needed = int((float(min_amount) - float(formatted_qty)) / step_size) + 1
-                adjusted_qty: Decimal = formatted_qty + to_decimal(steps_needed * step_size)
+                steps_needed = int((min_amount - formatted_qty) / step_size) + 1
+                adjusted_qty = formatted_qty + (steps_needed * step_size)
 
                 # Re-apply precision to ensure stepSize alignment
-                formatted_qty = to_decimal(exchange.amount_to_precision(symbol, adjusted_qty))
+                formatted_qty = exchange.amount_to_precision(symbol, adjusted_qty)
+                formatted_qty = float(formatted_qty)
 
                 # Final check: if still below minimum after adjustment, cannot trade
                 if formatted_qty < min_amount:
@@ -2057,7 +2049,7 @@ class PositionManager:
                 return None
 
         # Check if we can afford this position (margin/leverage validation)
-        can_open, reason = await exchange.can_open_position(symbol, float(size_usd))
+        can_open, reason = await exchange.can_open_position(symbol, size_usd)
         if not can_open:
             logger.warning(f"Cannot open {symbol} position: {reason}")
             return None
@@ -2107,7 +2099,7 @@ class PositionManager:
     async def _set_stop_loss(self,
                              exchange: ExchangeManager,
                              position: PositionState,
-                             stop_price: Decimal) -> bool:
+                             stop_price: float) -> bool:
         """
         Set stop loss order using unified StopLossManager.
 
@@ -2144,12 +2136,11 @@ class PositionManager:
                 # No SL exists - create it using unified set_stop_loss
                 order_side = 'sell' if position.side == 'long' else 'buy'
 
-                from utils.decimal_utils import to_decimal
                 result = await sl_manager.set_stop_loss(
                     symbol=position.symbol,
                     side=order_side,
-                    amount=position.quantity,
-                    stop_price=to_decimal(stop_price)
+                    amount=float(position.quantity),
+                    stop_price=stop_price
                 )
 
                 if result['status'] in ['created', 'already_exists']:
@@ -2236,7 +2227,7 @@ class PositionManager:
                 # FIX #2: UPDATE QUANTITY from WebSocket (CRITICAL for verification!)
                 if 'contracts' in data or 'quantity' in data:
                     old_quantity = position.quantity
-                    position.quantity: Decimal = to_decimal(data.get('contracts', data.get('quantity', position.quantity)))
+                    position.quantity = float(data.get('contracts', data.get('quantity', position.quantity)))
                     if position.quantity != old_quantity:
                         logger.info(
                             f"  → Quantity updated for pre-registered {symbol}: "
@@ -2246,7 +2237,7 @@ class PositionManager:
                 # FIX #2: UPDATE CURRENT PRICE from WebSocket
                 if 'mark_price' in data:
                     old_price = position.current_price
-                    position.current_price: Decimal = to_decimal(data.get('mark_price', position.current_price))
+                    position.current_price = float(data.get('mark_price', position.current_price))
                     if position.current_price != old_price:
                         logger.debug(
                             f"  → Price updated for pre-registered {symbol}: "
@@ -2259,7 +2250,7 @@ class PositionManager:
 
             # Update position state
             old_price = position.current_price
-            position.current_price: Decimal = to_decimal(data.get('mark_price', position.current_price))
+            position.current_price = float(data.get('mark_price', position.current_price))
             logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
 
             # UNIFIED PRICE UPDATE (if enabled)
@@ -2267,7 +2258,7 @@ class PositionManager:
                 await handle_unified_price_update(
                     self.unified_protection,
                     symbol,
-                    float(position.current_price)
+                    position.current_price
                 )
 
             position.unrealized_pnl = data.get('unrealized_pnl', 0)
@@ -2644,16 +2635,15 @@ class PositionManager:
                 # Update database
                 await self.repository.close_position(
                     position.id,                    # position_id: int
-                    float(exit_price),              # close_price: float
-                    float(realized_pnl),            # pnl: float
-                    float(realized_pnl_percent),    # pnl_percentage: float
+                    exit_price,                     # close_price: float
+                    realized_pnl,                   # pnl: float
+                    realized_pnl_percent,           # pnl_percentage: float
                     reason                          # reason: str
                 )
 
                 # Update statistics
                 self.stats['positions_closed'] += 1
-                current_total_pnl = Decimal(str(self.stats.get('total_pnl', 0)))
-                self.stats['total_pnl'] = current_total_pnl + Decimal(str(realized_pnl))
+                self.stats['total_pnl'] += Decimal(str(realized_pnl))
 
                 if realized_pnl > 0:
                     self.stats['win_count'] += 1
@@ -2859,7 +2849,7 @@ class PositionManager:
                     symbol=symbol,
                     side=order_side,
                     amount=position.quantity,
-                    price=Decimal(str(target_price)),
+                    price=target_price,
                     params={'clientOrderId': client_order_id}
                 )
             
@@ -3905,7 +3895,7 @@ class PositionManager:
             'total_exposure': to_decimal(self.total_exposure),
             'positions_opened': self.stats['positions_opened'],
             'positions_closed': self.stats['positions_closed'],
-            'total_pnl': to_decimal(str(self.stats.get('total_pnl', 0))),
+            'total_pnl': to_decimal(self.stats['total_pnl']),
             'win_rate': win_rate,
             'wins': self.stats['win_count'],
             'zombie_cleanup': {
