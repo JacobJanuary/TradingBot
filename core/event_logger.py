@@ -31,6 +31,7 @@ class EventType(Enum):
     POSITION_CREATED = "position_created"
     POSITION_UPDATED = "position_updated"
     POSITION_CLOSED = "position_closed"
+    POSITION_CLEANUP = "position_cleanup"  # NEW: для централизованного cleanup
     POSITION_ERROR = "position_error"
 
     # Order events
