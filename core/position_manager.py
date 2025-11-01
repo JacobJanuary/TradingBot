@@ -20,6 +20,22 @@ Exchange is the primary source of truth for positions.
 Database serves as secondary cache with reconciliation.
 Reconciliation happens during periodic sync operations.
 ============================================================
+
+============================================================
+CLEANUP ARCHITECTURE
+============================================================
+
+All position cleanup operations MUST go through:
+_cleanup_position_monitoring(symbol, exchange_name, ...)
+
+This ensures consistent cleanup across:
+- position_manager.positions dict
+- trailing_stop_manager
+- aged_adapter.monitoring_positions
+- unified_price_monitor subscriptions
+
+See docs/POSITION_CLEANUP_ARCHITECTURE.md for details.
+============================================================
 """
 import asyncio
 import logging
