@@ -887,8 +887,8 @@ class WebSocketSignalProcessor:
 
         # Get exchange managers
         exchange_managers = {
-            'binance': self.position_manager.exchange_managers.get('binance'),
-            'bybit': self.position_manager.exchange_managers.get('bybit')
+            'binance': self.position_manager.exchanges.get('binance'),
+            'bybit': self.position_manager.exchanges.get('bybit')
         }
 
         # Process through new pipeline
