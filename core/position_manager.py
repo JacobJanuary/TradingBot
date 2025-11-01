@@ -3651,9 +3651,19 @@ class PositionManager:
                                     f"⏭️ Skipping phantom cleanup for pre-registered position: {symbol} "
                                     f"(id='pending' - not yet committed to database)"
                                 )
-                                # Remove from memory but don't attempt DB operations or event logging
-                                if symbol in self.positions:
-                                    del self.positions[symbol]
+                                # ✅ REFACTOR: Use centralized cleanup for pre-registered positions
+                                # Skip most cleanup since position not committed to DB yet
+                                await self._cleanup_position_monitoring(
+                                    symbol=symbol,
+                                    exchange_name=exchange_name,
+                                    position_data=None,  # No full position data available
+                                    realized_pnl=None,
+                                    reason='pre_registered_cleanup',
+                                    skip_position_removal=False,  # DO remove from positions
+                                    skip_trailing_stop=True,  # Skip (no TS for pre-registered)
+                                    skip_aged_adapter=True,  # Skip (not in aged monitoring)
+                                    skip_events=True  # Skip (not in DB yet)
+                                )
                                 continue  # Early exit prevents logging with "pending"
 
                             try:
