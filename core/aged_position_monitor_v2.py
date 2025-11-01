@@ -585,6 +585,59 @@ class AgedPositionMonitorV2:
                 except Exception as e:
                     logger.error(f"Failed to update DB: {e}")
 
+            # ✅ CRITICAL FIX: Notify position_manager to cleanup all monitoring systems
+            # aged_position_monitor closed position via OrderExecutor, but must notify PM
+            if self.position_manager:
+                try:
+                    logger.info(
+                        f"🔔 {symbol}: Notifying position_manager about aged position closure"
+                    )
+
+                    # Call centralized cleanup method
+                    cleanup_result = await self.position_manager._cleanup_position_monitoring(
+                        symbol=symbol,
+                        exchange_name=exchange_name,
+                        position_data=None,  # position_manager has full object
+                        realized_pnl=None,  # Unknown (order executor doesn't return it)
+                        reason=f'aged_{target.phase}',
+                        skip_position_removal=False,  # DO remove from positions
+                        skip_trailing_stop=False,  # DO notify trailing stop
+                        skip_aged_adapter=False,  # DO remove from aged adapter
+                        skip_events=True  # SKIP events (already logged above)
+                    )
+
+                    if cleanup_result['errors']:
+                        logger.warning(
+                            f"⚠️ {symbol}: Cleanup completed with errors: "
+                            f"{', '.join(cleanup_result['errors'])}"
+                        )
+                    else:
+                        logger.info(f"✅ {symbol}: All monitoring systems cleaned up")
+
+                except Exception as pm_error:
+                    # Log but don't fail - position is already closed on exchange
+                    logger.error(
+                        f"❌ {symbol}: Failed to notify position_manager (CRITICAL): {pm_error}",
+                        exc_info=True
+                    )
+                    # Emit critical error event
+                    from core.event_logger import event_logger
+                    await event_logger.log_event(
+                        'aged_cleanup_failed',
+                        {
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'position_id': target.position_id,
+                            'error': str(pm_error),
+                            'phase': target.phase
+                        }
+                    )
+            else:
+                logger.error(
+                    f"❌ {symbol}: position_manager not available for cleanup! "
+                    f"This will create zombie position!"
+                )
+
         else:
             # Order execution failed
             logger.error(
