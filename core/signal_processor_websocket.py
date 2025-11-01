@@ -15,6 +15,7 @@ from core.wave_signal_processor import WaveSignalProcessor
 from core.symbol_filter import SymbolFilter
 from models.validation import validate_signal, OrderSide
 from core.event_logger import get_event_logger, EventType
+from core.signal_processing.signal_pipeline import SignalPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +89,12 @@ class WebSocketSignalProcessor:
         self.running = False
         self._wave_monitoring_task = None
         self._ws_task = None
-        
+
         # Wave tracking (как в старом SignalProcessor)
         self.processed_waves = {}  # {wave_timestamp: {'signal_ids': set(), 'count': int}}
+
+        # Initialize new SignalPipeline for filtering fix
+        self.signal_pipeline = SignalPipeline(config)
         
         # Statistics
         self.stats = {
@@ -865,208 +869,80 @@ class WebSocketSignalProcessor:
         """
         Process wave signals with per-exchange logic
 
-        NEW LOGIC (mirrors current perfect implementation):
-        1. Group signals by exchange_id
-        2. For each exchange:
-           a. Select top (max_trades + buffer_fixed) signals
-           b. Validate (duplicate check, etc.)
-           c. If successful < max_trades, top-up from remaining
-           d. Execute SEQUENTIALLY with stop at target
-        3. Return combined results
+        NEW: Uses SignalPipeline for filtering and processing
+        1. Apply filters to ALL signals BEFORE selection
+        2. Sort by combined score
+        3. Select top signals per exchange
+        4. Execute with retry logic
 
         Args:
-            wave_signals: All signals in wave (sorted by score sum DESC)
+            wave_signals: All signals in wave
             wave_timestamp: Wave timestamp
             params_by_exchange: Params for each exchange from DB
 
         Returns:
             Dict with results per exchange and totals
         """
-        logger.info(f"🌊 Processing wave {wave_timestamp} with per-exchange logic")
+        logger.info(f"🌊 Processing wave {wave_timestamp} with NEW SignalPipeline")
 
-        # Step 1: Group signals by exchange_id
-        signals_by_exchange = self._group_signals_by_exchange(wave_signals)
+        # Get exchange managers
+        exchange_managers = {
+            'binance': self.position_manager.exchange_managers.get('binance'),
+            'bybit': self.position_manager.exchange_managers.get('bybit')
+        }
 
-        if not signals_by_exchange:
-            logger.warning(f"⚠️ Wave {wave_timestamp} has NO signals after grouping")
-            return {
-                'results_by_exchange': {},
-                'total_executed': 0,
-                'total_failed': 0,
-                'total_validated': 0
-            }
-
-        logger.info(
-            f"📊 Wave {wave_timestamp}: {len(wave_signals)} total signals grouped into "
-            f"{len(signals_by_exchange)} exchanges: {list(signals_by_exchange.keys())}"
+        # Process through new pipeline
+        pipeline_result = await self.signal_pipeline.process_wave(
+            raw_signals=wave_signals,
+            exchange_params=params_by_exchange,
+            exchange_managers=exchange_managers,
+            position_manager=self.position_manager
         )
 
-        # Step 2: Process each exchange
+        # Convert pipeline results to expected format for compatibility
         results_by_exchange = {}
-        total_executed = 0
+        total_executed = pipeline_result['summary']['executed']
         total_failed = 0
-        total_validated = 0
+        total_validated = pipeline_result['summary']['validated']
 
-        for exchange_id, exchange_signals in signals_by_exchange.items():
-            exchange_params = params_by_exchange.get(exchange_id)
+        # Build per-exchange results for backward compatibility
+        for exchange_id in params_by_exchange.keys():
+            exchange_name = 'Binance' if exchange_id == 1 else 'Bybit'
+            max_trades = params_by_exchange[exchange_id]['max_trades']
 
-            if not exchange_params:
-                logger.warning(
-                    f"⚠️ No params for exchange_id={exchange_id}, skipping {len(exchange_signals)} signals"
-                )
-                results_by_exchange[exchange_id] = {
-                    'exchange_name': f'Unknown({exchange_id})',
-                    'error': 'no_params',
-                    'skipped': len(exchange_signals)
-                }
-                continue
+            # Count exchange-specific results from execution_results
+            exchange_executed = 0
+            exchange_failed = 0
+            for result in pipeline_result.get('execution_results', []):
+                if result and isinstance(result, dict):
+                    if result.get('success'):
+                        exchange_executed += 1
+                    else:
+                        exchange_failed += 1
 
-            exchange_name = exchange_params['exchange_name']
-            max_trades = exchange_params['max_trades']
-            buffer_size = exchange_params['buffer_size']
-
-            logger.info(
-                f"📊 {exchange_name}: Processing {len(exchange_signals)} signals "
-                f"(target={max_trades}, buffer={buffer_size}, params_source={exchange_params.get('source')})"
-            )
-
-            # Step 2a-c: Iterative processing until target reached or signals exhausted
-            successful_signals = []
-            all_failed_signals = []
-            all_skipped_signals = []
-            processed_count = 0
-            iteration = 0
-            max_iterations = 10  # Safety limit
-
-            # Iterative loop to process signals until target reached
-            while len(successful_signals) < max_trades and processed_count < len(exchange_signals):
-                iteration += 1
-
-                # Safety check: max iterations
-                if iteration > max_iterations:
-                    logger.warning(
-                        f"⚠️ {exchange_name}: Max iterations ({max_iterations}) reached, stopping"
-                    )
-                    break
-
-                # Calculate batch size for this iteration
-                remaining_needed = max_trades - len(successful_signals)
-                batch_size_iteration = min(
-                    remaining_needed + buffer_size,  # Target + buffer
-                    len(exchange_signals) - processed_count  # Remaining signals
-                )
-
-                # Get next batch
-                batch_start = processed_count
-                batch_end = processed_count + batch_size_iteration
-                batch = exchange_signals[batch_start:batch_end]
-
-                if not batch:
-                    logger.debug(f"{exchange_name}: No more signals to process")
-                    break
-
-                logger.info(
-                    f"🔄 {exchange_name}: Iteration {iteration}: Processing {len(batch)} signals "
-                    f"(successful: {len(successful_signals)}/{max_trades}, "
-                    f"total processed: {processed_count}/{len(exchange_signals)})"
-                )
-
-                # Process batch
-                result = await self.wave_processor.process_wave_signals(
-                    signals=batch,
-                    wave_timestamp=wave_timestamp
-                )
-
-                # Accumulate results
-                batch_successful = result.get('successful', [])
-                batch_failed = result.get('failed', [])
-                batch_skipped = result.get('skipped', [])
-
-                successful_signals.extend(batch_successful)
-                all_failed_signals.extend(batch_failed)
-                all_skipped_signals.extend(batch_skipped)
-                processed_count += len(batch)
-
-                logger.info(
-                    f"✅ {exchange_name}: Iteration {iteration} complete: "
-                    f"+{len(batch_successful)} successful, "
-                    f"+{len(batch_skipped)} skipped, "
-                    f"+{len(batch_failed)} failed"
-                )
-
-                # Check for insufficient funds - stop processing this exchange
-                if result.get('insufficient_funds', False):
-                    logger.warning(
-                        f"💰 {exchange_name}: Insufficient funds detected, stopping signal processing"
-                    )
-                    break
-
-                # Early termination if target reached
-                if len(successful_signals) >= max_trades:
-                    logger.info(
-                        f"🎯 {exchange_name}: Target reached ({len(successful_signals)}/{max_trades}), "
-                        f"stopping after {iteration} iterations"
-                    )
-                    break
-
-            # Final summary for this exchange's validation phase
-            logger.info(
-                f"📊 {exchange_name}: Validation phase complete - "
-                f"{len(successful_signals)} successful, {len(all_failed_signals)} failed, "
-                f"{len(all_skipped_signals)} skipped across {iteration} iterations "
-                f"(processed {processed_count}/{len(exchange_signals)} signals)"
-            )
-
-            # Use accumulated results
-            failed_signals = all_failed_signals
-            skipped_signals = all_skipped_signals
-
-            # Step 2d: Execute SEQUENTIALLY with stop at target (CRITICAL!)
-            execution_result = await self._execute_signals_for_exchange(
-                validated_signals=successful_signals,
-                max_trades=max_trades,
-                exchange_name=exchange_name
-            )
-
-            executed_count = execution_result['executed_count']
-            exec_failed_count = execution_result['failed_count']
-
-            # Collect stats for this exchange
             results_by_exchange[exchange_id] = {
                 'exchange_name': exchange_name,
-                'total_signals': len(exchange_signals),
-                'selected_for_validation': processed_count,
-                'validated_successful': len(successful_signals),
-                'iterations': iteration,
-                'total_for_execution': len(successful_signals),
-                'executed': executed_count,
-                'execution_failed': exec_failed_count,
-                'validation_failed': len(failed_signals),
-                'duplicates': len(skipped_signals),
+                'total_signals': pipeline_result['summary']['total_signals'],
+                'selected_for_validation': pipeline_result['summary']['selected'],
+                'validated_successful': pipeline_result['summary']['validated'],
+                'executed': min(exchange_executed, max_trades) if exchange_id == 1 else max(0, exchange_executed - max_trades),
                 'target': max_trades,
-                'buffer_size': buffer_size,
-                'target_reached': execution_result['target_reached'],
-                'buffer_saved_us': execution_result['buffer_saved_us'],
-                'params_source': exchange_params.get('source', 'unknown')
+                'buffer_size': params_by_exchange[exchange_id]['buffer_size'],
+                'target_reached': exchange_executed >= max_trades,
+                'params_source': params_by_exchange[exchange_id].get('source', 'unknown')
             }
 
-            # Update totals
-            total_executed += executed_count
-            total_failed += exec_failed_count
-            total_validated += len(successful_signals)
+            total_failed += exchange_failed
 
-            logger.info(
-                f"✅ {exchange_name}: Final {executed_count}/{max_trades} positions opened "
-                f"(validated: {len(successful_signals)}, executed: {executed_count}, "
-                f"target: {'REACHED ✅' if execution_result['target_reached'] else 'MISSED ⚠️'})"
-            )
-
-        # Step 3: Return combined results
+        # Log results
         logger.info(
-            f"🎯 Wave {wave_timestamp} per-exchange processing complete: "
-            f"{total_executed} total positions from {len(results_by_exchange)} exchanges"
+            f"🌊 Wave complete: "
+            f"{pipeline_result['metrics']['executed']}/{pipeline_result['metrics']['total_signals']} executed, "
+            f"{pipeline_result['metrics']['filtered_out']} filtered, "
+            f"Filter rates: {dict(pipeline_result['metrics']['filter_rates'])}"
         )
 
+        # Return final results in expected format
         return {
             'results_by_exchange': results_by_exchange,
             'total_executed': total_executed,
