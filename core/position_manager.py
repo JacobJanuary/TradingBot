@@ -2780,6 +2780,207 @@ class PositionManager:
                     severity='ERROR'
                 )
 
+    async def _cleanup_position_monitoring(
+        self,
+        symbol: str,
+        exchange_name: str,
+        *,
+        position_data: Optional[PositionState] = None,
+        realized_pnl: Optional[Decimal] = None,
+        reason: str = "cleanup",
+        skip_position_removal: bool = False,
+        skip_trailing_stop: bool = False,
+        skip_aged_adapter: bool = False,
+        skip_events: bool = False
+    ) -> Dict[str, bool]:
+        """
+        Centralized cleanup for position monitoring systems.
+
+        This method ensures ALL monitoring systems are properly cleaned up when a position
+        is closed, regardless of HOW it was closed (manual, aged, phantom, WebSocket, etc.)
+
+        Args:
+            symbol: Trading pair symbol (required)
+            exchange_name: Exchange name (required)
+            position_data: Full position object (optional, used for detailed logging)
+            realized_pnl: Realized PnL from close (optional, passed to trailing stop)
+            reason: Reason for cleanup (for logging)
+            skip_position_removal: If True, don't remove from self.positions
+            skip_trailing_stop: If True, don't notify trailing stop manager
+            skip_aged_adapter: If True, don't remove from aged adapter
+            skip_events: If True, don't log events
+
+        Returns:
+            Dict with cleanup status:
+            {
+                'positions_removed': bool,
+                'trailing_stop_notified': bool,
+                'aged_adapter_removed': bool,
+                'events_logged': bool,
+                'errors': List[str]
+            }
+
+        Usage Examples:
+            # Full cleanup (called from close_position):
+            await self._cleanup_position_monitoring(
+                symbol="BTCUSDT",
+                exchange_name="bybit",
+                position_data=position,
+                realized_pnl=Decimal('10.5'),
+                reason="aged_grace"
+            )
+
+            # Partial cleanup (called from aged_position_monitor, position already removed from exchange):
+            await self._cleanup_position_monitoring(
+                symbol="BTCUSDT",
+                exchange_name="bybit",
+                reason="aged_close",
+                skip_events=True  # close_position already logged events
+            )
+
+            # Phantom cleanup (position not on exchange, minimal cleanup):
+            await self._cleanup_position_monitoring(
+                symbol="BTCUSDT",
+                exchange_name="bybit",
+                position_data=position,
+                reason="phantom_cleanup",
+                skip_trailing_stop=False  # Still notify TS to cleanup
+            )
+        """
+
+        result = {
+            'positions_removed': False,
+            'trailing_stop_notified': False,
+            'aged_adapter_removed': False,
+            'events_logged': False,
+            'errors': []
+        }
+
+        logger.info(
+            f"🧹 Starting cleanup for {symbol} (exchange={exchange_name}, reason={reason})"
+        )
+
+        # ==================== STEP 1: Remove from positions dict ====================
+        if not skip_position_removal:
+            if symbol in self.positions:
+                try:
+                    position = self.positions[symbol]
+                    del self.positions[symbol]
+                    self.position_count -= 1
+
+                    # Update total exposure
+                    if position_data:
+                        self.total_exposure -= Decimal(str(
+                            position_data.quantity * position_data.entry_price
+                        ))
+
+                    result['positions_removed'] = True
+                    logger.info(f"✅ {symbol}: Removed from positions tracking")
+                except Exception as e:
+                    error_msg = f"Failed to remove from positions: {e}"
+                    result['errors'].append(error_msg)
+                    logger.error(f"❌ {symbol}: {error_msg}")
+            else:
+                logger.debug(f"⏭️ {symbol}: Not in positions dict (already removed)")
+
+        # ==================== STEP 2: Notify trailing stop manager ====================
+        if not skip_trailing_stop:
+            trailing_manager = self.trailing_managers.get(exchange_name)
+            if trailing_manager:
+                try:
+                    await trailing_manager.on_position_closed(symbol, realized_pnl)
+                    result['trailing_stop_notified'] = True
+                    logger.info(f"✅ {symbol}: Notified trailing_stop_manager")
+
+                    # Log trailing stop removal event (if position had TS)
+                    if not skip_events and position_data and position_data.has_trailing_stop:
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.TRAILING_STOP_REMOVED,
+                                {
+                                    'symbol': symbol,
+                                    'position_id': position_data.id,
+                                    'reason': reason,
+                                    'realized_pnl': float(realized_pnl) if realized_pnl else None
+                                },
+                                position_id=position_data.id,
+                                symbol=symbol,
+                                exchange=exchange_name,
+                                severity='INFO'
+                            )
+                            logger.debug(f"📝 {symbol}: Logged TRAILING_STOP_REMOVED event")
+                except Exception as e:
+                    error_msg = f"Failed to notify trailing stop: {e}"
+                    result['errors'].append(error_msg)
+                    logger.warning(f"⚠️ {symbol}: {error_msg}")
+            else:
+                logger.debug(f"⏭️ {symbol}: No trailing manager for {exchange_name}")
+
+        # ==================== STEP 3: Clean up aged position monitoring ====================
+        if not skip_aged_adapter:
+            if self.unified_protection:
+                aged_adapter = self.unified_protection.get('aged_adapter')
+                if aged_adapter:
+                    try:
+                        # Check if symbol is actually in aged monitoring
+                        if symbol in aged_adapter.monitoring_positions:
+                            await aged_adapter.remove_aged_position(symbol)
+                            result['aged_adapter_removed'] = True
+                            logger.info(f"✅ {symbol}: Removed from aged_adapter monitoring")
+                        else:
+                            logger.debug(f"⏭️ {symbol}: Not in aged monitoring")
+                    except Exception as e:
+                        error_msg = f"Failed to remove from aged adapter: {e}"
+                        result['errors'].append(error_msg)
+                        logger.warning(f"⚠️ {symbol}: {error_msg}")
+                else:
+                    logger.debug(f"⏭️ {symbol}: aged_adapter not available")
+            else:
+                logger.debug(f"⏭️ {symbol}: unified_protection not enabled")
+
+        # ==================== STEP 4: Log cleanup completion ====================
+        if not skip_events:
+            event_logger = get_event_logger()
+            if event_logger:
+                try:
+                    await event_logger.log_event(
+                        EventType.POSITION_CLEANUP,  # NEW event type
+                        {
+                            'symbol': symbol,
+                            'exchange': exchange_name,
+                            'reason': reason,
+                            'positions_removed': result['positions_removed'],
+                            'trailing_stop_notified': result['trailing_stop_notified'],
+                            'aged_adapter_removed': result['aged_adapter_removed'],
+                            'errors': result['errors']
+                        },
+                        symbol=symbol,
+                        exchange=exchange_name,
+                        severity='INFO' if not result['errors'] else 'WARNING'
+                    )
+                    result['events_logged'] = True
+                    logger.debug(f"📝 {symbol}: Logged POSITION_CLEANUP event")
+                except Exception as e:
+                    error_msg = f"Failed to log cleanup event: {e}"
+                    result['errors'].append(error_msg)
+                    logger.warning(f"⚠️ {symbol}: {error_msg}")
+
+        # ==================== FINAL SUMMARY ====================
+        if result['errors']:
+            logger.warning(
+                f"⚠️ Cleanup for {symbol} completed with {len(result['errors'])} error(s)"
+            )
+        else:
+            logger.info(
+                f"✅ Cleanup for {symbol} completed successfully "
+                f"(positions={result['positions_removed']}, "
+                f"ts={result['trailing_stop_notified']}, "
+                f"aged={result['aged_adapter_removed']})"
+            )
+
+        return result
+
     async def _cancel_pending_close_order(self, position: PositionState):
         """Cancel pending close order for position"""
         if not position.pending_close_order:
