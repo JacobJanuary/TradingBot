@@ -645,7 +645,11 @@ class PositionManager:
                                     symbol=symbol,
                                     side=position.side,
                                     entry_price=to_decimal(position.entry_price),
-                                    quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0))
+                                    quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0)),
+                                    position_params={
+                                        'trailing_activation_percent': trailing_activation_percent,
+                                        'trailing_callback_percent': trailing_callback_percent
+                                    }
                                 ),
                                 timeout=10.0
                             )
@@ -916,7 +920,11 @@ class PositionManager:
                                     side=side,
                                     entry_price=to_decimal(entry_price),
                                     quantity=to_decimal(quantity),
-                                    initial_stop=stop_loss_price  # Использовать Protection SL как initial
+                                    initial_stop=stop_loss_price,  # Использовать Protection SL как initial
+                                    position_params={
+                                        'trailing_activation_percent': trailing_activation_percent,
+                                        'trailing_callback_percent': trailing_callback_percent
+                                    }
                                 )
                                 position_state.has_trailing_stop = True
                                 await self.repository.update_position(
@@ -1319,7 +1327,11 @@ class PositionManager:
                                     side=position.side,
                                     entry_price=position.entry_price,
                                     quantity=position.quantity,
-                                    initial_stop=to_decimal(atomic_result['stop_loss_price'])  # TS manages SL from start
+                                    initial_stop=to_decimal(atomic_result['stop_loss_price']),  # TS manages SL from start
+                                    position_params={
+                                        'trailing_activation_percent': trailing_activation_percent,
+                                        'trailing_callback_percent': trailing_callback_percent
+                                    }
                                 ),
                                 timeout=10.0
                             )
@@ -1615,7 +1627,11 @@ class PositionManager:
                             side=position.side,
                             entry_price=position.entry_price,
                             quantity=position.quantity,
-                            initial_stop=None  # Не создавать SL сразу - ждать активации
+                            initial_stop=None,  # Не создавать SL сразу - ждать активации
+                            position_params={
+                                'trailing_activation_percent': trailing_activation_percent,
+                                'trailing_callback_percent': trailing_callback_percent
+                            }
                         ),
                         timeout=10.0
                     )
