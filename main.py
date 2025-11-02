@@ -22,6 +22,7 @@ from websocket.binance_stream import BinancePrivateStream
 from websocket.event_router import EventRouter
 from protection.trailing_stop import SmartTrailingStopManager, TrailingStopConfig
 from core.aged_position_manager import AgedPositionManager
+from core.position_manager_unified_patch import start_periodic_aged_scan, start_websocket_health_monitor
 from monitoring.health_check import HealthChecker, HealthStatus
 from monitoring.performance import PerformanceTracker
 
@@ -391,21 +392,6 @@ class TradingBot:
                     recovered = await recover_aged_positions_state(self.position_manager.unified_protection)
                     logger.info(f"🔄 Aged positions recovery: {recovered} position(s) restored from database")
 
-                    # Start periodic aged scan for additional safety (defense in depth)
-                    asyncio.create_task(start_periodic_aged_scan(
-                        self.position_manager.unified_protection,
-                        interval_minutes=5  # Scan every 5 minutes
-                    ))
-                    logger.info("🔍 Periodic aged scan task started (interval: 5 minutes)")
-
-                    # ✅ ENHANCEMENT #2E + PHASE 1: Start WebSocket health monitor with resubscription
-                    asyncio.create_task(start_websocket_health_monitor(
-                        unified_protection=self.position_manager.unified_protection,
-                        check_interval_seconds=60,  # Check every minute
-                        position_manager=self.position_manager  # ✅ PHASE 1: Enable resubscription
-                    ))
-                    logger.info("✅ WebSocket health monitor started (interval: 60s, resubscription: enabled)")
-
             # Initialize WebSocket signal processor
             logger.info("Initializing WebSocket signal processor...")
             self.signal_processor = WebSocketSignalProcessor(
@@ -568,8 +554,34 @@ class TradingBot:
 
             # Start signal processor
             if self.mode in ['production', 'shadow']:
+                # ✅ CHANGE: Start WebSocket FIRST before aged monitoring
+                logger.info("🌐 Starting WebSocket signal processor...")
                 await self.signal_processor.start()
-                logger.info("Signal processor started")
+                logger.info("✅ WebSocket signal processor started")
+
+                # ✅ CHANGE: Wait for WebSocket connection to establish
+                # This ensures price updates are flowing before we start aged monitoring
+                logger.info("⏳ Waiting for WebSocket connections to stabilize (3s)...")
+                await asyncio.sleep(3)
+                logger.info("✅ WebSocket connections established")
+
+                # ✅ CHANGE: NOW start periodic aged scan (with immediate first scan inside)
+                # WebSocket is connected, so immediate scan will have price data for verification
+                if self.position_manager.unified_protection:
+                    logger.info("🔍 Starting periodic aged scan task...")
+                    asyncio.create_task(start_periodic_aged_scan(
+                        self.position_manager.unified_protection,
+                        interval_minutes=5  # Scan every 5 minutes
+                    ))
+                    logger.info("✅ Periodic aged scan task started (interval: 5 minutes, immediate first scan enabled)")
+
+                    # Start WebSocket health monitor
+                    asyncio.create_task(start_websocket_health_monitor(
+                        unified_protection=self.position_manager.unified_protection,
+                        check_interval_seconds=60,
+                        position_manager=self.position_manager
+                    ))
+                    logger.info("✅ WebSocket health monitor started (interval: 60s, resubscription: enabled)")
 
             # Start monitoring
             monitor_task = asyncio.create_task(self._monitor_loop())

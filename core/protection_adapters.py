@@ -66,8 +66,16 @@ class AgedPositionAdapter:
         self.price_monitor = price_monitor
         self.monitoring_positions = {}
 
+        # ✅ NEW: Track background verification tasks
+        self._verification_tasks = {}  # symbol → asyncio.Task
+
     async def add_aged_position(self, position):
-        """Add position to aged monitoring with subscription verification"""
+        """
+        Add position to aged monitoring with NON-BLOCKING subscription verification
+
+        ✅ CHANGE: Verification moved to background task to prevent blocking periodic_full_scan()
+        ✅ CHANGE: Added cleanup logic for failed verifications
+        """
 
         symbol = position.symbol
 
@@ -95,22 +103,90 @@ class AgedPositionAdapter:
             priority=40  # Lower priority than TrailingStop
         )
 
-        # ✅ PHASE 2: Verify Subscription with Timeout
-        verified = await self._verify_subscription_active(symbol, timeout=30)
-
-        if not verified:
-            logger.error(
-                f"❌ CRITICAL: Subscription verification FAILED for {symbol}! "
-                f"No price update received within 30s"
-            )
-            # Cleanup failed subscription
-            await self.price_monitor.unsubscribe(symbol, 'aged_position')
-            return
-
+        # ✅ CHANGE: Add to monitoring IMMEDIATELY (non-blocking)
         self.monitoring_positions[symbol] = position
         logger.info(
-            f"✅ Aged position {symbol} registered and verified (age={age_hours:.1f}h)"
+            f"✅ Aged position {symbol} registered (age={age_hours:.1f}h) - verifying subscription..."
         )
+
+        # ✅ CHANGE: Start background verification with cleanup
+        # Cancel previous verification task if exists
+        if symbol in self._verification_tasks:
+            self._verification_tasks[symbol].cancel()
+
+        task = asyncio.create_task(self._background_verify_with_cleanup(symbol, position))
+        self._verification_tasks[symbol] = task
+
+    async def _background_verify_with_cleanup(self, symbol: str, position):
+        """
+        ✅ NEW METHOD: Background subscription verification with automatic cleanup on failure
+
+        This prevents failed subscriptions from blocking periodic_full_scan() while
+        ensuring positions with failed subscriptions are properly cleaned up.
+
+        Args:
+            symbol: Symbol to verify
+            position: Position object (for re-adding to aged_targets if needed)
+        """
+        try:
+            # ✅ CHANGE: Reduced timeout from 30s to 15s (still safe, but less blocking)
+            # 15s chosen because:
+            # - staleness_threshold = 30s
+            # - verification should complete before staleness
+            # - allows 2-3 price updates (WebSocket updates every 3-5s)
+            verified = await self._verify_subscription_active(symbol, timeout=15)
+
+            if verified:
+                logger.info(f"✅ {symbol}: Subscription verified (background check passed)")
+                return  # Success - nothing to cleanup
+
+            # ❌ Verification FAILED
+            logger.error(
+                f"❌ {symbol}: Background subscription verification FAILED! "
+                f"No price update received within 15s. Cleaning up..."
+            )
+
+            # ✅ CLEANUP: Remove from monitoring
+            if symbol in self.monitoring_positions:
+                del self.monitoring_positions[symbol]
+                logger.warning(f"🧹 {symbol}: Removed from monitoring_positions")
+
+            # ✅ CLEANUP: Unsubscribe from price updates
+            try:
+                await self.price_monitor.unsubscribe(symbol, 'aged_position')
+                logger.debug(f"🧹 {symbol}: Unsubscribed from price updates")
+            except Exception as unsub_error:
+                logger.error(f"Error unsubscribing {symbol}: {unsub_error}")
+
+            # ✅ CLEANUP: Remove from aged_targets in aged_monitor
+            if self.aged_monitor and symbol in self.aged_monitor.aged_targets:
+                del self.aged_monitor.aged_targets[symbol]
+                logger.warning(f"🧹 {symbol}: Removed from aged_targets")
+
+            # Log summary
+            logger.error(
+                f"⚠️ {symbol}: Aged monitoring DISABLED due to failed subscription. "
+                f"Position will NOT be monitored until next periodic scan or manual intervention."
+            )
+
+        except asyncio.CancelledError:
+            logger.debug(f"Background verification cancelled for {symbol} (likely due to re-add)")
+            raise
+
+        except Exception as e:
+            logger.error(
+                f"❌ Error in background verification for {symbol}: {e}",
+                exc_info=True
+            )
+            # On error, be conservative: remove from monitoring
+            if symbol in self.monitoring_positions:
+                del self.monitoring_positions[symbol]
+                logger.warning(f"🧹 {symbol}: Removed from monitoring due to verification error")
+
+        finally:
+            # ✅ CLEANUP: Remove task reference
+            if symbol in self._verification_tasks:
+                del self._verification_tasks[symbol]
 
     async def _on_unified_price(self, symbol: str, price: Decimal):
         """
@@ -142,15 +218,15 @@ class AgedPositionAdapter:
         if self.aged_monitor and symbol in self.aged_monitor.aged_targets:
             del self.aged_monitor.aged_targets[symbol]
 
-    async def _verify_subscription_active(self, symbol: str, timeout: int = 30) -> bool:
+    async def _verify_subscription_active(self, symbol: str, timeout: int = 15) -> bool:
         """
-        ✅ PHASE 2: Verify subscription is receiving data
+        Verify subscription is receiving data
 
-        Waits for at least one price update within timeout period.
+        ✅ CHANGE: Default timeout reduced from 30s to 15s
 
         Args:
             symbol: Symbol to verify
-            timeout: Max seconds to wait (default: 30)
+            timeout: Max seconds to wait (default: 15)
 
         Returns:
             True if subscription verified, False otherwise
@@ -162,7 +238,7 @@ class AgedPositionAdapter:
         initial_update_time = self.price_monitor.last_update_time.get(symbol, 0)
 
         logger.debug(
-            f"🔍 Verifying subscription for {symbol} (timeout: {timeout}s)..."
+            f"🔍 Verifying subscription for {symbol} (timeout: {timeout}s, background mode)..."
         )
 
         # Wait for update

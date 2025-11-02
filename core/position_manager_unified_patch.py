@@ -164,7 +164,8 @@ async def recover_aged_positions_state(unified_protection: Dict) -> int:
 async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: int = 5):
     """
     Start background task for periodic aged position scanning
-    Provides defense in depth - catches positions missed by instant detection
+
+    ✅ CHANGE: Added immediate first scan (scan-first pattern instead of delay-first)
 
     Args:
         unified_protection: Unified protection components dict
@@ -172,20 +173,49 @@ async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: i
     """
 
     if not unified_protection:
+        logger.warning("⚠️ Cannot start periodic aged scan - no unified_protection")
         return
 
     aged_monitor = unified_protection.get('aged_monitor')
     if not aged_monitor:
+        logger.warning("⚠️ Cannot start periodic aged scan - no aged_monitor")
         return
 
     logger.info(f"🔍 Starting periodic aged scan task (interval: {interval_minutes} minutes)")
 
+    # ✅ CHANGE: Immediate first scan (scan-first pattern)
+    # Run first scan immediately after startup to detect aged positions without 5-min delay
+    # WebSocket is already connected at this point (see main.py startup sequence)
+    logger.info("🔍 Running IMMEDIATE first aged scan (no delay)...")
+    try:
+        await aged_monitor.periodic_full_scan()
+
+        # Run subscription verification
+        aged_adapter = unified_protection.get('aged_adapter')
+        if aged_adapter:
+            await aged_monitor.verify_subscriptions(aged_adapter)
+
+        logger.info("✅ Immediate first aged scan completed successfully")
+
+    except Exception as e:
+        logger.error(
+            f"❌ Error in immediate first aged scan: {e}",
+            exc_info=True
+        )
+        # Continue with periodic scans despite error in first scan
+
+    # ✅ CONTINUE: Periodic scans every interval_minutes
+    logger.info(f"🔁 Starting periodic aged scan loop (every {interval_minutes} minutes)...")
+
     while True:
         try:
+            # Wait for next scan interval
             await asyncio.sleep(interval_minutes * 60)
+
+            # Run periodic scan
             await aged_monitor.periodic_full_scan()
 
-            # ✅ FIX #5: Run subscription health check
+            # Run subscription verification
             aged_adapter = unified_protection.get('aged_adapter')
             if aged_adapter:
                 await aged_monitor.verify_subscriptions(aged_adapter)
@@ -193,10 +223,14 @@ async def start_periodic_aged_scan(unified_protection: Dict, interval_minutes: i
         except asyncio.CancelledError:
             logger.info("Periodic aged scan task cancelled")
             break
+
         except Exception as e:
-            logger.error(f"Error in periodic aged scan: {e}")
-            # Continue running despite errors
-            await asyncio.sleep(60)  # Wait 1 minute before retry
+            logger.error(
+                f"❌ Error in periodic aged scan: {e}",
+                exc_info=True
+            )
+            # Continue running despite errors, but wait 1 minute before retry
+            await asyncio.sleep(60)
 
 
 async def resubscribe_stale_positions(

@@ -1115,6 +1115,10 @@ class AgedPositionMonitorV2:
         scanned_count = 0
         detected_count = 0
 
+        # ✅ NEW: Performance monitoring
+        import time
+        start_time = time.time()
+
         try:
             # ✅ DEBUG ЭТАП 1: Log all symbols in position_manager
             all_symbols = list(self.position_manager.positions.keys())
@@ -1183,8 +1187,31 @@ class AgedPositionMonitorV2:
                     f"detected {detected_count} new aged position(s)"
                 )
 
+            # ✅ NEW: Performance monitoring summary
+            elapsed = time.time() - start_time
+            logger.info(
+                f"⏱️ Periodic scan performance: {elapsed:.1f}s "
+                f"({scanned_count} positions, {elapsed/max(scanned_count, 1):.2f}s per position)"
+            )
+
+            # ✅ NEW: Warn if scan took too long (indicates blocking issue)
+            if elapsed > 60:
+                logger.warning(
+                    f"⚠️ SLOW PERIODIC SCAN DETECTED: {elapsed:.1f}s (expected <10s)! "
+                    f"This indicates a blocking operation in the scan loop. "
+                    f"Check for synchronous operations or verification delays."
+                )
+            elif elapsed > 30:
+                logger.warning(
+                    f"⚠️ Periodic scan slower than expected: {elapsed:.1f}s (expected <10s)"
+                )
+
         except Exception as e:
-            logger.error(f"Periodic aged scan failed: {e}")
+            elapsed = time.time() - start_time
+            logger.error(
+                f"❌ Periodic aged scan failed after {elapsed:.1f}s: {e}",
+                exc_info=True
+            )
 
     async def verify_subscriptions(self, aged_adapter):
         """
