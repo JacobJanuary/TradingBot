@@ -385,10 +385,12 @@ class AgedPositionMonitorV2:
         Called by UnifiedPriceMonitor through adapter
         """
 
-        if symbol not in self.aged_targets:
+        # FIX: TOCTOU race condition - use atomic .get() instead of check + access
+        target = self.aged_targets.get(symbol)
+        if not target:
+            # Position closed during callback - normal race condition during cleanup
+            logger.debug(f"⏭️ {symbol}: Target already removed (position closed)")
             return
-
-        target = self.aged_targets[symbol]
 
         # Check if target reached based on position side
         should_close = False
