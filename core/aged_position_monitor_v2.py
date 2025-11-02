@@ -1116,21 +1116,49 @@ class AgedPositionMonitorV2:
         detected_count = 0
 
         try:
+            # ✅ DEBUG ЭТАП 1: Log all symbols in position_manager
+            all_symbols = list(self.position_manager.positions.keys())
+            logger.info(
+                f"🔍 [DEBUG-ЭТАП1] Periodic scan starting: "
+                f"{len(all_symbols)} positions in memory: {all_symbols}"
+            )
+
             for symbol, position in self.position_manager.positions.items():
                 scanned_count += 1
 
+                # ✅ DEBUG ЭТАП 1: Detailed position state
+                age_hours = self._calculate_age_hours(position)
+                ts_activated = getattr(position, 'trailing_activated', False)
+                has_ts = getattr(position, 'has_trailing_stop', False)
+                already_tracked = symbol in self.aged_targets
+
+                logger.debug(
+                    f"🔍 [DEBUG-ЭТАП1] {symbol}: "
+                    f"age={age_hours:.1f}h, "
+                    f"trailing_activated={ts_activated}, "
+                    f"has_trailing_stop={has_ts}, "
+                    f"already_tracked={already_tracked}"
+                )
+
                 # Skip if already tracked
-                if symbol in self.aged_targets:
+                if already_tracked:
+                    logger.debug(f"⏭️ [DEBUG-ЭТАП1] {symbol}: Skipping - already tracked in aged_targets")
                     continue
 
                 # Skip if trailing stop is active
-                if hasattr(position, 'trailing_activated') and position.trailing_activated:
+                if ts_activated:
+                    logger.debug(f"⏭️ [DEBUG-ЭТАП1] {symbol}: Skipping - trailing stop ACTIVE")
                     continue
 
-                # Check age
-                age_hours = self._calculate_age_hours(position)
+                # Check age - already calculated above
 
                 if age_hours > self.max_age_hours:
+                    logger.info(
+                        f"✅ [DEBUG-ЭТАП1] {symbol}: QUALIFIES for aged monitoring! "
+                        f"age={age_hours:.1f}h > max={self.max_age_hours}h, "
+                        f"aged for {age_hours - self.max_age_hours:.1f}h"
+                    )
+
                     try:
                         await self.add_aged_position(position)
                         detected_count += 1
@@ -1142,6 +1170,12 @@ class AgedPositionMonitorV2:
 
                     except Exception as e:
                         logger.error(f"Failed to add aged position {symbol} during periodic scan: {e}")
+
+                else:
+                    logger.debug(
+                        f"⏭️ [DEBUG-ЭТАП1] {symbol}: Too young - "
+                        f"age={age_hours:.1f}h <= max={self.max_age_hours}h"
+                    )
 
             if detected_count > 0:
                 logger.info(
