@@ -81,6 +81,7 @@ class BinanceHybridStream:
         self.positions: Dict[str, Dict] = {}  # {symbol: position_data}
         self.mark_prices: Dict[str, str] = {}  # {symbol: latest_mark_price}
         self.subscribed_symbols: Set[str] = set()  # Active mark price subscriptions
+        self.pending_subscriptions: Set[str] = set()  # Symbols awaiting subscription (survives reconnects)
 
         # Subscription management
         self.subscription_queue = asyncio.Queue()
@@ -137,6 +138,11 @@ class BinanceHybridStream:
             self._periodic_reconnection_task(interval_seconds=600)
         )
 
+        # Periodic subscription health check (every 2 minutes)
+        self.health_check_task = asyncio.create_task(
+            self._periodic_health_check_task(interval_seconds=120)
+        )
+
         logger.info("✅ Binance Hybrid WebSocket started")
 
     async def stop(self):
@@ -168,7 +174,8 @@ class BinanceHybridStream:
             self.mark_task,
             self.keepalive_task,
             self.subscription_task,
-            self.reconnection_task  # ✅ PHASE 2
+            self.reconnection_task,  # ✅ PHASE 2
+            self.health_check_task  # Subscription health verification
         ]:
             if task and not task.done():
                 task.cancel()
@@ -380,6 +387,35 @@ class BinanceHybridStream:
                 break
             except Exception as e:
                 logger.error(f"[MARK] Error in periodic reconnection: {e}", exc_info=True)
+                await asyncio.sleep(60)
+
+    async def _periodic_health_check_task(self, interval_seconds: int = 120):
+        """
+        Periodic subscription health verification
+
+        Checks every N seconds that all open positions have active or pending subscriptions.
+        Recovers any subscriptions that were lost due to race conditions.
+
+        Args:
+            interval_seconds: Check interval (default: 120s = 2min)
+        """
+        logger.info(f"🏥 [MARK] Starting subscription health check task (interval: {interval_seconds}s)")
+
+        while self.running:
+            try:
+                await asyncio.sleep(interval_seconds)
+
+                if not self.running:
+                    break
+
+                # Run health verification
+                await self._verify_subscriptions_health()
+
+            except asyncio.CancelledError:
+                logger.info("[MARK] Subscription health check task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[MARK] Error in health check task: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
     # ==================== USER DATA STREAM ====================
@@ -688,6 +724,10 @@ class BinanceHybridStream:
 
     async def _request_mark_subscription(self, symbol: str, subscribe: bool = True):
         """Queue mark price subscription request"""
+        if subscribe:
+            # Mark subscription intent immediately (survives reconnects)
+            self.pending_subscriptions.add(symbol)
+            logger.debug(f"[MARK] Marked {symbol} for subscription (pending)")
         await self.subscription_queue.put((symbol, subscribe))
 
     async def _subscribe_mark_price(self, symbol: str):
@@ -709,24 +749,30 @@ class BinanceHybridStream:
             await self.mark_ws.send_str(json.dumps(message))
 
             self.subscribed_symbols.add(symbol)
+            self.pending_subscriptions.discard(symbol)  # Clear from pending after successful subscription
             self.next_request_id += 1
 
-            logger.info(f"✅ [MARK] Subscribed to {symbol}")
+            logger.info(f"✅ [MARK] Subscribed to {symbol} (pending cleared)")
 
         except Exception as e:
             logger.error(f"[MARK] Subscription error for {symbol}: {e}")
 
     async def _restore_subscriptions(self):
-        """Restore all mark price subscriptions after reconnect"""
-        if not self.subscribed_symbols:
+        """Restore all mark price subscriptions after reconnect (includes pending)"""
+        # Combine confirmed and pending subscriptions
+        all_symbols = self.subscribed_symbols.union(self.pending_subscriptions)
+
+        if not all_symbols:
             logger.debug("[MARK] No subscriptions to restore")
             return
 
-        symbols_to_restore = list(self.subscribed_symbols)
-        logger.info(f"🔄 [MARK] Restoring {len(symbols_to_restore)} subscriptions...")
+        symbols_to_restore = list(all_symbols)
+        logger.info(f"🔄 [MARK] Restoring {len(symbols_to_restore)} subscriptions "
+                    f"({len(self.subscribed_symbols)} confirmed + {len(self.pending_subscriptions)} pending)...")
 
-        # Clear subscribed set to allow resubscribe
+        # Clear both sets to allow resubscribe
         self.subscribed_symbols.clear()
+        self.pending_subscriptions.clear()
 
         restored = 0
         for symbol in symbols_to_restore:
@@ -742,6 +788,26 @@ class BinanceHybridStream:
                 logger.error(f"❌ [MARK] Failed to restore subscription for {symbol}: {e}")
 
         logger.info(f"✅ [MARK] Restored {restored}/{len(symbols_to_restore)} subscriptions")
+
+    async def _verify_subscriptions_health(self):
+        """Verify all open positions have active or pending subscriptions"""
+        if not self.positions:
+            return
+
+        # Check all open positions
+        all_subscriptions = self.subscribed_symbols.union(self.pending_subscriptions)
+        missing_subscriptions = set(self.positions.keys()) - all_subscriptions
+
+        if missing_subscriptions:
+            logger.warning(f"⚠️ [MARK] Found {len(missing_subscriptions)} positions without subscriptions: {missing_subscriptions}")
+
+            # Request subscriptions for missing symbols
+            for symbol in missing_subscriptions:
+                logger.info(f"🔄 [MARK] Resubscribing to {symbol} (subscription lost)")
+                await self._request_mark_subscription(symbol, subscribe=True)
+        else:
+            logger.debug(f"✅ [MARK] Subscription health OK: {len(self.positions)} positions, "
+                        f"{len(self.subscribed_symbols)} subscribed, {len(self.pending_subscriptions)} pending")
 
     async def _unsubscribe_mark_price(self, symbol: str):
         """Unsubscribe from mark price stream"""
