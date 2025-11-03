@@ -25,6 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 load_dotenv()
 
+from utils.pgpass import get_db_password
+
 # Colors for output
 class Colors:
     HEADER = '\033[95m'
@@ -150,9 +152,9 @@ class CompleteCleanup:
         db_config = {
             'host': os.getenv('DB_HOST', 'localhost'),
             'port': int(os.getenv('DB_PORT', 5432)),
-            'database': os.getenv('DB_NAME', 'fox_crypto'),
-            'user': os.getenv('DB_USER'),
-            'password': os.getenv('DB_PASSWORD', '')
+            'database': os.getenv('DB_NAME', 'tradingbot_db'),
+            'user': os.getenv('DB_USER', 'tradingbot'),
+            'password': get_db_password()
         }
 
         self.db_conn = await asyncpg.connect(**db_config)

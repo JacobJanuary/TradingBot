@@ -1,36 +1,45 @@
 [Unit]
-Description=Trading Bot Service
-Documentation=https://github.com/your-org/TradingBot
+Description=Crypto Trading Bot
 After=network.target postgresql.service
 Wants=postgresql.service
+Documentation=https://github.com/your-repo/TradingBot
 
 [Service]
 Type=simple
-User=trader
-Group=trader
-WorkingDirectory=/opt/trading-bot
-Environment="PATH=/opt/trading-bot/.venv/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="PYTHONPATH=/opt/trading-bot"
-ExecStartPre=/opt/trading-bot/.venv/bin/python scripts/pre_start_check.py
-ExecStart=/opt/trading-bot/.venv/bin/python main.py --config /opt/trading-bot/config/config.yaml
-ExecReload=/bin/kill -HUP $MAINPID
-ExecStop=/opt/trading-bot/.venv/bin/python scripts/graceful_shutdown.py
+User=elcrypto
+Group=elcrypto
+WorkingDirectory=/home/elcrypto/TradingBot
+
+# Environment
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=/home/elcrypto/TradingBot/.env
+
+# Execute bot using venv python
+ExecStart=/home/elcrypto/TradingBot/venv/bin/python /home/elcrypto/TradingBot/main.py --mode production
+
+# Restart policy
 Restart=always
 RestartSec=10
-StandardOutput=append:/var/log/trading-bot/stdout.log
-StandardError=append:/var/log/trading-bot/stderr.log
+StartLimitInterval=200
+StartLimitBurst=5
 
 # Security
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/opt/trading-bot/logs /opt/trading-bot/reports /opt/trading-bot/backups
 
 # Resource limits
-CPUQuota=80%
-MemoryMax=4G
-TasksMax=100
+MemoryLimit=1G
+CPUQuota=50%
+
+# Logging
+StandardOutput=append:/home/elcrypto/TradingBot/logs/systemd-output.log
+StandardError=append:/home/elcrypto/TradingBot/logs/systemd-error.log
+SyslogIdentifier=trading-bot
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
 
 [Install]
 WantedBy=multi-user.target
