@@ -192,10 +192,11 @@ class AgedPositionAdapter:
         """
         Callback from UnifiedPriceMonitor for aged positions
         """
-        if symbol not in self.monitoring_positions:
+        # FIX: TOCTOU race condition - use atomic .get() instead of check + access
+        position = self.monitoring_positions.get(symbol)
+        if not position:
+            # Position closed during callback - normal race condition during cleanup
             return
-
-        position = self.monitoring_positions[symbol]
 
         # Skip if trailing stop became active
         if hasattr(position, 'trailing_activated') and position.trailing_activated:
