@@ -54,6 +54,11 @@ class SignalWebSocketClient:
         self.signal_buffer: List[dict] = []
         self.buffer_size = int(config.get('SIGNAL_BUFFER_SIZE', 100))
 
+        # Health monitoring settings
+        self.health_check_enabled = config.get('HEALTH_CHECK_ENABLED', True)
+        self.signal_timeout = int(config.get('SIGNAL_TIMEOUT', 900))  # 15 minutes default
+        self.health_check_interval = int(config.get('HEALTH_CHECK_INTERVAL', 60))  # 1 minute
+
         # Статистика
         self.stats = {
             'connected_at': None,
@@ -161,6 +166,103 @@ class SignalWebSocketClient:
             logger.error(f"Authentication error: {e}")
             return False
 
+    async def _cleanup_connection(self):
+        """
+        Полная очистка WebSocket connection и state
+
+        Закрывает connection, очищает buffers, reset state
+        """
+        logger.info("🧹 Cleaning up old connection...")
+
+        # 1. Закрываем WebSocket если есть
+        if self.websocket:
+            try:
+                await asyncio.wait_for(
+                    self.websocket.close(),
+                    timeout=5.0
+                )
+                logger.debug("Old WebSocket closed")
+            except asyncio.TimeoutError:
+                logger.warning("WebSocket close timeout, forcing...")
+            except Exception as e:
+                logger.warning(f"Error closing websocket: {e}")
+            finally:
+                self.websocket = None
+
+        # 2. Очищаем signal buffer
+        old_buffer_size = len(self.signal_buffer)
+        self.signal_buffer.clear()
+        if old_buffer_size > 0:
+            logger.debug(f"Cleared signal buffer ({old_buffer_size} signals)")
+
+        # 3. Reset state (кроме reconnect_attempts - его сохраняем!)
+        self.state = ConnectionState.DISCONNECTED
+
+        logger.info("✅ Connection cleanup complete")
+
+    async def _verify_connection_health(self, timeout: int = 60) -> bool:
+        """
+        Проверка работоспособности connection после reconnect
+
+        Ждет получения первого сообщения в течение timeout секунд.
+        Если сообщение приходит - connection работает.
+
+        Args:
+            timeout: Максимальное время ожидания первого сообщения (секунды)
+
+        Returns:
+            True если connection работает, False иначе
+        """
+        logger.info(f"🔍 Verifying connection health (timeout={timeout}s)...")
+
+        initial_signals_received = self.stats['signals_received']
+        start_time = datetime.now()
+
+        # Ждем появления нового сигнала
+        while (datetime.now() - start_time).total_seconds() < timeout:
+            # Проверяем что получили новые данные
+            if self.stats['signals_received'] > initial_signals_received:
+                elapsed = (datetime.now() - start_time).total_seconds()
+                logger.info(f"✅ Connection health VERIFIED (first signal in {elapsed:.1f}s)")
+                return True
+
+            # Проверяем что connection все еще AUTHENTICATED
+            if self.state != ConnectionState.AUTHENTICATED:
+                logger.error(f"❌ Connection state changed to {self.state}")
+                return False
+
+            # Короткая пауза перед следующей проверкой
+            await asyncio.sleep(2)
+
+        # Timeout - сигналы не пришли
+        logger.error(f"❌ Connection health check TIMEOUT ({timeout}s) - no signals received")
+        return False
+
+    def _check_signal_timeout(self) -> bool:
+        """
+        Проверка не истек ли timeout с последнего полученного сигнала
+
+        Returns:
+            True если все OK, False если timeout истек
+        """
+        if not self.health_check_enabled:
+            return True
+
+        if self.stats['last_signal_time'] is None:
+            # Еще не получали сигналов - это OK после start/reconnect
+            return True
+
+        time_since_last_signal = (datetime.now() - self.stats['last_signal_time']).total_seconds()
+
+        if time_since_last_signal > self.signal_timeout:
+            logger.error(
+                f"⚠️ SIGNAL TIMEOUT! Last signal was {time_since_last_signal:.0f}s ago "
+                f"(threshold: {self.signal_timeout}s)"
+            )
+            return False
+
+        return True
+
     async def handle_message(self, message: str):
         """Обработка сообщения от сервера"""
         try:
@@ -225,7 +327,14 @@ class SignalWebSocketClient:
             await self.on_signals_callback(signals)
 
     async def reconnect(self):
-        """Переподключение к серверу"""
+        """
+        Полное переподключение к серверу с очисткой state
+
+        Changes:
+        1. Полностью закрываем старое connection
+        2. Очищаем все buffers и state
+        3. Проверяем работоспособность после reconnect
+        """
         if not self.auto_reconnect:
             logger.info("Auto-reconnect disabled")
             return False
@@ -238,25 +347,48 @@ class SignalWebSocketClient:
         self.reconnect_attempts += 1
         self.stats['reconnections'] += 1
 
-        # ENHANCEMENT: Exponential backoff
-        base_delay = self.reconnect_interval
-        max_delay = 60  # Maximum 60 seconds
+        # ✅ NEW: Полная очистка старого connection
+        await self._cleanup_connection()
 
-        # Calculate delay with exponential backoff: min(base * 2^(attempts-1), max)
+        base_delay = self.reconnect_interval
+        max_delay = 60
         delay = min(base_delay * (2 ** (self.reconnect_attempts - 1)), max_delay)
 
         logger.warning(
-            f"Reconnecting (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts or '∞'}), "
+            f"🔄 Full reconnect (attempt {self.reconnect_attempts}/{self.max_reconnect_attempts or '∞'}), "
             f"waiting {delay}s (exponential backoff)..."
         )
 
         await asyncio.sleep(delay)
 
-        return await self.connect()
+        # Подключаемся
+        success = await self.connect()
+
+        if not success:
+            return False
+
+        # ✅ NEW: Verify connection health after reconnect
+        health_ok = await self._verify_connection_health(timeout=60)
+
+        if not health_ok:
+            logger.error("❌ Connection health check FAILED after reconnect!")
+            self.state = ConnectionState.DISCONNECTED
+            return False
+
+        logger.info("✅ Reconnect successful and verified!")
+        return True
 
     async def run(self):
-        """Основной цикл работы клиента"""
+        """
+        Основной цикл работы клиента с health monitoring
+
+        Changes:
+        1. Добавлен periodic health check
+        2. Детекция "silent failure"
+        3. Автоматический reconnect при timeout
+        """
         self.running = True
+        last_health_check = datetime.now()
 
         while self.running:
             try:
@@ -270,10 +402,38 @@ class SignalWebSocketClient:
                             break
                         continue
 
-                # Читаем сообщения
-                async for message in self.websocket:
+                # ✅ NEW: Periodic health check
+                now = datetime.now()
+                if (now - last_health_check).total_seconds() >= self.health_check_interval:
+                    if not self._check_signal_timeout():
+                        logger.error("🔴 Health check FAILED - initiating reconnect")
+                        self.state = ConnectionState.DISCONNECTED
+
+                        if self.on_disconnect_callback:
+                            await self.on_disconnect_callback()
+
+                        if self.auto_reconnect:
+                            await self.reconnect()
+                        else:
+                            break
+                        continue
+
+                    last_health_check = now
+
+                # Читаем сообщения с timeout
+                try:
+                    # ✅ NEW: Read with timeout to allow health checks
+                    message = await asyncio.wait_for(
+                        self.websocket.recv(),
+                        timeout=self.health_check_interval
+                    )
+
                     self.stats['total_bytes_received'] += len(message)
                     await self.handle_message(message)
+
+                except asyncio.TimeoutError:
+                    # Timeout is OK - просто делаем health check на следующей итерации
+                    continue
 
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("Connection closed")
@@ -349,10 +509,25 @@ class SignalWebSocketClient:
 
     def get_stats(self) -> dict:
         """Получение статистики клиента"""
+        now = datetime.now()
+
+        # Calculate time since last signal
+        time_since_last_signal = None
+        if self.stats['last_signal_time']:
+            time_since_last_signal = (now - self.stats['last_signal_time']).total_seconds()
+
+        # Calculate uptime
+        uptime = None
+        if self.stats['connected_at']:
+            uptime = (now - self.stats['connected_at']).total_seconds()
+
         return {
             'state': self.state.value,
             'reconnect_attempts': self.reconnect_attempts,
             'buffered_signals': len(self.signal_buffer),
+            'time_since_last_signal': time_since_last_signal,  # ✅ NEW
+            'uptime': uptime,  # ✅ NEW
+            'health_status': 'OK' if self._check_signal_timeout() else 'TIMEOUT',  # ✅ NEW
             **self.stats
         }
 
