@@ -83,6 +83,7 @@ class BybitHybridStream:
         self.positions: Dict[str, Dict] = {}  # {symbol: position_data}
         self.mark_prices: Dict[str, str] = {}  # {symbol: latest_mark_price}
         self.subscribed_tickers: Set[str] = set()  # Active ticker subscriptions
+        self.pending_subscriptions: Set[str] = set()  # Symbols awaiting subscription (survives reconnects)
 
         # Subscription management
         self.subscription_queue = asyncio.Queue()
@@ -92,6 +93,7 @@ class BybitHybridStream:
         self.private_task = None
         self.public_task = None
         self.heartbeat_task = None
+        self.health_check_task = None
 
         # Heartbeat settings (Bybit requires 20s)
         self.heartbeat_interval = 20
@@ -135,6 +137,11 @@ class BybitHybridStream:
             self._periodic_reconnection_task(interval_seconds=600)
         )
 
+        # Periodic subscription health check (every 2 minutes)
+        self.health_check_task = asyncio.create_task(
+            self._periodic_health_check_task(interval_seconds=120)
+        )
+
         logger.info("✅ Bybit Hybrid WebSocket started")
 
     async def stop(self):
@@ -149,7 +156,8 @@ class BybitHybridStream:
             self.public_task,
             self.heartbeat_task,
             self.subscription_task,
-            self.reconnection_task  # ✅ PHASE 2
+            self.reconnection_task,  # ✅ PHASE 2
+            self.health_check_task  # Subscription health verification
         ]:
             if task and not task.done():
                 task.cancel()
@@ -522,6 +530,11 @@ class BybitHybridStream:
 
     async def _request_ticker_subscription(self, symbol: str, subscribe: bool):
         """Request ticker subscription/unsubscription (queued)"""
+        if subscribe:
+            # Mark subscription intent immediately (survives reconnects)
+            self.pending_subscriptions.add(symbol)
+            logger.debug(f"[PUBLIC] Marked {symbol} for subscription (pending)")
+
         try:
             await self.subscription_queue.put((symbol, subscribe))
         except Exception as e:
@@ -546,7 +559,8 @@ class BybitHybridStream:
         try:
             await self.public_ws.send_str(json.dumps(msg))
             self.subscribed_tickers.add(symbol)
-            logger.info(f"✅ [PUBLIC] Subscribed to {symbol}")
+            self.pending_subscriptions.discard(symbol)  # Clear from pending after successful subscription
+            logger.info(f"✅ [PUBLIC] Subscribed to {symbol} (pending cleared)")
         except Exception as e:
             logger.error(f"[PUBLIC] Failed to subscribe {symbol}: {e}")
 
@@ -574,24 +588,44 @@ class BybitHybridStream:
             logger.error(f"[PUBLIC] Failed to unsubscribe {symbol}: {e}")
 
     async def _restore_ticker_subscriptions(self):
-        """Restore ticker subscriptions after reconnection"""
-        if not self.subscribed_tickers:
+        """Restore ticker subscriptions after reconnection (includes pending)"""
+        # Combine confirmed and pending subscriptions
+        all_symbols = self.subscribed_tickers.union(self.pending_subscriptions)
+
+        if not all_symbols:
+            logger.debug("[PUBLIC] No subscriptions to restore")
             return
 
-        logger.info(f"[PUBLIC] Restoring {len(self.subscribed_tickers)} ticker subscriptions...")
+        symbols_to_restore = list(all_symbols)
+        logger.info(f"🔄 [PUBLIC] Restoring {len(symbols_to_restore)} ticker subscriptions "
+                    f"({len(self.subscribed_tickers)} confirmed + {len(self.pending_subscriptions)} pending)...")
+
+        # Clear both sets to allow resubscribe
+        self.subscribed_tickers.clear()
+        self.pending_subscriptions.clear()
 
         # Re-subscribe to all tickers
-        topics = [f"tickers.{symbol}" for symbol in self.subscribed_tickers]
-        msg = {
-            "op": "subscribe",
-            "args": topics
-        }
+        restored = 0
+        for symbol in symbols_to_restore:
+            try:
+                topic = f"tickers.{symbol}"
+                msg = {
+                    "op": "subscribe",
+                    "args": [topic]
+                }
 
-        try:
-            await self.public_ws.send_str(json.dumps(msg))
-            logger.info(f"✅ [PUBLIC] Restored {len(topics)} subscriptions")
-        except Exception as e:
-            logger.error(f"[PUBLIC] Failed to restore subscriptions: {e}")
+                await self.public_ws.send_str(json.dumps(msg))
+                self.subscribed_tickers.add(symbol)
+                restored += 1
+
+                # Small delay to avoid overwhelming connection
+                if restored < len(symbols_to_restore):
+                    await asyncio.sleep(0.1)
+
+            except Exception as e:
+                logger.error(f"❌ [PUBLIC] Failed to restore subscription for {symbol}: {e}")
+
+        logger.info(f"✅ [PUBLIC] Restored {restored}/{len(symbols_to_restore)} subscriptions")
 
     # ==================== EVENT EMISSION ====================
 
@@ -720,6 +754,55 @@ class BybitHybridStream:
             except Exception as e:
                 logger.error(f"Error in periodic reconnection: {e}", exc_info=True)
                 await asyncio.sleep(60)  # Wait before retry
+
+    async def _periodic_health_check_task(self, interval_seconds: int = 120):
+        """
+        Periodic subscription health verification
+
+        Checks every N seconds that all open positions have active or pending subscriptions.
+        Recovers any subscriptions that were lost due to race conditions.
+
+        Args:
+            interval_seconds: Check interval (default: 120s = 2min)
+        """
+        logger.info(f"🏥 [PUBLIC] Starting subscription health check task (interval: {interval_seconds}s)")
+
+        while self.running:
+            try:
+                await asyncio.sleep(interval_seconds)
+
+                if not self.running:
+                    break
+
+                # Run health verification
+                await self._verify_subscriptions_health()
+
+            except asyncio.CancelledError:
+                logger.info("[PUBLIC] Subscription health check task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[PUBLIC] Error in health check task: {e}", exc_info=True)
+                await asyncio.sleep(60)
+
+    async def _verify_subscriptions_health(self):
+        """Verify all open positions have active or pending subscriptions"""
+        if not self.positions:
+            return
+
+        # Check all open positions
+        all_subscriptions = self.subscribed_tickers.union(self.pending_subscriptions)
+        missing_subscriptions = set(self.positions.keys()) - all_subscriptions
+
+        if missing_subscriptions:
+            logger.warning(f"⚠️ [PUBLIC] Found {len(missing_subscriptions)} positions without subscriptions: {missing_subscriptions}")
+
+            # Request subscriptions for missing symbols
+            for symbol in missing_subscriptions:
+                logger.info(f"🔄 [PUBLIC] Resubscribing to {symbol} (subscription lost)")
+                await self._request_ticker_subscription(symbol, subscribe=True)
+        else:
+            logger.debug(f"✅ [PUBLIC] Subscription health OK: {len(self.positions)} positions, "
+                        f"{len(self.subscribed_tickers)} subscribed, {len(self.pending_subscriptions)} pending")
 
     # ==================== STATUS ====================
 
