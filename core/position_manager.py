@@ -618,57 +618,95 @@ class PositionManager:
             # Initialize trailing stops for loaded positions
             # NEW: Try to restore from DB first, otherwise create new
             logger.info("🎯 Initializing trailing stops for loaded positions...")
+
+            # CRITICAL FIX: Group positions by exchange and load trailing params once per exchange
+            positions_by_exchange = {}
             for symbol, position in self.positions.items():
+                if position.exchange not in positions_by_exchange:
+                    positions_by_exchange[position.exchange] = []
+                positions_by_exchange[position.exchange].append((symbol, position))
+
+            # Process each exchange with its trailing params
+            for exchange_name, exchange_positions in positions_by_exchange.items():
+                # Load trailing params from monitoring.params (CRITICAL FIX)
+                exchange_params = None
+                trailing_activation_percent = None
+                trailing_callback_percent = None
+
                 try:
-                    trailing_manager = self.trailing_managers.get(position.exchange)
-                    if trailing_manager:
-                        # NEW: Try to restore state from database first
-                        # Prepare position data to avoid exchange API call during startup
-                        position_dict = {
-                            'symbol': symbol,
-                            'side': position.side,
-                            'size': safe_get_attr(position, 'quantity', 'qty', 'size', default=0),
-                            'entryPrice': position.entry_price
-                        }
-                        restored_ts = await trailing_manager._restore_state(symbol, position_data=position_dict)
-
-                        if restored_ts:
-                            # State restored from DB - add to manager
-                            trailing_manager.trailing_stops[symbol] = restored_ts
-                            position.has_trailing_stop = True
-                            logger.info(f"✅ {symbol}: TS state restored from DB")
-                        else:
-                            # No state in DB - create new trailing stop
-                            # FIX: Add timeout to prevent hanging during startup
-                            await asyncio.wait_for(
-                                trailing_manager.create_trailing_stop(
-                                    symbol=symbol,
-                                    side=position.side,
-                                    entry_price=to_decimal(position.entry_price),
-                                    quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0)),
-                                    position_params={
-                                        'trailing_activation_percent': trailing_activation_percent,
-                                        'trailing_callback_percent': trailing_callback_percent
-                                    }
-                                ),
-                                timeout=10.0
-                            )
-                            position.has_trailing_stop = True
-
-                            # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
-                            await asyncio.wait_for(
-                                self.repository.update_position(
-                                    position.id,
-                                    has_trailing_stop=True
-                                ),
-                                timeout=5.0
-                            )
-
-                            logger.info(f"✅ {symbol}: New TS created (no state in DB)")
-                    else:
-                        logger.warning(f"⚠️ No trailing manager for exchange {position.exchange}")
+                    exchange_params = await self.repository.get_params_by_exchange_name(exchange_name)
                 except Exception as e:
-                    logger.error(f"Error initializing trailing stop for {symbol}: {e}")
+                    logger.warning(f"⚠️  Failed to load exchange params for {exchange_name}: {e}")
+
+                if exchange_params:
+                    if exchange_params.get('trailing_activation_filter') is not None:
+                        trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
+                    if exchange_params.get('trailing_distance_filter') is not None:
+                        trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
+
+                # Fallback to config if not in DB
+                if trailing_activation_percent is None:
+                    trailing_activation_percent = float(self.config.trailing_activation_percent)
+                if trailing_callback_percent is None:
+                    trailing_callback_percent = float(self.config.trailing_callback_percent)
+
+                logger.debug(
+                    f"📊 {exchange_name}: Using trailing params: "
+                    f"activation={trailing_activation_percent}%, callback={trailing_callback_percent}%"
+                )
+
+                # Initialize TS for all positions on this exchange
+                for symbol, position in exchange_positions:
+                    try:
+                        trailing_manager = self.trailing_managers.get(position.exchange)
+                        if trailing_manager:
+                            # NEW: Try to restore state from database first
+                            # Prepare position data to avoid exchange API call during startup
+                            position_dict = {
+                                'symbol': symbol,
+                                'side': position.side,
+                                'size': safe_get_attr(position, 'quantity', 'qty', 'size', default=0),
+                                'entryPrice': position.entry_price
+                            }
+                            restored_ts = await trailing_manager._restore_state(symbol, position_data=position_dict)
+
+                            if restored_ts:
+                                # State restored from DB - add to manager
+                                trailing_manager.trailing_stops[symbol] = restored_ts
+                                position.has_trailing_stop = True
+                                logger.info(f"✅ {symbol}: TS state restored from DB")
+                            else:
+                                # No state in DB - create new trailing stop
+                                # FIX: Now using correctly loaded trailing params
+                                await asyncio.wait_for(
+                                    trailing_manager.create_trailing_stop(
+                                        symbol=symbol,
+                                        side=position.side,
+                                        entry_price=to_decimal(position.entry_price),
+                                        quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0)),
+                                        position_params={
+                                            'trailing_activation_percent': trailing_activation_percent,
+                                            'trailing_callback_percent': trailing_callback_percent
+                                        }
+                                    ),
+                                    timeout=10.0
+                                )
+                                position.has_trailing_stop = True
+
+                                # CRITICAL FIX: Save has_trailing_stop to database for restart persistence
+                                await asyncio.wait_for(
+                                    self.repository.update_position(
+                                        position.id,
+                                        has_trailing_stop=True
+                                    ),
+                                    timeout=5.0
+                                )
+
+                                logger.info(f"✅ {symbol}: New TS created (no state in DB)")
+                        else:
+                            logger.warning(f"⚠️ No trailing manager for exchange {position.exchange}")
+                    except Exception as e:
+                        logger.error(f"Error initializing trailing stop for {symbol}: {e}")
             
             return True
             
