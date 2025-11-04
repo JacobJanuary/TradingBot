@@ -1315,7 +1315,7 @@ class SmartTrailingStopManager:
                 else:
                     validation_error = (
                         f"LONG position requires SL < current_price, "
-                        f"but {sl_price:.8f if sl_price is not None else 'None'} >= {current_price:.8f}"
+                        f"but {f'{sl_price:.8f}' if sl_price is not None else 'None'} >= {current_price:.8f}"
                     )
 
             elif ts.side == 'short':
@@ -1325,7 +1325,7 @@ class SmartTrailingStopManager:
                 else:
                     validation_error = (
                         f"SHORT position requires SL > current_price, "
-                        f"but {sl_price:.8f} <= {current_price:.8f}"
+                        f"but {f'{sl_price:.8f}' if sl_price is not None else 'None'} <= {current_price:.8f}"
                     )
 
             else:
