@@ -834,19 +834,31 @@ class PositionManager:
                             float(pos_state.unrealized_pnl_percent) if pos_state.unrealized_pnl_percent else 0.0, # pnl_percentage: float
                             'sync_cleanup'                          # reason: str
                         )
-                    # Remove from tracking
-                    self.positions.pop(pos_state.symbol, None)
+                    # ✅ REFACTOR: Use centralized cleanup method
+                    # This ensures ALL monitoring systems are notified:
+                    # - trailing_stop_manager (already was notified)
+                    # - aged_adapter (NEW - prevents stale position errors)
+                    # - unified_price_monitor (NEW - prevents resubscribe warnings)
+                    cleanup_result = await self._cleanup_position_monitoring(
+                        symbol=pos_state.symbol,
+                        exchange_name=pos_state.exchange,
+                        position_data=pos_state,
+                        realized_pnl=None,  # Unknown (position closed externally)
+                        reason='sync_cleanup',
+                        skip_position_removal=False,  # DO remove from self.positions
+                        skip_trailing_stop=False,     # DO notify trailing stop
+                        skip_aged_adapter=False,      # DO remove from aged monitoring (FIX!)
+                        skip_events=False              # DO log cleanup events
+                    )
 
-                    # FIX: Notify trailing stop manager of orphaned position closure
-                    trailing_manager = self.trailing_managers.get(pos_state.exchange)
-                    if trailing_manager:
-                        try:
-                            await trailing_manager.on_position_closed(pos_state.symbol, realized_pnl=None)
-                            logger.debug(f"Notified trailing stop manager of {pos_state.symbol} orphaned closure")
-                        except Exception as e:
-                            logger.warning(f"Failed to notify trailing manager for orphaned {pos_state.symbol}: {e}")
+                    # Check for cleanup errors
+                    if cleanup_result['errors']:
+                        logger.warning(
+                            f"⚠️ Orphaned position closed but cleanup had errors: "
+                            f"{', '.join(cleanup_result['errors'])}"
+                        )
 
-                    logger.info(f"✅ Closed orphaned position: {pos_state.symbol}")
+                    logger.info(f"✅ Closed orphaned position: {pos_state.symbol} (full cleanup)")
 
             # Update or add positions
             for pos in active_positions:
