@@ -789,6 +789,11 @@ class BinanceHybridStream:
         self.subscribed_symbols.clear()
         self.pending_subscriptions.clear()
 
+        # CRITICAL FIX: Clear old price data to ensure verification checks FRESH data
+        # Without this, _verify_all_subscriptions_active() incorrectly validates against stale prices
+        self.mark_prices.clear()
+        logger.debug(f"[MARK] Cleared old price data for {total_symbols} symbols")
+
         # PHASE 1: OPTIMISTIC SUBSCRIPTIONS (all symbols, fast)
         logger.info(f"📤 [MARK] Sending {total_symbols} OPTIMISTIC subscriptions...")
         restored = 0

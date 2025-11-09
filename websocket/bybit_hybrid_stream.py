@@ -619,6 +619,11 @@ class BybitHybridStream:
         self.subscribed_tickers.clear()
         self.pending_subscriptions.clear()
 
+        # CRITICAL FIX: Clear old price data to ensure verification checks FRESH data
+        # Without this, _verify_all_subscriptions_active() incorrectly validates against stale prices
+        self.ticker_prices.clear()
+        logger.debug(f"[PUBLIC] Cleared old price data for {total_symbols} symbols")
+
         # PHASE 1: OPTIMISTIC SUBSCRIPTIONS (all symbols, fast)
         logger.info(f"📤 [PUBLIC] Sending {total_symbols} OPTIMISTIC subscriptions...")
         restored = 0
