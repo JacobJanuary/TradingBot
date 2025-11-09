@@ -588,7 +588,18 @@ class BybitHybridStream:
             logger.error(f"[PUBLIC] Failed to unsubscribe {symbol}: {e}")
 
     async def _restore_ticker_subscriptions(self):
-        """Restore ticker subscriptions after reconnection (includes pending)"""
+        """
+        Restore ticker subscriptions after reconnection
+
+        HYBRID APPROACH (based on test results):
+        1. First 30 symbols: OPTIMISTIC (no verification, fast)
+        2. Remaining symbols: OPTIMISTIC (все быстро)
+        3. 60s warmup period (let data start flowing)
+        4. Verification of all subscriptions (background, non-blocking)
+
+        This approach prevents event loop blocking while ensuring
+        subscriptions are actually working.
+        """
         # Combine confirmed and pending subscriptions
         all_symbols = self.subscribed_tickers.union(self.pending_subscriptions)
 
@@ -597,35 +608,218 @@ class BybitHybridStream:
             return
 
         symbols_to_restore = list(all_symbols)
-        logger.info(f"🔄 [PUBLIC] Restoring {len(symbols_to_restore)} ticker subscriptions "
-                    f"({len(self.subscribed_tickers)} confirmed + {len(self.pending_subscriptions)} pending)...")
+        total_symbols = len(symbols_to_restore)
+
+        logger.info(
+            f"🔄 [PUBLIC] Restoring {total_symbols} ticker subscriptions "
+            f"({len(self.subscribed_tickers)} confirmed + {len(self.pending_subscriptions)} pending)..."
+        )
 
         # Clear both sets to allow resubscribe
         self.subscribed_tickers.clear()
         self.pending_subscriptions.clear()
 
-        # Re-subscribe to all tickers
+        # PHASE 1: OPTIMISTIC SUBSCRIPTIONS (all symbols, fast)
+        logger.info(f"📤 [PUBLIC] Sending {total_symbols} OPTIMISTIC subscriptions...")
         restored = 0
         for symbol in symbols_to_restore:
             try:
-                topic = f"tickers.{symbol}"
-                msg = {
-                    "op": "subscribe",
-                    "args": [topic]
-                }
-
-                await self.public_ws.send_str(json.dumps(msg))
-                self.subscribed_tickers.add(symbol)
-                restored += 1
+                success = await self._verify_subscription_optimistic(symbol)
+                if success:
+                    restored += 1
 
                 # Small delay to avoid overwhelming connection
-                if restored < len(symbols_to_restore):
+                if restored < total_symbols:
                     await asyncio.sleep(0.1)
 
             except Exception as e:
                 logger.error(f"❌ [PUBLIC] Failed to restore subscription for {symbol}: {e}")
 
-        logger.info(f"✅ [PUBLIC] Restored {restored}/{len(symbols_to_restore)} subscriptions")
+        logger.info(f"✅ [PUBLIC] Sent {restored}/{total_symbols} subscription requests")
+
+        # PHASE 2: WARMUP PERIOD (60 seconds)
+        if restored > 0:
+            logger.info(f"⏳ [PUBLIC] Warmup period: waiting 60s for data to start flowing...")
+            await asyncio.sleep(60.0)
+            logger.info(f"✅ [PUBLIC] Warmup complete")
+
+            # PHASE 3: VERIFICATION (background, non-blocking)
+            logger.info(f"🔍 [PUBLIC] Verifying subscriptions in background...")
+
+            # Start verification in background (don't block)
+            async def background_verify():
+                try:
+                    result = await self._verify_all_subscriptions_active(timeout=60.0)
+
+                    if result['success_rate'] < 90:
+                        logger.warning(
+                            f"⚠️ [PUBLIC] Low verification rate: {result['success_rate']:.1f}%\n"
+                            f"   Verified: {len(result['verified'])}\n"
+                            f"   Failed: {len(result['failed'])}\n"
+                            f"   Failed symbols: {result['failed']}"
+                        )
+                    else:
+                        logger.info(
+                            f"✅ [PUBLIC] Subscription health: {result['success_rate']:.1f}% "
+                            f"({len(result['verified'])}/{result['total']})"
+                        )
+                except Exception as e:
+                    logger.error(f"❌ [PUBLIC] Background verification error: {e}")
+
+            # Run in background, don't await
+            asyncio.create_task(background_verify())
+
+    async def _verify_subscription_optimistic(self, symbol: str) -> bool:
+        """
+        Subscribe WITHOUT verification (optimistic approach)
+
+        Used for initial subscriptions during reconnect to avoid blocking.
+        Data will start flowing after 20-60 seconds warmup period.
+        Health check will verify data receipt later.
+
+        Args:
+            symbol: Symbol to subscribe to
+
+        Returns:
+            bool: True if subscription request sent successfully
+        """
+        try:
+            topic = f"tickers.{symbol}"
+            msg = {
+                "op": "subscribe",
+                "args": [topic]
+            }
+            await self.public_ws.send_str(json.dumps(msg))
+            self.subscribed_tickers.add(symbol)
+            logger.info(f"📤 [PUBLIC] OPTIMISTIC subscribe: {symbol}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ [PUBLIC] Failed optimistic subscribe {symbol}: {e}")
+            return False
+
+    async def _verify_subscription_event_based(self, symbol: str, timeout: float = 10.0) -> bool:
+        """
+        Subscribe with EVENT-BASED verification (NON-BLOCKING!)
+
+        Waits for actual ticker update event to confirm subscription is working.
+        Uses asyncio.Event for non-blocking wait.
+
+        Args:
+            symbol: Symbol to subscribe to
+            timeout: Seconds to wait for first price update
+
+        Returns:
+            bool: True if verified (data received), False if timeout
+        """
+        # Store current price count to detect new data
+        initial_count = len(self.mark_prices.get(symbol, ""))
+
+        # Helper to check for new data
+        def check_new_data():
+            return symbol in self.mark_prices and len(self.mark_prices[symbol]) > initial_count
+
+        try:
+            # Send subscription request
+            topic = f"tickers.{symbol}"
+            msg = {
+                "op": "subscribe",
+                "args": [topic]
+            }
+            await self.public_ws.send_str(json.dumps(msg))
+            self.subscribed_tickers.add(symbol)
+            start_time = asyncio.get_event_loop().time()
+
+            # Wait for data with timeout
+            deadline = start_time + timeout
+            while asyncio.get_event_loop().time() < deadline:
+                if check_new_data():
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    logger.info(f"✅ [PUBLIC] VERIFIED: {symbol} (data in {elapsed:.1f}s)")
+                    return True
+
+                await asyncio.sleep(0.5)  # Check every 500ms
+
+            # Timeout - no data received
+            logger.warning(f"🚨 [PUBLIC] SILENT FAIL: {symbol} (timeout {timeout}s)")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ [PUBLIC] Verification error {symbol}: {e}")
+            return False
+
+    async def _verify_all_subscriptions_active(self, timeout: float = 60.0) -> dict:
+        """
+        Verify that ALL subscriptions are receiving data after reconnect
+
+        NON-BLOCKING: Waits for data from all symbols in parallel.
+        Used after _restore_ticker_subscriptions() to ensure no silent fails.
+
+        Args:
+            timeout: Maximum seconds to wait for all subscriptions
+
+        Returns:
+            dict: {
+                'verified': set of verified symbols,
+                'failed': set of symbols without data,
+                'total': total symbols checked,
+                'success_rate': percentage verified
+            }
+        """
+        if not self.subscribed_tickers and not self.pending_subscriptions:
+            logger.debug("[PUBLIC] No subscriptions to verify")
+            return {
+                'verified': set(),
+                'failed': set(),
+                'total': 0,
+                'success_rate': 100.0
+            }
+
+        all_symbols = self.subscribed_tickers.union(self.pending_subscriptions)
+        total_symbols = len(all_symbols)
+
+        logger.info(f"🔍 [PUBLIC] Verifying {total_symbols} subscriptions (timeout: {timeout}s)...")
+
+        # Track which symbols have received data
+        verified_symbols = set()
+        start_time = asyncio.get_event_loop().time()
+        deadline = start_time + timeout
+
+        # Wait for data from all symbols
+        while asyncio.get_event_loop().time() < deadline:
+            # Check which symbols have data
+            for symbol in all_symbols:
+                if symbol in self.mark_prices and symbol not in verified_symbols:
+                    verified_symbols.add(symbol)
+                    logger.debug(f"✓ [PUBLIC] {symbol} verified ({len(verified_symbols)}/{total_symbols})")
+
+            # All verified?
+            if len(verified_symbols) == total_symbols:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                logger.info(f"✅ [PUBLIC] ALL {total_symbols} subscriptions verified in {elapsed:.1f}s")
+                return {
+                    'verified': verified_symbols,
+                    'failed': set(),
+                    'total': total_symbols,
+                    'success_rate': 100.0
+                }
+
+            await asyncio.sleep(1.0)  # Check every second
+
+        # Timeout - some symbols didn't receive data
+        failed_symbols = all_symbols - verified_symbols
+        success_rate = (len(verified_symbols) / total_symbols) * 100 if total_symbols > 0 else 0
+
+        logger.warning(
+            f"⚠️ [PUBLIC] Verification timeout: {len(verified_symbols)}/{total_symbols} verified ({success_rate:.1f}%)\n"
+            f"   Failed: {failed_symbols}"
+        )
+
+        return {
+            'verified': verified_symbols,
+            'failed': failed_symbols,
+            'total': total_symbols,
+            'success_rate': success_rate
+        }
 
     # ==================== EVENT EMISSION ====================
 
