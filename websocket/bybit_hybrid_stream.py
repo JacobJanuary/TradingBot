@@ -642,10 +642,10 @@ class BybitHybridStream:
 
         logger.info(f"✅ [PUBLIC] Sent {restored}/{total_symbols} subscription requests")
 
-        # PHASE 2: WARMUP PERIOD (60 seconds)
+        # PHASE 2: WARMUP PERIOD (90 seconds - increased from 60s due to observed 72s delay)
         if restored > 0:
-            logger.info(f"⏳ [PUBLIC] Warmup period: waiting 60s for data to start flowing...")
-            await asyncio.sleep(60.0)
+            logger.info(f"⏳ [PUBLIC] Warmup period: waiting 90s for data to start flowing...")
+            await asyncio.sleep(90.0)
             logger.info(f"✅ [PUBLIC] Warmup complete")
 
             # PHASE 3: VERIFICATION (background, non-blocking)
