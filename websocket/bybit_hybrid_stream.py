@@ -494,6 +494,8 @@ class BybitHybridStream:
 
         # Update mark price cache
         self.mark_prices[symbol] = mark_price
+        # PHASE 1: Track timestamp for data freshness monitoring
+        self.mark_prices[f"{symbol}_timestamp"] = asyncio.get_event_loop().time()
 
         # If we have position data, emit combined event
         if symbol in self.positions:
