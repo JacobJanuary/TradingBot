@@ -6,8 +6,12 @@ Based on implementations from:
 """
 import ccxt.async_support as ccxt
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from decimal import Decimal
+
+if TYPE_CHECKING:
+    # Import only for type hints, avoid circular import at runtime
+    from core.position_manager import PositionManager
 from dataclasses import dataclass
 import asyncio
 from datetime import datetime, timezone
@@ -73,11 +77,22 @@ class ExchangeManager:
         }
     }
 
-    def __init__(self, exchange_name: str, config: Dict, repository=None):
-        """Initialize exchange with configuration"""
+    def __init__(self, exchange_name: str, config: Dict, repository=None, position_manager: Optional['PositionManager'] = None):
+        """
+        Initialize exchange with configuration
+
+        Args:
+            exchange_name: Exchange name (e.g., 'binance', 'bybit')
+            config: Exchange configuration dict
+            repository: Optional TradingRepository for DB operations
+            position_manager: Optional PositionManager instance for real-time position data
+                             Required for accurate position lookup during SL updates.
+                             If None, falls back to self.positions (fetch_positions cache).
+        """
         self.name = exchange_name.lower()
         self.config = config
         self.repository = repository  # Optional: for order caching (Phase 3)
+        self.position_manager = position_manager  # NEW: For real-time position lookup
 
         # Initialize CCXT exchange
         exchange_class = getattr(ccxt, self.name)

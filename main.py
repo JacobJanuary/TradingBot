@@ -114,15 +114,16 @@ class TradingBot:
                 {'min_trades_for_stats': 20}
             )
 
-            # Initialize exchanges
+            # Initialize exchanges (Phase 1: without position_manager)
             logger.info("Initializing exchanges...")
             for name, config in settings.exchanges.items():
                 # Skip disabled exchanges
                 if not config.enabled:
                     logger.info(f"Skipping disabled exchange: {name}")
                     continue
-                    
-                exchange = ExchangeManager(name, config.__dict__, repository=self.repository)
+
+                # Phase 1: Create exchange without position_manager (will be linked in Phase 3)
+                exchange = ExchangeManager(name, config.__dict__, repository=self.repository, position_manager=None)
                 try:
                     await exchange.initialize()
                     self.exchanges[name] = exchange
@@ -269,7 +270,7 @@ class TradingBot:
                             logger.error(f"❌ Bybit mainnet requires API credentials")
                             raise ValueError("Bybit API credentials required for mainnet")
 
-            # Initialize position manager
+            # Initialize position manager (Phase 2)
             logger.info("Initializing position manager...")
             self.position_manager = PositionManager(
                 settings.trading,
@@ -277,6 +278,12 @@ class TradingBot:
                 self.repository,
                 self.event_router
             )
+
+            # Phase 3: Link position_manager back to exchanges for real-time position lookup
+            logger.info("Linking position_manager to exchanges...")
+            for exchange in self.exchanges.values():
+                exchange.position_manager = self.position_manager
+            logger.info(f"✅ Linked position_manager to {len(self.exchanges)} exchange(s)")
 
             # Apply critical fixes to PositionManager
             try:
