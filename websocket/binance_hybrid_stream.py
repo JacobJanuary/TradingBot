@@ -87,11 +87,16 @@ class BinanceHybridStream:
         self.subscription_queue = asyncio.Queue()
         self.next_request_id = 1
 
+        # PHASE 4: WebSocket heartbeat monitoring
+        self.last_mark_message_time = 0.0  # Monotonic time of last mark stream message
+        self.last_user_message_time = 0.0  # Monotonic time of last user stream message
+
         # Tasks
         self.user_task = None
         self.mark_task = None
         self.keepalive_task = None
         self.subscription_task = None
+        self.heartbeat_task = None  # PHASE 4: WebSocket heartbeat monitoring
 
         logger.info(f"BinanceHybridStream initialized (testnet={testnet})")
 
@@ -133,14 +138,20 @@ class BinanceHybridStream:
         self.keepalive_task = asyncio.create_task(self._keep_alive_loop())
         self.subscription_task = asyncio.create_task(self._subscription_manager())
 
-        # ✅ PHASE 2: Periodic reconnection (every 10 minutes)
-        self.reconnection_task = asyncio.create_task(
-            self._periodic_reconnection_task(interval_seconds=600)
-        )
+        # ❌ DISABLED: Periodic reconnection causes 72s data gap every 10 minutes
+        # Relying on automatic _reconnect_loop() for real connection issues
+        # self.reconnection_task = asyncio.create_task(
+        #     self._periodic_reconnection_task(interval_seconds=600)
+        # )
 
         # Periodic subscription health check (every 2 minutes)
         self.health_check_task = asyncio.create_task(
             self._periodic_health_check_task(interval_seconds=120)
+        )
+
+        # PHASE 4: WebSocket heartbeat monitoring (detects frozen connections)
+        self.heartbeat_task = asyncio.create_task(
+            self._heartbeat_monitoring_task(check_interval=30, timeout=45)
         )
 
         logger.info("✅ Binance Hybrid WebSocket started")
@@ -418,6 +429,57 @@ class BinanceHybridStream:
                 logger.error(f"[MARK] Error in health check task: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
+    async def _heartbeat_monitoring_task(self, check_interval: int = 30, timeout: int = 45):
+        """
+        PHASE 4: WebSocket heartbeat monitoring
+
+        Detects frozen WebSocket connections (alive but not sending data).
+        If no messages received for timeout seconds, forces reconnect.
+
+        Args:
+            check_interval: How often to check (default: 30s)
+            timeout: No-message threshold (default: 45s)
+        """
+        logger.info(f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring (check: {check_interval}s, timeout: {timeout}s)")
+
+        while self.running:
+            try:
+                await asyncio.sleep(check_interval)
+
+                if not self.running:
+                    break
+
+                current_time = asyncio.get_event_loop().time()
+
+                # Check Mark Price Stream heartbeat
+                if self.mark_connected and self.last_mark_message_time > 0:
+                    mark_silence = current_time - self.last_mark_message_time
+                    if mark_silence > timeout:
+                        logger.warning(
+                            f"💔 [HEARTBEAT] Mark stream frozen! "
+                            f"No messages for {mark_silence:.1f}s (threshold: {timeout}s). "
+                            f"Forcing reconnect..."
+                        )
+                        self.mark_connected = False  # Triggers reconnect in _run_mark_stream()
+
+                # Check User Data Stream heartbeat
+                if self.user_connected and self.last_user_message_time > 0:
+                    user_silence = current_time - self.last_user_message_time
+                    if user_silence > timeout:
+                        logger.warning(
+                            f"💔 [HEARTBEAT] User stream frozen! "
+                            f"No messages for {user_silence:.1f}s (threshold: {timeout}s). "
+                            f"Forcing reconnect..."
+                        )
+                        self.user_connected = False  # Triggers reconnect in _run_user_stream()
+
+            except asyncio.CancelledError:
+                logger.info("[HEARTBEAT] Heartbeat monitoring task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[HEARTBEAT] Error in heartbeat monitoring: {e}", exc_info=True)
+                await asyncio.sleep(30)
+
     # ==================== USER DATA STREAM ====================
 
     async def _run_user_stream(self):
@@ -486,6 +548,9 @@ class BinanceHybridStream:
 
     async def _handle_user_message(self, data: Dict):
         """Handle User Data Stream message"""
+        # PHASE 4: Update heartbeat timestamp
+        self.last_user_message_time = asyncio.get_event_loop().time()
+
         event_type = data.get('e')
 
         if event_type == 'ACCOUNT_UPDATE':
@@ -629,6 +694,9 @@ class BinanceHybridStream:
 
     async def _handle_mark_message(self, data: Dict):
         """Handle Mark Price Stream message"""
+        # PHASE 4: Update heartbeat timestamp
+        self.last_mark_message_time = asyncio.get_event_loop().time()
+
         # Handle subscription responses
         if 'result' in data and 'id' in data:
             if data['result'] is None:
@@ -653,6 +721,8 @@ class BinanceHybridStream:
 
         # Update mark price cache
         self.mark_prices[symbol] = mark_price
+        # PHASE 1: Track timestamp for data freshness monitoring
+        self.mark_prices[f"{symbol}_timestamp"] = asyncio.get_event_loop().time()
 
         # If we have position data, emit combined event
         if symbol in self.positions:
@@ -812,18 +882,19 @@ class BinanceHybridStream:
 
         logger.info(f"✅ [MARK] Sent {restored}/{total_symbols} subscription requests")
 
-        # PHASE 2: WARMUP PERIOD (90 seconds - increased from 60s due to observed 72s delay)
+        # PHASE 3: NON-BLOCKING WARMUP AND VERIFICATION
+        # Run warmup + verification in background to avoid blocking new subscriptions
         if restored > 0:
-            logger.info(f"⏳ [MARK] Warmup period: waiting 90s for data to start flowing...")
-            await asyncio.sleep(90.0)
-            logger.info(f"✅ [MARK] Warmup complete")
+            logger.info(f"⏳ [MARK] Starting non-blocking warmup (90s) and verification...")
 
-            # PHASE 3: VERIFICATION (background, non-blocking)
-            logger.info(f"🔍 [MARK] Verifying subscriptions in background...")
-
-            # Start verification in background (don't block)
-            async def background_verify():
+            async def warmup_and_verify():
+                """Combined warmup and verification in background task"""
                 try:
+                    # WARMUP: Wait for data to start flowing (90s due to observed 72s delay)
+                    await asyncio.sleep(90.0)
+                    logger.info(f"✅ [MARK] Warmup complete, starting verification...")
+
+                    # VERIFICATION: Check that subscriptions are working
                     result = await self._verify_all_subscriptions_active(timeout=60.0)
 
                     if result['success_rate'] < 90:
@@ -841,8 +912,8 @@ class BinanceHybridStream:
                 except Exception as e:
                     logger.error(f"❌ [MARK] Background verification error: {e}")
 
-            # Run in background, don't await
-            asyncio.create_task(background_verify())
+            # Run in background, don't await (allows new subscriptions during warmup)
+            asyncio.create_task(warmup_and_verify())
 
     async def _verify_subscription_optimistic(self, symbol: str) -> bool:
         """
@@ -988,24 +1059,82 @@ class BinanceHybridStream:
         }
 
     async def _verify_subscriptions_health(self):
-        """Verify all open positions have active or pending subscriptions"""
+        """
+        PHASE 2: Enhanced health check - verify all open positions have active subscriptions
+        AND are receiving fresh data (not silent fails)
+        """
         if not self.positions:
             return
 
-        # Check all open positions
+        # LAYER 1: Check for missing subscriptions (presence check)
         all_subscriptions = self.subscribed_symbols.union(self.pending_subscriptions)
         missing_subscriptions = set(self.positions.keys()) - all_subscriptions
 
+        # LAYER 2: Check for "silent fails" - subscriptions exist but no data flowing
+        STALE_DATA_THRESHOLD = 60.0  # seconds
+        stale_subscriptions = []
+
+        for symbol in self.subscribed_symbols:
+            # Only check symbols we have positions for
+            if symbol not in self.positions:
+                continue
+
+            data_age = self._get_data_age(symbol)
+            if data_age > STALE_DATA_THRESHOLD:
+                stale_subscriptions.append((symbol, data_age))
+
+        # Report findings
+        issues_found = len(missing_subscriptions) + len(stale_subscriptions)
+
         if missing_subscriptions:
-            logger.warning(f"⚠️ [MARK] Found {len(missing_subscriptions)} positions without subscriptions: {missing_subscriptions}")
+            logger.warning(f"⚠️ [MARK] Found {len(missing_subscriptions)} positions WITHOUT subscriptions: {missing_subscriptions}")
 
             # Request subscriptions for missing symbols
             for symbol in missing_subscriptions:
                 logger.info(f"🔄 [MARK] Resubscribing to {symbol} (subscription lost)")
                 await self._request_mark_subscription(symbol, subscribe=True)
-        else:
+
+        if stale_subscriptions:
+            logger.warning(f"🔇 [MARK] Found {len(stale_subscriptions)} SILENT FAILS (subscribed but no data):")
+            for symbol, age in stale_subscriptions:
+                logger.warning(f"   - {symbol}: no data for {age:.1f}s (threshold: {STALE_DATA_THRESHOLD}s)")
+
+            # Auto-recovery: discard stale subscription and resubscribe
+            for symbol, age in stale_subscriptions:
+                logger.info(f"🔄 [MARK] Auto-recovery: discarding stale subscription for {symbol}")
+
+                # Remove from subscribed set (forces fresh subscription)
+                self.subscribed_symbols.discard(symbol)
+
+                # Clear stale price data
+                if symbol in self.mark_prices:
+                    del self.mark_prices[symbol]
+                timestamp_key = f"{symbol}_timestamp"
+                if timestamp_key in self.mark_prices:
+                    del self.mark_prices[timestamp_key]
+
+                # Request fresh subscription
+                logger.info(f"🔄 [MARK] Requesting fresh subscription for {symbol}")
+                await self._request_mark_subscription(symbol, subscribe=True)
+
+        if issues_found == 0:
             logger.debug(f"✅ [MARK] Subscription health OK: {len(self.positions)} positions, "
                         f"{len(self.subscribed_symbols)} subscribed, {len(self.pending_subscriptions)} pending")
+
+    def _get_data_age(self, symbol: str) -> float:
+        """
+        Get the age of the last data update for a symbol in seconds.
+
+        Returns:
+            float: Seconds since last update, or float('inf') if no data received yet
+        """
+        timestamp_key = f"{symbol}_timestamp"
+        if timestamp_key not in self.mark_prices:
+            return float('inf')
+
+        last_update_time = self.mark_prices[timestamp_key]
+        current_time = asyncio.get_event_loop().time()
+        return current_time - last_update_time
 
     async def _unsubscribe_mark_price(self, symbol: str):
         """Unsubscribe from mark price stream"""

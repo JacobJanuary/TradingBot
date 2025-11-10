@@ -100,6 +100,10 @@ class BybitHybridStream:
         self.last_private_ping = datetime.now()
         self.last_public_ping = datetime.now()
 
+        # PHASE 4: WebSocket heartbeat monitoring (data freshness)
+        self.last_private_message_time = 0.0  # Monotonic time of last private stream message
+        self.last_public_message_time = 0.0  # Monotonic time of last public stream message
+
         logger.info(f"BybitHybridStream initialized (testnet={testnet})")
 
     @property
@@ -132,10 +136,11 @@ class BybitHybridStream:
         self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self.subscription_task = asyncio.create_task(self._subscription_manager())
 
-        # ✅ PHASE 2: Periodic reconnection (every 10 minutes)
-        self.reconnection_task = asyncio.create_task(
-            self._periodic_reconnection_task(interval_seconds=600)
-        )
+        # ❌ DISABLED: Periodic reconnection causes 72s data gap every 10 minutes
+        # Relying on automatic _reconnect_loop() for real connection issues
+        # self.reconnection_task = asyncio.create_task(
+        #     self._periodic_reconnection_task(interval_seconds=600)
+        # )
 
         # Periodic subscription health check (every 2 minutes)
         self.health_check_task = asyncio.create_task(
