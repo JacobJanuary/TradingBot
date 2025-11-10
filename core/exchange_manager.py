@@ -1056,34 +1056,47 @@ class ExchangeManager:
             lookup_method: str = "unknown"
 
             # ============================================================
-            # PRIORITY 1: WebSocket Cache (Recommended Source)
+            # PRIORITY 1: Position Manager Cache (Real-time WebSocket)
             # ============================================================
-            # Rationale: position_manager updates this cache via WebSocket in real-time
-            #            This is THE MOST CURRENT source of position data
-            # Located at: position_manager._update_position_from_websocket()
-            #             → exchange.fetch_positions() → self.positions = {...}
+            # FIX 2025-11-10: Use position_manager.positions instead of self.positions
+            #
+            # Rationale:
+            #   - self.positions is ONLY updated when fetch_positions() is explicitly called
+            #   - position_manager.positions is updated in REAL-TIME via WebSocket events
+            #   - This fix resolves SOONUSDT issue where position was NOT in self.positions
+            #     causing database fallback with stale data
+            #
+            # Data format difference:
+            #   - self.positions[symbol] = Dict with 'contracts' key (float)
+            #   - position_manager.positions[symbol] = PositionState object with .quantity (Decimal)
+            #
+            # Investigation: tests/investigation/SOONUSDT_ROOT_CAUSE_FINAL.md
 
-            if symbol in self.positions:
-                cached_contracts = float(self.positions[symbol].get('contracts', 0))
+            if self.position_manager and symbol in self.position_manager.positions:
+                position_state = self.position_manager.positions[symbol]
+
+                # PositionState.quantity is Decimal, convert to float for amount
+                cached_contracts = float(position_state.quantity)
+
                 if cached_contracts > 0:
                     amount = cached_contracts
-                    lookup_method = "websocket_cache"
+                    lookup_method = "position_manager_cache"
                     logger.debug(
-                        f"✅ {symbol}: Using WebSocket cache for position size: {amount} "
-                        f"(cache_age: <1s, most reliable)"
+                        f"✅ {symbol}: Using position_manager cache: {amount} contracts "
+                        f"(real-time WebSocket data, most reliable)"
                     )
                 else:
-                    # FIX: WebSocket cache shows contracts=0 → position closed
-                    # This is THE TRUTH - do not query exchange or database
+                    # Position Manager shows quantity=0 → position closed
+                    # This is THE TRUTH - WebSocket updated position_manager in real-time
                     # ABORT immediately to prevent creating SL for closed position
                     logger.warning(
-                        f"⚠️  {symbol}: WebSocket cache shows contracts=0 (position closed or never existed). "
+                        f"⚠️  {symbol}: Position Manager (real-time) shows quantity=0 (position closed). "
                         f"ABORTING SL update to prevent orphaned order."
                     )
                     result['success'] = False
-                    result['error'] = 'position_closed_ws_cache'
+                    result['error'] = 'position_closed_realtime'
                     result['message'] = (
-                        f"WebSocket cache indicates {symbol} position is closed (contracts=0). "
+                        f"Position Manager (real-time WebSocket) indicates {symbol} position closed (quantity=0). "
                         f"SL update aborted."
                     )
                     return result
@@ -1148,10 +1161,19 @@ class ExchangeManager:
             # ============================================================
             # Only use DB if both cache AND API failed
             # This handles restart scenarios where WebSocket not yet connected
-            # FIX: Only use DB if symbol NOT in WebSocket cache at all
-            #      If symbol in cache with contracts=0, we already aborted above
+            # FIX 2025-11-10: Only use DB if symbol NOT in position_manager
+            #      If symbol IS in position_manager, we already handled it in Priority 1
+            #      (either got quantity or detected quantity=0 and aborted)
+            #
+            # Condition logic:
+            #   - If position_manager=None → use DB (backward compatibility, scripts)
+            #   - If symbol not in position_manager.positions → use DB (bot restart)
+            #   - If symbol in position_manager.positions → DO NOT use DB (already handled)
 
-            if amount == 0 and self.repository and symbol not in self.positions:
+            if amount == 0 and self.repository and (
+                not self.position_manager or
+                symbol not in self.position_manager.positions
+            ):
                 try:
                     logger.warning(
                         f"⚠️  {symbol}: Cache and API lookup failed, trying database fallback..."
