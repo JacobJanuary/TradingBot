@@ -30,17 +30,14 @@ class StopLossManager:
     Основан на ПРОВЕРЕННОЙ логике из core/position_manager.py:1324
     """
 
-    def __init__(self, exchange, exchange_name: str, position_manager=None):
+    def __init__(self, exchange, exchange_name: str):
         """
         Args:
             exchange: CCXT exchange instance
             exchange_name: Exchange name ('bybit', 'binance', etc.)
-            position_manager: Optional PositionManager instance for TS detection
-                             Required for TS-awareness. If None, TS detection disabled.
         """
         self.exchange = exchange
         self.exchange_name = exchange_name.lower()
-        self.position_manager = position_manager  # NEW
         self.logger = logger
 
     async def has_stop_loss(self, symbol: str, position_side: Optional[str] = None) -> Tuple[bool, Optional[str]]:
@@ -183,18 +180,6 @@ class StopLossManager:
         try:
             # ШАГ 1: Проверить что SL еще не установлен
             has_sl, existing_sl = await self.has_stop_loss(symbol)
-
-            # ✅ FIX #1.3: Check if TS is active before validating/cancelling
-            ts_active = await self._is_trailing_stop_active(symbol)
-            if ts_active:
-                self.logger.info(
-                    f"✅ {symbol}: TS active, skipping SL recreation to prevent TS cancellation"
-                )
-                return {
-                    'status': 'ts_active',
-                    'stopPrice': existing_sl,
-                    'reason': 'Trailing Stop active, SL management deferred to TS'
-                }
 
             if has_sl:
                 # CRITICAL FIX: Validate existing SL before reusing
@@ -854,98 +839,6 @@ class StopLossManager:
         except Exception as e:
             self.logger.error(f"Error cancelling SL: {e}")
             raise
-
-    async def _is_trailing_stop_active(self, symbol: str) -> bool:
-        """
-        Check if Trailing Stop is currently active for this symbol.
-
-        This prevents stop_loss_manager from cancelling TS orders that may
-        appear "invalid" when compared to permanent SL targets.
-
-        Args:
-            symbol: Trading symbol (CCXT unified format)
-
-        Returns:
-            bool: True if TS is active and managing this position's SL
-
-        Detection logic:
-            1. Check trailing_manager.trailing_stops dict (authoritative source)
-            2. Fallback: Check position flags if trailing_manager not available
-            3. Return False if position_manager not provided (conservative)
-
-        Why this matters:
-            TS orders have HIGHER stop prices than permanent SL (more aggressive).
-            Without this check, stop_loss_manager thinks TS is "too close to entry"
-            and cancels it, leaving position with only permanent SL protection.
-        """
-        # GUARD: If no position_manager provided, can't detect TS
-        if not self.position_manager:
-            self.logger.debug(
-                f"TS detection disabled for {symbol}: no position_manager provided"
-            )
-            return False
-
-        try:
-            # METHOD 1: Check trailing_manager (AUTHORITATIVE)
-            # trailing_managers is a dict: {exchange_name: SmartTrailingStopManager}
-            trailing_manager = self.position_manager.trailing_managers.get(
-                self.exchange_name
-            )
-
-            if trailing_manager:
-                # Check if symbol in trailing_stops dict AND state is ACTIVE
-                # trailing_stops is dict: {symbol: TrailingStopInstance}
-                ts_instance = trailing_manager.trailing_stops.get(symbol)
-
-                if ts_instance:
-                    # Import TrailingStopState for comparison
-                    from protection.trailing_stop import TrailingStopState
-
-                    # Only consider TS active if state is ACTIVE
-                    # States: INACTIVE, WAITING, ACTIVE, TRIGGERED
-                    if ts_instance.state == TrailingStopState.ACTIVE:
-                        self.logger.info(
-                            f"✅ {symbol}: TS active in trailing_manager "
-                            f"(state={ts_instance.state.value}, "
-                            f"stop={ts_instance.current_stop_price})"
-                        )
-                        return True
-                    else:
-                        self.logger.debug(
-                            f"{symbol}: TS exists but not active "
-                            f"(state={ts_instance.state.value})"
-                        )
-                        return False
-
-            # METHOD 2: Fallback - check position flags
-            # This is less reliable but better than nothing
-            position = self.position_manager.positions.get(symbol)
-
-            if position:
-                # Check both flags: has_trailing_stop AND trailing_activated
-                if position.has_trailing_stop and position.trailing_activated:
-                    self.logger.info(
-                        f"✅ {symbol}: TS active (via position flags)"
-                    )
-                    return True
-                else:
-                    self.logger.debug(
-                        f"{symbol}: TS not active "
-                        f"(has_ts={position.has_trailing_stop}, "
-                        f"activated={position.trailing_activated})"
-                    )
-
-            # No TS detected
-            return False
-
-        except Exception as e:
-            # CRITICAL: Log error but return False (conservative)
-            # Better to risk recreating SL than leaving position unprotected
-            self.logger.error(
-                f"Error detecting TS for {symbol}: {e}. "
-                f"Assuming TS not active (conservative)"
-            )
-            return False
 
 
 # ============================================================

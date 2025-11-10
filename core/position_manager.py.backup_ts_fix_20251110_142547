@@ -1295,8 +1295,7 @@ class PositionManager:
             try:
                 # Initialize atomic manager
                 from core.stop_loss_manager import StopLossManager
-                # ✅ FIX #1.5a: Pass position_manager for TS-awareness
-                sl_manager = StopLossManager(exchange.exchange, exchange_name, position_manager=self)
+                sl_manager = StopLossManager(exchange.exchange, exchange_name)
 
                 atomic_manager = AtomicPositionManager(
                     repository=self.repository,
@@ -2203,8 +2202,7 @@ class PositionManager:
                 # ============================================================
                 from core.stop_loss_manager import StopLossManager
 
-                # ✅ FIX #1.5b: Pass position_manager for TS-awareness
-                sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
+                sl_manager = StopLossManager(exchange.exchange, position.exchange)
 
                 # CRITICAL: Check using unified has_stop_loss (checks both position.info.stopLoss AND orders)
                 has_sl, existing_sl_price = await sl_manager.has_stop_loss(position.symbol)
@@ -3385,8 +3383,7 @@ class PositionManager:
                 # UNIFIED APPROACH: Use StopLossManager for SL check
                 # ============================================================
                 try:
-                    # ✅ FIX #1.4a: Pass position_manager for TS-awareness
-                    sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
+                    sl_manager = StopLossManager(exchange.exchange, position.exchange)
                     has_sl_on_exchange, sl_price = await sl_manager.has_stop_loss(symbol)
 
                     logger.info(f"Checking position {symbol}: has_sl={has_sl_on_exchange}, price={sl_price}")
@@ -3618,8 +3615,7 @@ class PositionManager:
                         )
 
                         # Use enhanced SL manager with auto-validation and retry
-                        # ✅ FIX #1.4b: Pass position_manager for TS-awareness
-                        sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
+                        sl_manager = StopLossManager(exchange.exchange, position.exchange)
                         success, order_id = await sl_manager.verify_and_fix_missing_sl(
                             position=position,
                             stop_price=stop_loss_price,

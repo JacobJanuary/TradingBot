@@ -1,0 +1,453 @@
+==================================
+18:34:06
+Checking progress (iteration 1/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+✅ Test is running (PID: 619336)
+
+Runtime: 24:32
+
+=== LATEST ACTIVITY (last 20 lines) ===
+18:32:35 | 📥 [AUTO] Subscribing to SUSHIUSDT (active: 32)
+18:32:35 |    ✅ UNSUBSCRIBE confirmed: CKBUSDT
+18:32:35 |    ✅ SUBSCRIBE confirmed: SUSHIUSDT
+18:33:05 | 📥 [AUTO] Subscribing to SUIUSDT (active: 33)
+18:33:05 |    ✅ SUBSCRIBE confirmed: SUIUSDT
+18:33:35 | 📤 [AUTO] Unsubscribing from OMUSDT (active: 34)
+18:33:35 | 
+📊 [HEALTH CHECK]
+18:33:35 |    Active subscriptions: 33
+18:33:35 |    Healthy (fresh data): 31
+18:33:35 |    Stale (>30s): 0
+18:33:35 |    Silent fails (no data): 2
+18:33:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT']
+18:33:35 |    Health: 93.9%
+18:33:35 | 
+18:33:35 | 📥 [AUTO] Subscribing to AKROUSDT (active: 33)
+18:33:35 |    ✅ UNSUBSCRIBE confirmed: OMUSDT
+18:33:35 |    ✅ SUBSCRIBE confirmed: AKROUSDT
+18:34:05 | 📥 [AUTO] Subscribing to AVAXUSDT (active: 34)
+18:34:05 |    ✅ SUBSCRIBE confirmed: AVAXUSDT
+
+===================================
+STATISTICS
+===================================
+Total subscriptions: 83
+Total unsubscriptions: 24
+Health checks performed: 24
+5-min stats: 4
+
+=== LAST HEALTH CHECK ===
+--
+📊 [HEALTH CHECK]
+18:33:35 |    Active subscriptions: 33
+18:33:35 |    Healthy (fresh data): 31
+18:33:35 |    Stale (>30s): 0
+18:33:35 |    Silent fails (no data): 2
+18:33:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT']
+18:33:35 |    Health: 93.9%
+18:33:35 | 
+18:33:35 | 📥 [AUTO] Subscribing to AKROUSDT (active: 33)
+18:33:35 |    ✅ UNSUBSCRIBE confirmed: OMUSDT
+18:33:35 |    ✅ SUBSCRIBE confirmed: AKROUSDT
+
+⚠️  WARNINGS/ISSUES FOUND: 14
+
+=== WARNINGS ===
+18:29:35 |    Stale (>30s): 0
+18:29:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT']
+18:30:35 |    Stale (>30s): 0
+18:30:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT']
+18:31:35 |    Stale (>30s): 0
+18:31:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT']
+18:32:35 |    Stale (>30s): 0
+18:32:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT']
+18:33:35 |    Stale (>30s): 0
+18:33:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT']
+
+===================================
+To watch live: tail -f tests/investigation/results_dynamic.log
+To stop test: kill 619336
+===================================
+
+==================================
+18:44:06
+Checking progress (iteration 2/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+18:54:06
+Checking progress (iteration 3/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+19:04:06
+Checking progress (iteration 4/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+19:14:06
+Checking progress (iteration 5/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+19:24:06
+Checking progress (iteration 6/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+19:34:06
+Checking progress (iteration 7/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+19:44:06
+Checking progress (iteration 8/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+19:54:06
+Checking progress (iteration 9/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+
+==================================
+20:04:06
+Checking progress (iteration 10/10)...
+==================================
+==================================
+DYNAMIC TEST MONITOR
+==================================
+
+❌ Test is not running!
+
+Final results:
+📊 [HEALTH CHECK]
+18:39:35 |    Active subscriptions: 38
+18:39:35 |    Healthy (fresh data): 33
+18:39:35 |    Stale (>30s): 0
+18:39:35 |    Silent fails (no data): 5
+18:39:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:39:35 |    Health: 86.8%
+18:39:35 |    ⚠️  WARNING: Health below 90%!
+18:39:35 | 
+18:39:35 | 📥 [AUTO] Subscribing to STXUSDT (active: 38)
+18:39:35 |    ✅ UNSUBSCRIBE confirmed: ENJUSDT
+18:39:35 |    ✅ SUBSCRIBE confirmed: STXUSDT
+18:40:05 | 📥 [AUTO] Subscribing to MATICUSDT (active: 39)
+18:40:05 |    ✅ SUBSCRIBE confirmed: MATICUSDT
+18:40:35 | 📤 [AUTO] Unsubscribing from ICXUSDT (active: 40)
+18:40:35 | 
+📊 [HEALTH CHECK]
+18:40:35 |    Active subscriptions: 39
+18:40:35 |    Healthy (fresh data): 34
+18:40:35 |    Stale (>30s): 0
+18:40:35 |    Silent fails (no data): 5
+18:40:35 |    🚨 SILENT FAILS: ['ACMUSDT', 'FIROUSDT', 'AKROUSDT', 'PONDUSDT', 'DODOUSDT']
+18:40:35 |    Health: 87.2%
+18:40:35 |    ⚠️  WARNING: Health below 90%!
+18:40:35 | 
+18:40:35 | 📥 [AUTO] Subscribing to ONGUSDT (active: 39)
+18:40:35 |    ✅ UNSUBSCRIBE confirmed: ICXUSDT
+18:40:35 |    ✅ SUBSCRIBE confirmed: ONGUSDT
+18:41:05 | 📥 [AUTO] Subscribing to ZILUSDT (active: 40)
+18:41:05 |    ✅ SUBSCRIBE confirmed: ZILUSDT
+

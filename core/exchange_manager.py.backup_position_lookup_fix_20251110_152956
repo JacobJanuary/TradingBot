@@ -1057,21 +1057,6 @@ class ExchangeManager:
                         f"✅ {symbol}: Using WebSocket cache for position size: {amount} "
                         f"(cache_age: <1s, most reliable)"
                     )
-                else:
-                    # FIX: WebSocket cache shows contracts=0 → position closed
-                    # This is THE TRUTH - do not query exchange or database
-                    # ABORT immediately to prevent creating SL for closed position
-                    logger.warning(
-                        f"⚠️  {symbol}: WebSocket cache shows contracts=0 (position closed or never existed). "
-                        f"ABORTING SL update to prevent orphaned order."
-                    )
-                    result['success'] = False
-                    result['error'] = 'position_closed_ws_cache'
-                    result['message'] = (
-                        f"WebSocket cache indicates {symbol} position is closed (contracts=0). "
-                        f"SL update aborted."
-                    )
-                    return result
 
             # ============================================================
             # PRIORITY 2: Exchange API with Retry
@@ -1133,10 +1118,8 @@ class ExchangeManager:
             # ============================================================
             # Only use DB if both cache AND API failed
             # This handles restart scenarios where WebSocket not yet connected
-            # FIX: Only use DB if symbol NOT in WebSocket cache at all
-            #      If symbol in cache with contracts=0, we already aborted above
 
-            if amount == 0 and self.repository and symbol not in self.positions:
+            if amount == 0 and self.repository:
                 try:
                     logger.warning(
                         f"⚠️  {symbol}: Cache and API lookup failed, trying database fallback..."
