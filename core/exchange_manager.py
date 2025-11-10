@@ -1025,43 +1025,157 @@ class ExchangeManager:
             # Step 2: Create new SL IMMEDIATELY (NO SLEEP!)
             create_start = now_utc()
 
-            # Get position size - CRITICAL FIX: Check cache first
-            amount: float = 0.0
+            # ============================================================
+            # FIX: Robust Position Lookup with 3-Tier Fallback + Retry
+            # ============================================================
+            # Issue: Temporary API glitches cause fetch_positions() to return []
+            #        even when position exists and is in WebSocket cache
+            #
+            # Solution:
+            #  1. PRIMARY: Use WebSocket cache (most up-to-date, instant)
+            #  2. SECONDARY: Fetch from exchange with retry (2 attempts, 200ms delay)
+            #  3. TERTIARY: Database fallback (last resort for restart scenarios)
+            #  4. ABORT: If all fail - do NOT proceed (prevents unprotected positions)
 
-            # Try cache first (instant, no API call)
-            if symbol in self.positions and float(self.positions[symbol].get('contracts', 0)) > 0:
-                amount = self.positions[symbol]['contracts']
-                logger.debug(f"✅ {symbol}: Using cached position size: {amount}")
-            else:
-                # Cache miss - fetch from exchange
-                positions = await self.fetch_positions([symbol])
-                for pos in positions:
-                    if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
-                        amount = pos['contracts']
-                        break
+            amount: float = 0.0
+            lookup_method: str = "unknown"
+
+            # ============================================================
+            # PRIORITY 1: WebSocket Cache (Recommended Source)
+            # ============================================================
+            # Rationale: position_manager updates this cache via WebSocket in real-time
+            #            This is THE MOST CURRENT source of position data
+            # Located at: position_manager._update_position_from_websocket()
+            #             → exchange.fetch_positions() → self.positions = {...}
+
+            if symbol in self.positions:
+                cached_contracts = float(self.positions[symbol].get('contracts', 0))
+                if cached_contracts > 0:
+                    amount = cached_contracts
+                    lookup_method = "websocket_cache"
+                    logger.debug(
+                        f"✅ {symbol}: Using WebSocket cache for position size: {amount} "
+                        f"(cache_age: <1s, most reliable)"
+                    )
+
+            # ============================================================
+            # PRIORITY 2: Exchange API with Retry
+            # ============================================================
+            # Only if cache miss (e.g., bot just started, position not yet cached)
+            # Retry protects against temporary API glitches
 
             if amount == 0:
-                # FALLBACK: Try database (position might be active but not in exchange cache yet)
-                # This happens after bot restart when exchange API has timing issues
-                if self.repository:
-                    try:
-                        db_position = await self.repository.get_open_position(symbol, self.name)
-                        if db_position and db_position.get('status') == 'active' and db_position.get('quantity', 0) > 0:
-                            amount = float(db_position['quantity'])
-                            logger.warning(
-                                f"⚠️  {symbol}: Position not found in cache AND exchange, using DB fallback "
-                                f"(quantity={amount}, possible API delay or restart)"
-                            )
-                    except Exception as e:
-                        logger.error(f"❌ {symbol}: DB fallback failed: {e}")
+                max_retries = 2
+                retry_delay_ms = 200
 
-                if amount == 0:
-                    # Position truly not found (closed or never existed)
-                    logger.debug(f"Position {symbol} not found on exchange or DB, skipping SL update")
-                    result['success'] = False
-                    result['error'] = 'position_not_found'
-                    result['message'] = f"Position {symbol} not found (likely closed)"
-                    return result
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        logger.debug(
+                            f"🔍 {symbol}: Fetching position from exchange "
+                            f"(attempt {attempt}/{max_retries})"
+                        )
+
+                        positions = await self.fetch_positions([symbol])
+
+                        for pos in positions:
+                            if pos['symbol'] == symbol:
+                                pos_contracts = float(pos.get('contracts', 0))
+                                if pos_contracts > 0:
+                                    amount = pos_contracts
+                                    lookup_method = f"exchange_api_attempt_{attempt}"
+                                    logger.info(
+                                        f"✅ {symbol}: Position found via exchange API "
+                                        f"(attempt {attempt}, size: {amount})"
+                                    )
+                                    break
+
+                        # Success - break retry loop
+                        if amount > 0:
+                            break
+
+                        # No position found - retry if not last attempt
+                        if attempt < max_retries:
+                            logger.warning(
+                                f"⚠️  {symbol}: Position not found in exchange response "
+                                f"(attempt {attempt}/{max_retries}), retrying in {retry_delay_ms}ms..."
+                            )
+                            await asyncio.sleep(retry_delay_ms / 1000.0)
+                        else:
+                            logger.warning(
+                                f"⚠️  {symbol}: Position not found in exchange after "
+                                f"{max_retries} attempts"
+                            )
+
+                    except Exception as e:
+                        logger.error(
+                            f"❌ {symbol}: Exchange API error on attempt {attempt}: {e}"
+                        )
+                        if attempt < max_retries:
+                            await asyncio.sleep(retry_delay_ms / 1000.0)
+
+            # ============================================================
+            # PRIORITY 3: Database Fallback
+            # ============================================================
+            # Only use DB if both cache AND API failed
+            # This handles restart scenarios where WebSocket not yet connected
+
+            if amount == 0 and self.repository:
+                try:
+                    logger.warning(
+                        f"⚠️  {symbol}: Cache and API lookup failed, trying database fallback..."
+                    )
+
+                    db_position = await self.repository.get_open_position(symbol, self.name)
+
+                    if db_position and db_position.get('status') == 'active':
+                        db_quantity = float(db_position.get('quantity', 0))
+                        if db_quantity > 0:
+                            amount = db_quantity
+                            lookup_method = "database_fallback"
+                            logger.warning(
+                                f"⚠️  {symbol}: Using database fallback "
+                                f"(quantity={amount}, possible API delay or bot restart)"
+                            )
+
+                except Exception as e:
+                    logger.error(f"❌ {symbol}: Database fallback error: {e}")
+
+            # ============================================================
+            # ABORT if Position Not Found
+            # ============================================================
+            # CRITICAL: Do NOT proceed if position truly doesn't exist
+            # Prevents creating orphaned SL orders for closed positions
+
+            if amount == 0:
+                logger.error(
+                    f"❌ {symbol}: Position not found after 3-tier lookup:\n"
+                    f"  1. WebSocket cache: NOT FOUND\n"
+                    f"  2. Exchange API (2 attempts): NOT FOUND\n"
+                    f"  3. Database fallback: NOT FOUND\n"
+                    f"  → ABORTING SL update (position likely closed or never existed)"
+                )
+                result['success'] = False
+                result['error'] = 'position_not_found_abort'
+                result['lookup_attempts'] = {
+                    'cache_checked': symbol in self.positions,
+                    'api_attempts': 2,
+                    'database_checked': self.repository is not None
+                }
+                result['message'] = (
+                    f"Position {symbol} not found after exhaustive lookup. "
+                    f"SL update aborted to prevent orphaned orders."
+                )
+                return result
+
+            # ============================================================
+            # SUCCESS: Position Found
+            # ============================================================
+            # Log lookup method for debugging
+
+            logger.info(
+                f"✅ {symbol}: Position size confirmed: {amount} contracts "
+                f"(lookup_method: {lookup_method})"
+            )
 
             close_side = 'SELL' if position_side == 'long' else 'BUY'
 
