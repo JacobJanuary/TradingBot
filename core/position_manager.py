@@ -834,19 +834,30 @@ class PositionManager:
                             float(pos_state.unrealized_pnl_percent) if pos_state.unrealized_pnl_percent else 0.0, # pnl_percentage: float
                             'sync_cleanup'                          # reason: str
                         )
-                    # Remove from tracking
+                    # ✅ FIX: Use centralized cleanup for orphaned positions
+                    # This ensures ALL monitoring systems are cleaned up, including aged_adapter
+                    # which was missing before, causing zombie subscriptions
+
+                    # First remove from positions (before cleanup, as cleanup may check positions)
                     self.positions.pop(pos_state.symbol, None)
 
-                    # FIX: Notify trailing stop manager of orphaned position closure
-                    trailing_manager = self.trailing_managers.get(pos_state.exchange)
-                    if trailing_manager:
-                        try:
-                            await trailing_manager.on_position_closed(pos_state.symbol, realized_pnl=None)
-                            logger.debug(f"Notified trailing stop manager of {pos_state.symbol} orphaned closure")
-                        except Exception as e:
-                            logger.warning(f"Failed to notify trailing manager for orphaned {pos_state.symbol}: {e}")
-
-                    logger.info(f"✅ Closed orphaned position: {pos_state.symbol}")
+                    # Then call centralized cleanup
+                    try:
+                        await self._cleanup_position_monitoring(
+                            symbol=pos_state.symbol,
+                            exchange_name=pos_state.exchange,
+                            position_data=pos_state,
+                            realized_pnl=None,  # No PnL data for orphaned positions
+                            reason='sync_cleanup',
+                            skip_position_removal=True,  # Already removed above
+                            skip_trailing_stop=False,     # Need to notify TS manager
+                            skip_aged_adapter=False,      # ✅ MAIN FIX: cleanup aged monitoring
+                            skip_events=True              # Events already logged
+                        )
+                        logger.info(f"✅ Closed orphaned position: {pos_state.symbol} (with full cleanup)")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to cleanup orphaned position {pos_state.symbol}: {e}")
+                        # Continue with other positions even if one fails
 
             # Update or add positions
             for pos in active_positions:
