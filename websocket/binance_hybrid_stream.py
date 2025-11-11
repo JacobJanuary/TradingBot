@@ -285,7 +285,7 @@ class BinanceHybridStream:
                 async with session.put(url, headers=headers) as response:
                     if response.status == 200:
                         self.listen_key_expires = datetime.now()
-                        logger.debug("🔑 Listen key refreshed")
+                        logger.info("🔑 Listen key refreshed")
                         return True
                     else:
                         text = await response.text()
@@ -315,11 +315,13 @@ class BinanceHybridStream:
 
     async def _keep_alive_loop(self):
         """Keep listen key alive by refreshing every 30 minutes"""
+        logger.info("🔄 ListenKey keepalive loop started")
         while self.running:
             try:
                 # Refresh every 30 minutes (Binance requirement)
                 await asyncio.sleep(1800)  # 30 minutes
 
+                logger.info("⏰ 30 minutes elapsed - refreshing listenKey...")
                 if self.running and self.listen_key:
                     await self._refresh_listen_key()
 
@@ -873,9 +875,9 @@ class BinanceHybridStream:
                 if success:
                     restored += 1
 
-                # Small delay to avoid overwhelming connection
+                # Small delay to avoid overwhelming the connection
                 if restored < total_symbols:
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.2)
 
             except Exception as e:
                 logger.error(f"❌ [MARK] Failed to restore subscription for {symbol}: {e}")
