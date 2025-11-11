@@ -129,6 +129,7 @@ class HealthChecker:
     def set_signal_processor(self, signal_processor):
         """Set signal processor reference after initialization"""
         self.signal_processor = signal_processor
+        logger.warning(f"🔧 Signal processor reference set in HealthChecker: {signal_processor is not None}")
         logger.info("Signal processor reference set in HealthChecker")
 
     async def start(self):

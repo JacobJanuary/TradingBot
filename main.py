@@ -410,8 +410,11 @@ class TradingBot:
             logger.info("✅ WebSocket signal processor initialized")
 
             # Set signal processor reference in health monitor
+            logger.warning(f"🔍 DEBUG: self.health_monitor = {self.health_monitor is not None}")
             if self.health_monitor:
+                logger.warning("🔍 DEBUG: Calling set_signal_processor...")
                 self.health_monitor.set_signal_processor(self.signal_processor)
+                logger.warning("🔍 DEBUG: set_signal_processor called")
 
             # Stop-list symbols are now loaded from configuration (.env file)
             # via SymbolFilter in signal_processor
