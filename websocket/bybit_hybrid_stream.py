@@ -93,12 +93,17 @@ class BybitHybridStream:
         self.private_task = None
         self.public_task = None
         self.heartbeat_task = None
+        self.heartbeat_monitor_task = None  # PHASE 4: Heartbeat monitoring
         self.health_check_task = None
 
         # Heartbeat settings (Bybit requires 20s)
         self.heartbeat_interval = 20
         self.last_private_ping = datetime.now()
         self.last_public_ping = datetime.now()
+
+        # PHASE 4: WebSocket heartbeat monitoring (data freshness)
+        self.last_private_message_time = 0.0  # Monotonic time of last private stream message
+        self.last_public_message_time = 0.0  # Monotonic time of last public stream message
 
         logger.info(f"BybitHybridStream initialized (testnet={testnet})")
 
@@ -132,10 +137,16 @@ class BybitHybridStream:
         self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self.subscription_task = asyncio.create_task(self._subscription_manager())
 
-        # ✅ PHASE 2: Periodic reconnection (every 10 minutes)
-        self.reconnection_task = asyncio.create_task(
-            self._periodic_reconnection_task(interval_seconds=600)
+        # PHASE 4: WebSocket heartbeat monitoring (detects frozen connections)
+        self.heartbeat_monitor_task = asyncio.create_task(
+            self._heartbeat_monitoring_task(check_interval=30, timeout=45)
         )
+
+        # ❌ DISABLED: Periodic reconnection causes 72s data gap every 10 minutes
+        # Relying on automatic _reconnect_loop() for real connection issues
+        # self.reconnection_task = asyncio.create_task(
+        #     self._periodic_reconnection_task(interval_seconds=600)
+        # )
 
         # Periodic subscription health check (every 2 minutes)
         self.health_check_task = asyncio.create_task(
@@ -156,6 +167,7 @@ class BybitHybridStream:
             self.public_task,
             self.heartbeat_task,
             self.subscription_task,
+            self.heartbeat_monitor_task,  # PHASE 4: Heartbeat monitoring
             self.reconnection_task,  # ✅ PHASE 2
             self.health_check_task  # Subscription health verification
         ]:
@@ -320,6 +332,9 @@ class BybitHybridStream:
 
     async def _process_private_message(self, data: Dict):
         """Process private WebSocket message"""
+        # PHASE 4: Update heartbeat timestamp
+        self.last_private_message_time = asyncio.get_event_loop().time()
+
         op = data.get('op')
 
         # Handle operation responses
@@ -458,6 +473,9 @@ class BybitHybridStream:
 
     async def _process_public_message(self, data: Dict):
         """Process public WebSocket message"""
+        # PHASE 4: Update heartbeat timestamp
+        self.last_public_message_time = asyncio.get_event_loop().time()
+
         op = data.get('op')
 
         # Handle operation responses
@@ -489,6 +507,8 @@ class BybitHybridStream:
 
         # Update mark price cache
         self.mark_prices[symbol] = mark_price
+        # PHASE 1: Track timestamp for data freshness monitoring
+        self.mark_prices[f"{symbol}_timestamp"] = asyncio.get_event_loop().time()
 
         # If we have position data, emit combined event
         if symbol in self.positions:
@@ -588,7 +608,18 @@ class BybitHybridStream:
             logger.error(f"[PUBLIC] Failed to unsubscribe {symbol}: {e}")
 
     async def _restore_ticker_subscriptions(self):
-        """Restore ticker subscriptions after reconnection (includes pending)"""
+        """
+        Restore ticker subscriptions after reconnection
+
+        HYBRID APPROACH (based on test results):
+        1. First 30 symbols: OPTIMISTIC (no verification, fast)
+        2. Remaining symbols: OPTIMISTIC (все быстро)
+        3. 60s warmup period (let data start flowing)
+        4. Verification of all subscriptions (background, non-blocking)
+
+        This approach prevents event loop blocking while ensuring
+        subscriptions are actually working.
+        """
         # Combine confirmed and pending subscriptions
         all_symbols = self.subscribed_tickers.union(self.pending_subscriptions)
 
@@ -597,35 +628,224 @@ class BybitHybridStream:
             return
 
         symbols_to_restore = list(all_symbols)
-        logger.info(f"🔄 [PUBLIC] Restoring {len(symbols_to_restore)} ticker subscriptions "
-                    f"({len(self.subscribed_tickers)} confirmed + {len(self.pending_subscriptions)} pending)...")
+        total_symbols = len(symbols_to_restore)
+
+        logger.info(
+            f"🔄 [PUBLIC] Restoring {total_symbols} ticker subscriptions "
+            f"({len(self.subscribed_tickers)} confirmed + {len(self.pending_subscriptions)} pending)..."
+        )
 
         # Clear both sets to allow resubscribe
         self.subscribed_tickers.clear()
         self.pending_subscriptions.clear()
 
-        # Re-subscribe to all tickers
+        # CRITICAL FIX: Clear old price data to ensure verification checks FRESH data
+        # Without this, _verify_all_subscriptions_active() incorrectly validates against stale prices
+        self.mark_prices.clear()
+        logger.debug(f"[PUBLIC] Cleared old price data for {total_symbols} symbols")
+
+        # PHASE 1: OPTIMISTIC SUBSCRIPTIONS (all symbols, fast)
+        logger.info(f"📤 [PUBLIC] Sending {total_symbols} OPTIMISTIC subscriptions...")
         restored = 0
         for symbol in symbols_to_restore:
             try:
-                topic = f"tickers.{symbol}"
-                msg = {
-                    "op": "subscribe",
-                    "args": [topic]
-                }
-
-                await self.public_ws.send_str(json.dumps(msg))
-                self.subscribed_tickers.add(symbol)
-                restored += 1
+                success = await self._verify_subscription_optimistic(symbol)
+                if success:
+                    restored += 1
 
                 # Small delay to avoid overwhelming connection
-                if restored < len(symbols_to_restore):
+                if restored < total_symbols:
                     await asyncio.sleep(0.1)
 
             except Exception as e:
                 logger.error(f"❌ [PUBLIC] Failed to restore subscription for {symbol}: {e}")
 
-        logger.info(f"✅ [PUBLIC] Restored {restored}/{len(symbols_to_restore)} subscriptions")
+        logger.info(f"✅ [PUBLIC] Sent {restored}/{total_symbols} subscription requests")
+
+        # PHASE 3: NON-BLOCKING WARMUP + VERIFICATION (in background task)
+        if restored > 0:
+            logger.info(f"⏳ [PUBLIC] Starting 90s warmup + verification in BACKGROUND (non-blocking)...")
+
+            # PHASE 3: Combined warmup and verification in background task
+            async def warmup_and_verify():
+                """PHASE 3: Combined warmup and verification in background task"""
+                try:
+                    # Warmup period (90 seconds)
+                    await asyncio.sleep(90.0)
+                    logger.info(f"✅ [PUBLIC] Warmup complete, starting verification...")
+
+                    # Verification
+                    result = await self._verify_all_subscriptions_active(timeout=60.0)
+
+                    if result['success_rate'] < 90:
+                        logger.warning(
+                            f"⚠️ [PUBLIC] Low verification rate: {result['success_rate']:.1f}%\n"
+                            f"   Verified: {len(result['verified'])}\n"
+                            f"   Failed: {len(result['failed'])}\n"
+                            f"   Failed symbols: {result['failed']}"
+                        )
+                    else:
+                        logger.info(
+                            f"✅ [PUBLIC] Subscription health: {result['success_rate']:.1f}% "
+                            f"({len(result['verified'])}/{result['total']})"
+                        )
+                except Exception as e:
+                    logger.error(f"❌ [PUBLIC] Warmup/verification error: {e}")
+
+            # Run in background, don't await (allows new subscriptions during warmup)
+            asyncio.create_task(warmup_and_verify())
+
+    async def _verify_subscription_optimistic(self, symbol: str) -> bool:
+        """
+        Subscribe WITHOUT verification (optimistic approach)
+
+        Used for initial subscriptions during reconnect to avoid blocking.
+        Data will start flowing after 20-60 seconds warmup period.
+        Health check will verify data receipt later.
+
+        Args:
+            symbol: Symbol to subscribe to
+
+        Returns:
+            bool: True if subscription request sent successfully
+        """
+        try:
+            topic = f"tickers.{symbol}"
+            msg = {
+                "op": "subscribe",
+                "args": [topic]
+            }
+            await self.public_ws.send_str(json.dumps(msg))
+            self.subscribed_tickers.add(symbol)
+            logger.info(f"📤 [PUBLIC] OPTIMISTIC subscribe: {symbol}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ [PUBLIC] Failed optimistic subscribe {symbol}: {e}")
+            return False
+
+    async def _verify_subscription_event_based(self, symbol: str, timeout: float = 10.0) -> bool:
+        """
+        Subscribe with EVENT-BASED verification (NON-BLOCKING!)
+
+        Waits for actual ticker update event to confirm subscription is working.
+        Uses asyncio.Event for non-blocking wait.
+
+        Args:
+            symbol: Symbol to subscribe to
+            timeout: Seconds to wait for first price update
+
+        Returns:
+            bool: True if verified (data received), False if timeout
+        """
+        # Store current price count to detect new data
+        initial_count = len(self.mark_prices.get(symbol, ""))
+
+        # Helper to check for new data
+        def check_new_data():
+            return symbol in self.mark_prices and len(self.mark_prices[symbol]) > initial_count
+
+        try:
+            # Send subscription request
+            topic = f"tickers.{symbol}"
+            msg = {
+                "op": "subscribe",
+                "args": [topic]
+            }
+            await self.public_ws.send_str(json.dumps(msg))
+            self.subscribed_tickers.add(symbol)
+            start_time = asyncio.get_event_loop().time()
+
+            # Wait for data with timeout
+            deadline = start_time + timeout
+            while asyncio.get_event_loop().time() < deadline:
+                if check_new_data():
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    logger.info(f"✅ [PUBLIC] VERIFIED: {symbol} (data in {elapsed:.1f}s)")
+                    return True
+
+                await asyncio.sleep(0.5)  # Check every 500ms
+
+            # Timeout - no data received
+            logger.warning(f"🚨 [PUBLIC] SILENT FAIL: {symbol} (timeout {timeout}s)")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ [PUBLIC] Verification error {symbol}: {e}")
+            return False
+
+    async def _verify_all_subscriptions_active(self, timeout: float = 60.0) -> dict:
+        """
+        Verify that ALL subscriptions are receiving data after reconnect
+
+        NON-BLOCKING: Waits for data from all symbols in parallel.
+        Used after _restore_ticker_subscriptions() to ensure no silent fails.
+
+        Args:
+            timeout: Maximum seconds to wait for all subscriptions
+
+        Returns:
+            dict: {
+                'verified': set of verified symbols,
+                'failed': set of symbols without data,
+                'total': total symbols checked,
+                'success_rate': percentage verified
+            }
+        """
+        if not self.subscribed_tickers and not self.pending_subscriptions:
+            logger.debug("[PUBLIC] No subscriptions to verify")
+            return {
+                'verified': set(),
+                'failed': set(),
+                'total': 0,
+                'success_rate': 100.0
+            }
+
+        all_symbols = self.subscribed_tickers.union(self.pending_subscriptions)
+        total_symbols = len(all_symbols)
+
+        logger.info(f"🔍 [PUBLIC] Verifying {total_symbols} subscriptions (timeout: {timeout}s)...")
+
+        # Track which symbols have received data
+        verified_symbols = set()
+        start_time = asyncio.get_event_loop().time()
+        deadline = start_time + timeout
+
+        # Wait for data from all symbols
+        while asyncio.get_event_loop().time() < deadline:
+            # Check which symbols have data
+            for symbol in all_symbols:
+                if symbol in self.mark_prices and symbol not in verified_symbols:
+                    verified_symbols.add(symbol)
+                    logger.debug(f"✓ [PUBLIC] {symbol} verified ({len(verified_symbols)}/{total_symbols})")
+
+            # All verified?
+            if len(verified_symbols) == total_symbols:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                logger.info(f"✅ [PUBLIC] ALL {total_symbols} subscriptions verified in {elapsed:.1f}s")
+                return {
+                    'verified': verified_symbols,
+                    'failed': set(),
+                    'total': total_symbols,
+                    'success_rate': 100.0
+                }
+
+            await asyncio.sleep(1.0)  # Check every second
+
+        # Timeout - some symbols didn't receive data
+        failed_symbols = all_symbols - verified_symbols
+        success_rate = (len(verified_symbols) / total_symbols) * 100 if total_symbols > 0 else 0
+
+        logger.warning(
+            f"⚠️ [PUBLIC] Verification timeout: {len(verified_symbols)}/{total_symbols} verified ({success_rate:.1f}%)\n"
+            f"   Failed: {failed_symbols}"
+        )
+
+        return {
+            'verified': verified_symbols,
+            'failed': failed_symbols,
+            'total': total_symbols,
+            'success_rate': success_rate
+        }
 
     # ==================== EVENT EMISSION ====================
 
@@ -681,6 +901,63 @@ class BybitHybridStream:
 
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
+
+    async def _heartbeat_monitoring_task(self, check_interval: int = 30, timeout: int = 45):
+        """
+        PHASE 4: WebSocket heartbeat monitoring
+
+        Detects frozen WebSocket connections where connection is alive but no data
+        is being sent. Forces reconnect by setting connected=False.
+
+        This is different from _heartbeat_loop() which sends pings to keep connection alive.
+        This monitors actual data flow to detect silent failures.
+
+        Args:
+            check_interval: How often to check (seconds)
+            timeout: Max seconds without data before forcing reconnect
+        """
+        logger.info(
+            f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring "
+            f"(check: {check_interval}s, timeout: {timeout}s)"
+        )
+
+        while self.running:
+            try:
+                await asyncio.sleep(check_interval)
+
+                if not self.running:
+                    break
+
+                current_time = asyncio.get_event_loop().time()
+
+                # Check Private Stream heartbeat
+                if self.private_connected and self.last_private_message_time > 0:
+                    private_silence = current_time - self.last_private_message_time
+                    if private_silence > timeout:
+                        logger.warning(
+                            f"💔 [HEARTBEAT] Private stream frozen! "
+                            f"No messages for {private_silence:.1f}s (threshold: {timeout}s). "
+                            f"Forcing reconnect..."
+                        )
+                        self.private_connected = False  # Triggers reconnect in _run_private_stream()
+
+                # Check Public Stream heartbeat
+                if self.public_connected and self.last_public_message_time > 0:
+                    public_silence = current_time - self.last_public_message_time
+                    if public_silence > timeout:
+                        logger.warning(
+                            f"💔 [HEARTBEAT] Public stream frozen! "
+                            f"No messages for {public_silence:.1f}s (threshold: {timeout}s). "
+                            f"Forcing reconnect..."
+                        )
+                        self.public_connected = False  # Triggers reconnect in _run_public_stream()
+
+            except asyncio.CancelledError:
+                logger.info("[HEARTBEAT] Monitoring task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[HEARTBEAT] Error: {e}", exc_info=True)
+                await asyncio.sleep(60)
 
     async def _periodic_reconnection_task(self, interval_seconds: int = 600):
         """
@@ -784,12 +1061,33 @@ class BybitHybridStream:
                 logger.error(f"[PUBLIC] Error in health check task: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
+    def _get_data_age(self, symbol: str) -> float:
+        """
+        PHASE 2: Get the age of the last data update for a symbol in seconds
+
+        Args:
+            symbol: Symbol to check
+
+        Returns:
+            float: Age in seconds, or float('inf') if no timestamp found
+        """
+        timestamp_key = f"{symbol}_timestamp"
+        if timestamp_key not in self.mark_prices:
+            return float('inf')
+
+        last_update_time = self.mark_prices[timestamp_key]
+        current_time = asyncio.get_event_loop().time()
+        return current_time - last_update_time
+
     async def _verify_subscriptions_health(self):
-        """Verify all open positions have active or pending subscriptions"""
+        """
+        PHASE 2: Enhanced health check - verify all open positions have active subscriptions
+        AND are receiving fresh data (not silent fails)
+        """
         if not self.positions:
             return
 
-        # Check all open positions
+        # Check all open positions for missing subscriptions
         all_subscriptions = self.subscribed_tickers.union(self.pending_subscriptions)
         missing_subscriptions = set(self.positions.keys()) - all_subscriptions
 
@@ -800,6 +1098,47 @@ class BybitHybridStream:
             for symbol in missing_subscriptions:
                 logger.info(f"🔄 [PUBLIC] Resubscribing to {symbol} (subscription lost)")
                 await self._request_ticker_subscription(symbol, subscribe=True)
+
+        # PHASE 2: Check for SILENT FAILS (subscription exists but data is stale)
+        STALE_DATA_THRESHOLD = 60.0  # seconds
+        stale_subscriptions = []
+
+        for symbol in self.subscribed_tickers:
+            # Only check symbols with open positions
+            if symbol not in self.positions:
+                continue
+
+            # Check data freshness
+            data_age = self._get_data_age(symbol)
+            if data_age > STALE_DATA_THRESHOLD:
+                stale_subscriptions.append((symbol, data_age))
+                logger.warning(
+                    f"🚨 [PUBLIC] SILENT FAIL detected: {symbol} "
+                    f"(data age: {data_age:.1f}s, threshold: {STALE_DATA_THRESHOLD}s)"
+                )
+
+        # Auto-recovery: discard stale subscription and resubscribe
+        if stale_subscriptions:
+            logger.warning(f"⚠️ [PUBLIC] Found {len(stale_subscriptions)} stale subscriptions, triggering recovery...")
+
+            for symbol, age in stale_subscriptions:
+                # Remove from subscribed set
+                self.subscribed_tickers.discard(symbol)
+
+                # Clear stale price data
+                if symbol in self.mark_prices:
+                    del self.mark_prices[symbol]
+                    logger.debug(f"🗑️ [PUBLIC] Cleared stale price for {symbol}")
+
+                timestamp_key = f"{symbol}_timestamp"
+                if timestamp_key in self.mark_prices:
+                    del self.mark_prices[timestamp_key]
+                    logger.debug(f"🗑️ [PUBLIC] Cleared stale timestamp for {symbol}")
+
+                # Resubscribe
+                logger.info(f"🔄 [PUBLIC] Resubscribing to {symbol} (stale data recovery)")
+                await self._request_ticker_subscription(symbol, subscribe=True)
+
         else:
             logger.debug(f"✅ [PUBLIC] Subscription health OK: {len(self.positions)} positions, "
                         f"{len(self.subscribed_tickers)} subscribed, {len(self.pending_subscriptions)} pending")
