@@ -374,7 +374,8 @@ class HealthChecker:
 
             # Check WebSocket connection status (PRIMARY INDICATOR)
             ws_stats = stats.get('websocket', {})
-            ws_connected = ws_stats.get('state') == 'connected'
+            ws_state = ws_stats.get('state')
+            ws_connected = ws_state in ('connected', 'authenticated')
 
             # Check if signal processor is running
             is_running = self.signal_processor.running
