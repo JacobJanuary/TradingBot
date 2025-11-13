@@ -88,20 +88,77 @@ class TestFix2HeartbeatMonitoring:
     @pytest.mark.asyncio
     async def test_heartbeat_detects_idle_with_pending(self):
         """Heartbeat detects idle stream with pending subscriptions"""
-        # Placeholder for PHASE 2
-        pass
+        stream = BinanceHybridStream(api_key="test", api_secret="test")
+        stream.running = True
+        stream.mark_connected = True
+        stream.subscribed_symbols = set()  # 0 active
+        stream.pending_subscriptions = {"BTCUSDT", "ETHUSDT"}  # 2 pending
+
+        # Start heartbeat (with short interval for testing)
+        heartbeat_task = asyncio.create_task(
+            stream._heartbeat_monitoring_task(check_interval=1, timeout=5)
+        )
+
+        # Wait for check
+        await asyncio.sleep(1.5)
+
+        # Verify reconnect triggered
+        assert stream.mark_connected == False
+
+        # Cleanup
+        stream.running = False
+        await heartbeat_task
 
     @pytest.mark.asyncio
     async def test_heartbeat_detects_stale_data(self):
         """Heartbeat detects subscriptions without data"""
-        # Placeholder for PHASE 2
-        pass
+        stream = BinanceHybridStream(api_key="test", api_secret="test")
+        stream.running = True
+        stream.mark_connected = True
+        stream.subscribed_symbols = {"BTCUSDT"}
+        stream.mark_prices = {}  # No data received
+
+        # Mock _get_data_age to return high value (old data)
+        stream._get_data_age = lambda symbol: 200.0  # 200s old
+
+        # Start heartbeat
+        heartbeat_task = asyncio.create_task(
+            stream._heartbeat_monitoring_task(check_interval=1, timeout=5)
+        )
+
+        # Wait for check (idle_stream_threshold = 120s)
+        await asyncio.sleep(1.5)
+
+        # Verify reconnect triggered
+        assert stream.mark_connected == False
+
+        # Cleanup
+        stream.running = False
+        await heartbeat_task
 
     @pytest.mark.asyncio
     async def test_heartbeat_ignores_normal_idle(self):
         """Heartbeat doesn't trigger on normal idle (0 positions)"""
-        # Placeholder for PHASE 2
-        pass
+        stream = BinanceHybridStream(api_key="test", api_secret="test")
+        stream.running = True
+        stream.mark_connected = True
+        stream.subscribed_symbols = set()  # 0 active
+        stream.pending_subscriptions = set()  # 0 pending
+
+        # Start heartbeat
+        heartbeat_task = asyncio.create_task(
+            stream._heartbeat_monitoring_task(check_interval=1, timeout=5)
+        )
+
+        # Wait for check
+        await asyncio.sleep(1.5)
+
+        # Verify reconnect NOT triggered (normal idle is OK)
+        assert stream.mark_connected == True
+
+        # Cleanup
+        stream.running = False
+        await heartbeat_task
 
 
 class TestFix3PendingProcessor:
