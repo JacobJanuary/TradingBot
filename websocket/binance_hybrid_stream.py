@@ -97,6 +97,7 @@ class BinanceHybridStream:
         self.keepalive_task = None
         self.subscription_task = None
         self.heartbeat_task = None  # PHASE 4: WebSocket heartbeat monitoring
+        self.pending_processor_task = None  # ✅ FIX #3: Periodic pending processor
 
         logger.info(f"BinanceHybridStream initialized (testnet={testnet})")
 
@@ -154,6 +155,11 @@ class BinanceHybridStream:
             self._heartbeat_monitoring_task(check_interval=30, timeout=45)
         )
 
+        # ✅ FIX #3: Periodic pending processor (processes pending every 2 minutes)
+        self.pending_processor_task = asyncio.create_task(
+            self._process_pending_subscriptions_task(check_interval=120)
+        )
+
         logger.info("✅ Binance Hybrid WebSocket started")
 
     async def stop(self):
@@ -186,7 +192,9 @@ class BinanceHybridStream:
             self.keepalive_task,
             self.subscription_task,
             self.reconnection_task,  # ✅ PHASE 2
-            self.health_check_task  # Subscription health verification
+            self.health_check_task,  # Subscription health verification
+            self.heartbeat_task,  # PHASE 4: WebSocket heartbeat monitoring
+            self.pending_processor_task  # ✅ FIX #3: Periodic pending processor
         ]:
             if task and not task.done():
                 task.cancel()
@@ -529,6 +537,67 @@ class BinanceHybridStream:
             except Exception as e:
                 logger.error(f"[HEARTBEAT] Error in heartbeat monitoring: {e}", exc_info=True)
                 await asyncio.sleep(30)
+
+    async def _process_pending_subscriptions_task(self, check_interval: int = 120):
+        """
+        ✅ FIX #3: Periodic pending processor
+
+        Periodically checks and processes pending subscriptions.
+        This handles edge cases where FIX #1/#2 might miss pending symbols.
+
+        Args:
+            check_interval: How often to check pending (default: 120s = 2 minutes)
+        """
+        logger.info(f"⏰ [PENDING] Starting periodic pending processor (check: {check_interval}s)")
+
+        while self.running:
+            try:
+                await asyncio.sleep(check_interval)
+
+                if not self.running:
+                    break
+
+                # ✅ FIX #3.1: Check if there are pending subscriptions
+                num_pending = len(self.pending_subscriptions)
+
+                if num_pending == 0:
+                    # No pending subscriptions - nothing to do
+                    logger.debug("[PENDING] No pending subscriptions to process")
+                    continue
+
+                # ✅ FIX #3.2: Only process if stream is connected
+                if not self.mark_connected:
+                    logger.warning(
+                        f"⏳ [PENDING] Mark stream disconnected, "
+                        f"deferring {num_pending} pending subscriptions until reconnect"
+                    )
+                    continue
+
+                # ✅ FIX #3.3: Attempt to process pending subscriptions
+                logger.info(
+                    f"🔄 [PENDING] Processing {num_pending} pending subscriptions "
+                    f"(periodic check)"
+                )
+
+                try:
+                    await self._restore_subscriptions()
+                    logger.info(
+                        f"✅ [PENDING] Successfully processed pending subscriptions "
+                        f"(remaining: {len(self.pending_subscriptions)})"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"❌ [PENDING] Failed to process pending subscriptions: {e}",
+                        exc_info=True
+                    )
+                    # Continue running despite errors
+
+            except asyncio.CancelledError:
+                logger.info("[PENDING] Pending processor task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"[PENDING] Error in pending processor: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait before retrying on error
 
     # ==================== USER DATA STREAM ====================
 

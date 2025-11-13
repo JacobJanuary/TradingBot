@@ -167,17 +167,113 @@ class TestFix3PendingProcessor:
     @pytest.mark.asyncio
     async def test_processor_handles_pending(self):
         """Processor periodically attempts pending subscriptions"""
-        # Placeholder for PHASE 3
-        pass
+        stream = BinanceHybridStream(api_key="test", api_secret="test")
+        stream.running = True
+        stream.mark_connected = True
+
+        # Add pending subscriptions
+        stream.pending_subscriptions.add("BTCUSDT")
+        stream.pending_subscriptions.add("ETHUSDT")
+
+        # Mock WebSocket and _restore_subscriptions
+        stream.mark_ws = MagicMock()
+        stream.mark_ws.send_str = AsyncMock()
+        stream.mark_ws.closed = False
+
+        # Start processor with short interval for testing
+        processor_task = asyncio.create_task(
+            stream._process_pending_subscriptions_task(check_interval=1)
+        )
+
+        # Wait for first check (1s interval + processing time)
+        await asyncio.sleep(1.5)
+
+        # Verify pending were processed
+        assert len(stream.pending_subscriptions) == 0
+        assert "BTCUSDT" in stream.subscribed_symbols
+        assert "ETHUSDT" in stream.subscribed_symbols
+
+        # Cleanup
+        stream.running = False
+        await processor_task
 
     @pytest.mark.asyncio
     async def test_processor_skips_when_disconnected(self):
         """Processor doesn't process when stream disconnected"""
-        # Placeholder for PHASE 3
-        pass
+        stream = BinanceHybridStream(api_key="test", api_secret="test")
+        stream.running = True
+        stream.mark_connected = False  # Disconnected!
+
+        # Add pending subscriptions
+        stream.pending_subscriptions.add("BTCUSDT")
+        stream.pending_subscriptions.add("ETHUSDT")
+
+        # Start processor with short interval
+        processor_task = asyncio.create_task(
+            stream._process_pending_subscriptions_task(check_interval=1)
+        )
+
+        # Wait for check
+        await asyncio.sleep(1.5)
+
+        # Verify pending NOT processed (stream disconnected)
+        assert len(stream.pending_subscriptions) == 2
+        assert "BTCUSDT" in stream.pending_subscriptions
+        assert "ETHUSDT" in stream.pending_subscriptions
+        assert "BTCUSDT" not in stream.subscribed_symbols
+
+        # Cleanup
+        stream.running = False
+        await processor_task
 
     @pytest.mark.asyncio
     async def test_processor_handles_failures(self):
         """Processor continues on subscription failures"""
-        # Placeholder for PHASE 3
-        pass
+        stream = BinanceHybridStream(api_key="test", api_secret="test")
+        stream.running = True
+        stream.mark_connected = True
+
+        # Add pending subscriptions
+        stream.pending_subscriptions.add("BTCUSDT")
+
+        # Mock _restore_subscriptions to fail once, then succeed
+        call_count = 0
+        original_restore = stream._restore_subscriptions
+
+        async def mock_restore_fail_once():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("Simulated subscription failure")
+            else:
+                # On second call, actually process pending
+                await original_restore()
+
+        stream._restore_subscriptions = mock_restore_fail_once
+
+        # Mock WebSocket
+        stream.mark_ws = MagicMock()
+        stream.mark_ws.send_str = AsyncMock()
+        stream.mark_ws.closed = False
+
+        # Start processor with short interval
+        processor_task = asyncio.create_task(
+            stream._process_pending_subscriptions_task(check_interval=1)
+        )
+
+        # Wait for first check (should fail)
+        await asyncio.sleep(1.5)
+
+        # Verify processor didn't crash and pending still there
+        assert len(stream.pending_subscriptions) == 1
+
+        # Wait for second check (should succeed)
+        await asyncio.sleep(1.5)
+
+        # Verify pending processed on retry
+        assert len(stream.pending_subscriptions) == 0
+        assert "BTCUSDT" in stream.subscribed_symbols
+
+        # Cleanup
+        stream.running = False
+        await processor_task
