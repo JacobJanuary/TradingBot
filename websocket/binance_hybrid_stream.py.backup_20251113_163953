@@ -97,7 +97,6 @@ class BinanceHybridStream:
         self.keepalive_task = None
         self.subscription_task = None
         self.heartbeat_task = None  # PHASE 4: WebSocket heartbeat monitoring
-        self.pending_processor_task = None  # ✅ FIX #3: Periodic pending processor
 
         logger.info(f"BinanceHybridStream initialized (testnet={testnet})")
 
@@ -155,11 +154,6 @@ class BinanceHybridStream:
             self._heartbeat_monitoring_task(check_interval=30, timeout=45)
         )
 
-        # ✅ FIX #3: Periodic pending processor (processes pending every 2 minutes)
-        self.pending_processor_task = asyncio.create_task(
-            self._process_pending_subscriptions_task(check_interval=120)
-        )
-
         logger.info("✅ Binance Hybrid WebSocket started")
 
     async def stop(self):
@@ -192,9 +186,7 @@ class BinanceHybridStream:
             self.keepalive_task,
             self.subscription_task,
             self.reconnection_task,  # ✅ PHASE 2
-            self.health_check_task,  # Subscription health verification
-            self.heartbeat_task,  # PHASE 4: WebSocket heartbeat monitoring
-            self.pending_processor_task  # ✅ FIX #3: Periodic pending processor
+            self.health_check_task  # Subscription health verification
         ]:
             if task and not task.done():
                 task.cancel()
@@ -443,18 +435,14 @@ class BinanceHybridStream:
         """
         PHASE 4: WebSocket heartbeat monitoring
 
-        Detects:
-        1. Frozen WebSocket connections (alive but not sending data)
-        2. Idle mark streams (0 subscriptions for extended period)
+        Detects frozen WebSocket connections (alive but not sending data).
+        If no messages received for timeout seconds, forces reconnect.
 
         Args:
             check_interval: How often to check (default: 30s)
             timeout: No-message threshold (default: 45s)
         """
         logger.info(f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring (check: {check_interval}s, timeout: {timeout}s)")
-
-        # ✅ FIX #2.1: Track idle stream threshold
-        idle_stream_threshold = 120.0  # 2 minutes without data
 
         while self.running:
             try:
@@ -465,7 +453,7 @@ class BinanceHybridStream:
 
                 current_time = asyncio.get_event_loop().time()
 
-                # Check Mark Price Stream heartbeat (original logic)
+                # Check Mark Price Stream heartbeat
                 if self.mark_connected and self.last_mark_message_time > 0:
                     mark_silence = current_time - self.last_mark_message_time
                     if mark_silence > timeout:
@@ -474,53 +462,9 @@ class BinanceHybridStream:
                             f"No messages for {mark_silence:.1f}s (threshold: {timeout}s). "
                             f"Forcing reconnect..."
                         )
-                        self.mark_connected = False
+                        self.mark_connected = False  # Triggers reconnect in _run_mark_stream()
 
-                # ✅ FIX #2.2: Check for idle stream (0 subscriptions)
-                if self.mark_connected:
-                    num_subscriptions = len(self.subscribed_symbols)
-                    num_pending = len(self.pending_subscriptions)
-
-                    if num_subscriptions == 0 and num_pending > 0:
-                        # Idle stream with pending subscriptions - force reconnect
-                        logger.error(
-                            f"🚨 [HEARTBEAT] IDLE STREAM DETECTED! "
-                            f"Mark stream connected but 0 active subscriptions, "
-                            f"{num_pending} pending. Forcing reconnect to process pending..."
-                        )
-                        self.mark_connected = False
-
-                    elif num_subscriptions == 0 and num_pending == 0:
-                        # Truly idle stream (no subscriptions, none pending)
-                        # This is OK if no positions open
-                        logger.debug(
-                            f"[HEARTBEAT] Mark stream idle (0 subscriptions, 0 pending). "
-                            f"This is normal if no positions are open."
-                        )
-
-                # ✅ FIX #2.3: Track last price data update (not just any message)
-                # This detects subscription failure (connected, subscriptions sent, but no data)
-                if self.mark_connected and len(self.subscribed_symbols) > 0:
-                    # Check when we last received actual price data
-                    newest_price_time = 0.0
-                    for symbol in self.subscribed_symbols:
-                        price_age = self._get_data_age(symbol)
-                        if price_age > 0:  # Has data
-                            price_time = current_time - price_age
-                            newest_price_time = max(newest_price_time, price_time)
-
-                    if newest_price_time > 0:
-                        data_silence = current_time - newest_price_time
-                        if data_silence > idle_stream_threshold:
-                            logger.error(
-                                f"🚨 [HEARTBEAT] STALE DATA DETECTED! "
-                                f"Mark stream connected, {len(self.subscribed_symbols)} subscriptions, "
-                                f"but no fresh price data for {data_silence:.1f}s. "
-                                f"Forcing reconnect..."
-                            )
-                            self.mark_connected = False
-
-                # Check User Data Stream heartbeat (unchanged)
+                # Check User Data Stream heartbeat
                 if self.user_connected and self.last_user_message_time > 0:
                     user_silence = current_time - self.last_user_message_time
                     if user_silence > timeout:
@@ -529,7 +473,7 @@ class BinanceHybridStream:
                             f"No messages for {user_silence:.1f}s (threshold: {timeout}s). "
                             f"Forcing reconnect..."
                         )
-                        self.user_connected = False
+                        self.user_connected = False  # Triggers reconnect in _run_user_stream()
 
             except asyncio.CancelledError:
                 logger.info("[HEARTBEAT] Heartbeat monitoring task cancelled")
@@ -537,67 +481,6 @@ class BinanceHybridStream:
             except Exception as e:
                 logger.error(f"[HEARTBEAT] Error in heartbeat monitoring: {e}", exc_info=True)
                 await asyncio.sleep(30)
-
-    async def _process_pending_subscriptions_task(self, check_interval: int = 120):
-        """
-        ✅ FIX #3: Periodic pending processor
-
-        Periodically checks and processes pending subscriptions.
-        This handles edge cases where FIX #1/#2 might miss pending symbols.
-
-        Args:
-            check_interval: How often to check pending (default: 120s = 2 minutes)
-        """
-        logger.info(f"⏰ [PENDING] Starting periodic pending processor (check: {check_interval}s)")
-
-        while self.running:
-            try:
-                await asyncio.sleep(check_interval)
-
-                if not self.running:
-                    break
-
-                # ✅ FIX #3.1: Check if there are pending subscriptions
-                num_pending = len(self.pending_subscriptions)
-
-                if num_pending == 0:
-                    # No pending subscriptions - nothing to do
-                    logger.debug("[PENDING] No pending subscriptions to process")
-                    continue
-
-                # ✅ FIX #3.2: Only process if stream is connected
-                if not self.mark_connected:
-                    logger.warning(
-                        f"⏳ [PENDING] Mark stream disconnected, "
-                        f"deferring {num_pending} pending subscriptions until reconnect"
-                    )
-                    continue
-
-                # ✅ FIX #3.3: Attempt to process pending subscriptions
-                logger.info(
-                    f"🔄 [PENDING] Processing {num_pending} pending subscriptions "
-                    f"(periodic check)"
-                )
-
-                try:
-                    await self._restore_subscriptions()
-                    logger.info(
-                        f"✅ [PENDING] Successfully processed pending subscriptions "
-                        f"(remaining: {len(self.pending_subscriptions)})"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"❌ [PENDING] Failed to process pending subscriptions: {e}",
-                        exc_info=True
-                    )
-                    # Continue running despite errors
-
-            except asyncio.CancelledError:
-                logger.info("[PENDING] Pending processor task cancelled")
-                break
-            except Exception as e:
-                logger.error(f"[PENDING] Error in pending processor: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait before retrying on error
 
     # ==================== USER DATA STREAM ====================
 
@@ -899,38 +782,25 @@ class BinanceHybridStream:
                 except asyncio.TimeoutError:
                     continue
 
-                # ✅ FIX #1.1: ВСЕГДА добавляем подписки в pending для отложенной обработки
-                if subscribe:
-                    if symbol not in self.pending_subscriptions:
-                        self.pending_subscriptions.add(symbol)
-                        logger.debug(f"[MARK] Added {symbol} to pending subscriptions (total pending: {len(self.pending_subscriptions)})")
-
-                # ✅ FIX #1.2: Попытка подписаться немедленно (если stream активен)
+                # Send subscription to WebSocket
                 if self.mark_connected and self.mark_ws and not self.mark_ws.closed:
                     if subscribe:
                         await self._subscribe_mark_price(symbol)
                     else:
                         await self._unsubscribe_mark_price(symbol)
-                else:
-                    # ✅ FIX #1.3: Логирование отложенных подписок для диагностики
-                    if subscribe:
-                        logger.warning(
-                            f"⏳ [MARK] Stream disconnected, {symbol} subscription deferred "
-                            f"(pending: {len(self.pending_subscriptions)} symbols). "
-                            f"Will retry after reconnect."
-                        )
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"[MARK] Subscription manager error: {e}", exc_info=True)
+                logger.error(f"Subscription manager error: {e}")
 
     async def _request_mark_subscription(self, symbol: str, subscribe: bool = True):
         """Queue mark price subscription request"""
-        # NOTE: pending_subscriptions управляется в _subscription_manager()
-        # Здесь только добавляем в queue для обработки
+        if subscribe:
+            # Mark subscription intent immediately (survives reconnects)
+            self.pending_subscriptions.add(symbol)
+            logger.debug(f"[MARK] Marked {symbol} for subscription (pending)")
         await self.subscription_queue.put((symbol, subscribe))
-        logger.debug(f"[MARK] Queued subscription request: {symbol} (subscribe={subscribe})")
 
     async def _subscribe_mark_price(self, symbol: str):
         """Subscribe to mark price stream for symbol"""
