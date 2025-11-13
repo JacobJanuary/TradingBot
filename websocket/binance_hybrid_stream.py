@@ -782,25 +782,38 @@ class BinanceHybridStream:
                 except asyncio.TimeoutError:
                     continue
 
-                # Send subscription to WebSocket
+                # ✅ FIX #1.1: ВСЕГДА добавляем подписки в pending для отложенной обработки
+                if subscribe:
+                    if symbol not in self.pending_subscriptions:
+                        self.pending_subscriptions.add(symbol)
+                        logger.debug(f"[MARK] Added {symbol} to pending subscriptions (total pending: {len(self.pending_subscriptions)})")
+
+                # ✅ FIX #1.2: Попытка подписаться немедленно (если stream активен)
                 if self.mark_connected and self.mark_ws and not self.mark_ws.closed:
                     if subscribe:
                         await self._subscribe_mark_price(symbol)
                     else:
                         await self._unsubscribe_mark_price(symbol)
+                else:
+                    # ✅ FIX #1.3: Логирование отложенных подписок для диагностики
+                    if subscribe:
+                        logger.warning(
+                            f"⏳ [MARK] Stream disconnected, {symbol} subscription deferred "
+                            f"(pending: {len(self.pending_subscriptions)} symbols). "
+                            f"Will retry after reconnect."
+                        )
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Subscription manager error: {e}")
+                logger.error(f"[MARK] Subscription manager error: {e}", exc_info=True)
 
     async def _request_mark_subscription(self, symbol: str, subscribe: bool = True):
         """Queue mark price subscription request"""
-        if subscribe:
-            # Mark subscription intent immediately (survives reconnects)
-            self.pending_subscriptions.add(symbol)
-            logger.debug(f"[MARK] Marked {symbol} for subscription (pending)")
+        # NOTE: pending_subscriptions управляется в _subscription_manager()
+        # Здесь только добавляем в queue для обработки
         await self.subscription_queue.put((symbol, subscribe))
+        logger.debug(f"[MARK] Queued subscription request: {symbol} (subscribe={subscribe})")
 
     async def _subscribe_mark_price(self, symbol: str):
         """Subscribe to mark price stream for symbol"""
