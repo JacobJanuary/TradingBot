@@ -435,14 +435,18 @@ class BinanceHybridStream:
         """
         PHASE 4: WebSocket heartbeat monitoring
 
-        Detects frozen WebSocket connections (alive but not sending data).
-        If no messages received for timeout seconds, forces reconnect.
+        Detects:
+        1. Frozen WebSocket connections (alive but not sending data)
+        2. Idle mark streams (0 subscriptions for extended period)
 
         Args:
             check_interval: How often to check (default: 30s)
             timeout: No-message threshold (default: 45s)
         """
         logger.info(f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring (check: {check_interval}s, timeout: {timeout}s)")
+
+        # ✅ FIX #2.1: Track idle stream threshold
+        idle_stream_threshold = 120.0  # 2 minutes without data
 
         while self.running:
             try:
@@ -453,7 +457,7 @@ class BinanceHybridStream:
 
                 current_time = asyncio.get_event_loop().time()
 
-                # Check Mark Price Stream heartbeat
+                # Check Mark Price Stream heartbeat (original logic)
                 if self.mark_connected and self.last_mark_message_time > 0:
                     mark_silence = current_time - self.last_mark_message_time
                     if mark_silence > timeout:
@@ -462,9 +466,53 @@ class BinanceHybridStream:
                             f"No messages for {mark_silence:.1f}s (threshold: {timeout}s). "
                             f"Forcing reconnect..."
                         )
-                        self.mark_connected = False  # Triggers reconnect in _run_mark_stream()
+                        self.mark_connected = False
 
-                # Check User Data Stream heartbeat
+                # ✅ FIX #2.2: Check for idle stream (0 subscriptions)
+                if self.mark_connected:
+                    num_subscriptions = len(self.subscribed_symbols)
+                    num_pending = len(self.pending_subscriptions)
+
+                    if num_subscriptions == 0 and num_pending > 0:
+                        # Idle stream with pending subscriptions - force reconnect
+                        logger.error(
+                            f"🚨 [HEARTBEAT] IDLE STREAM DETECTED! "
+                            f"Mark stream connected but 0 active subscriptions, "
+                            f"{num_pending} pending. Forcing reconnect to process pending..."
+                        )
+                        self.mark_connected = False
+
+                    elif num_subscriptions == 0 and num_pending == 0:
+                        # Truly idle stream (no subscriptions, none pending)
+                        # This is OK if no positions open
+                        logger.debug(
+                            f"[HEARTBEAT] Mark stream idle (0 subscriptions, 0 pending). "
+                            f"This is normal if no positions are open."
+                        )
+
+                # ✅ FIX #2.3: Track last price data update (not just any message)
+                # This detects subscription failure (connected, subscriptions sent, but no data)
+                if self.mark_connected and len(self.subscribed_symbols) > 0:
+                    # Check when we last received actual price data
+                    newest_price_time = 0.0
+                    for symbol in self.subscribed_symbols:
+                        price_age = self._get_data_age(symbol)
+                        if price_age > 0:  # Has data
+                            price_time = current_time - price_age
+                            newest_price_time = max(newest_price_time, price_time)
+
+                    if newest_price_time > 0:
+                        data_silence = current_time - newest_price_time
+                        if data_silence > idle_stream_threshold:
+                            logger.error(
+                                f"🚨 [HEARTBEAT] STALE DATA DETECTED! "
+                                f"Mark stream connected, {len(self.subscribed_symbols)} subscriptions, "
+                                f"but no fresh price data for {data_silence:.1f}s. "
+                                f"Forcing reconnect..."
+                            )
+                            self.mark_connected = False
+
+                # Check User Data Stream heartbeat (unchanged)
                 if self.user_connected and self.last_user_message_time > 0:
                     user_silence = current_time - self.last_user_message_time
                     if user_silence > timeout:
@@ -473,7 +521,7 @@ class BinanceHybridStream:
                             f"No messages for {user_silence:.1f}s (threshold: {timeout}s). "
                             f"Forcing reconnect..."
                         )
-                        self.user_connected = False  # Triggers reconnect in _run_user_stream()
+                        self.user_connected = False
 
             except asyncio.CancelledError:
                 logger.info("[HEARTBEAT] Heartbeat monitoring task cancelled")
