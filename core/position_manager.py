@@ -1160,7 +1160,12 @@ class PositionManager:
                 return {'error': 'invalid_entry_price', 'message': f'Entry price must be > 0, got {request.entry_price}'}
 
             # 5. Calculate position size
-            position_size_usd = request.position_size_usd or self.config.position_size_usd
+            # Use dynamic position sizing if not explicitly provided
+            if request.position_size_usd:
+                position_size_usd = request.position_size_usd
+            else:
+                # Calculate dynamic size based on total balance
+                position_size_usd = await self._get_dynamic_position_size(exchange_name)
             quantity = await self._calculate_position_size(
                 exchange, symbol, Decimal(str(request.entry_price)), Decimal(str(position_size_usd))
             )
@@ -2153,6 +2158,59 @@ class PositionManager:
         logger.info(f"   Quantity: {formatted_qty}")
 
         return formatted_qty
+
+    async def _get_dynamic_position_size(self, exchange_name: str) -> Decimal:
+        """
+        Calculate dynamic position size based on total balance and leverage
+        
+        Formula: position_size = (total_balance / POSITIONS_SMART_LIMIT) * LEVERAGE
+        
+        Args:
+            exchange_name: Exchange name (binance/bybit)
+            
+        Returns:
+            Position size in USD as Decimal
+        """
+        try:
+            exchange = self.exchanges.get(exchange_name)
+            if not exchange:
+                logger.warning(f"Exchange {exchange_name} not found, using config fallback")
+                return Decimal(str(self.config.position_size_usd))
+            
+            # Get total balance
+            total_balance = await exchange._get_total_balance_usdt()
+            
+            if total_balance <= 0:
+                logger.warning(f"Invalid total balance {total_balance}, using config fallback")
+                return Decimal(str(self.config.position_size_usd))
+            
+            # Get config values
+            positions_limit = Decimal(str(self.config.positions_smart_limit))
+            leverage = Decimal(str(self.config.leverage))
+            
+            # Calculate dynamic size: (balance / limit) * leverage
+            base_size = Decimal(str(total_balance)) / positions_limit
+            dynamic_size = base_size * leverage
+            
+            # Apply min/max limits
+            min_size = Decimal(str(self.config.min_position_size_usd))
+            max_size = Decimal(str(self.config.max_position_size_usd))
+            
+            clamped_size = max(min_size, min(dynamic_size, max_size))
+            
+            logger.info(
+                f"💰 Dynamic position size for {exchange_name}: "
+                f"${float(clamped_size):.2f} "
+                f"(balance=${total_balance:.2f}, limit={float(positions_limit)}, "
+                f"leverage={float(leverage)}x, raw=${float(dynamic_size):.2f})"
+            )
+            
+            return clamped_size
+            
+        except Exception as e:
+            logger.error(f"Error calculating dynamic position size: {e}", exc_info=True)
+            logger.warning(f"Using config fallback: ${self.config.position_size_usd}")
+            return Decimal(str(self.config.position_size_usd))
 
     async def _validate_spread(self, exchange: ExchangeManager, symbol: str) -> bool:
         """Validate bid-ask spread"""

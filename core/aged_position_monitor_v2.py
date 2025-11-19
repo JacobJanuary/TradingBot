@@ -316,7 +316,7 @@ class AgedPositionMonitorV2:
         if self.repository:
             # ✅ CRITICAL FIX: Only track in DB if position has real database ID
             # Pre-registered positions (id="pending") are skipped until they get real ID
-            if not isinstance(target.position_id, int):
+            if target.position_id == "pending" or not str(target.position_id).isdigit():
                 logger.debug(
                     f"⏳ {symbol}: Skipping DB tracking - position pending database creation "
                     f"(id={target.position_id}). Will track after position is persisted."

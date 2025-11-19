@@ -40,6 +40,7 @@ class TradingConfig:
     position_size_usd: Decimal = Decimal('6')
     min_position_size_usd: Decimal = Decimal('5')
     max_position_size_usd: Decimal = Decimal('10000')
+    positions_smart_limit: int = 30  # Max positions for dynamic sizing
     max_positions: int = 150
     max_exposure_usd: Decimal = Decimal('99000')
 
@@ -215,6 +216,8 @@ class Config:
             config.min_position_size_usd = Decimal(val)
         if val := os.getenv('MAX_POSITION_SIZE_USD'):
             config.max_position_size_usd = Decimal(val)
+        if val := os.getenv('POSITIONS_SMART_LIMIT'):
+            config.positions_smart_limit = int(val)
         if val := os.getenv('MAX_POSITIONS'):
             config.max_positions = int(val)
         if val := os.getenv('MAX_EXPOSURE_USD'):

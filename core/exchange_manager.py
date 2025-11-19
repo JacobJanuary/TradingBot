@@ -1667,21 +1667,25 @@ class ExchangeManager:
             (can_open, reason)
         """
         try:
-            # Step 1: Check free balance
+            # Step 1: Check free balance (account for leverage)
             free_usdt = await self._get_free_balance_usdt()
             total_usdt = await self._get_total_balance_usdt()
+            
+            # Get leverage from config
+            leverage = float(config.trading.leverage)
+            required_margin = float(notional_usd) / leverage
 
-            if free_usdt < float(notional_usd):
-                return False, f"Insufficient free balance: ${free_usdt:.2f} < ${notional_usd:.2f}"
+            if free_usdt < required_margin:
+                return False, f"Insufficient free balance: ${free_usdt:.2f} < ${required_margin:.2f} (notional=${notional_usd:.2f}, leverage={leverage}x)"
 
             # Step 1.5: Check minimum active balance (reserve after opening position)
-            remaining_balance = free_usdt - float(notional_usd)
+            remaining_balance = free_usdt - required_margin
             min_active_balance = float(config.safety.MINIMUM_ACTIVE_BALANCE_USD)
 
             if remaining_balance < min_active_balance:
                 return False, (
                     f"Insufficient free balance on {self.name}: "
-                    f"Opening ${notional_usd:.2f} position would leave ${remaining_balance:.2f}, "
+                    f"Opening ${notional_usd:.2f} position (margin=${required_margin:.2f}, leverage={leverage}x) would leave ${remaining_balance:.2f}, "
                     f"minimum required: ${min_active_balance:.2f}"
                 )
 
