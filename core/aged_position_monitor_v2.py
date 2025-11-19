@@ -796,13 +796,15 @@ class AgedPositionMonitorV2:
             position, hours_over_limit
         )
 
+        # ✅ FIX: Always update dynamic values (target price changes in progressive phase)
+        target.target_price = new_target_price
+        target.loss_tolerance = new_loss_tolerance
+        target.hours_aged = current_age_hours
+
         # Check if phase changed
         if new_phase != target.phase:
             old_phase = target.phase
             target.phase = new_phase
-            target.target_price = new_target_price
-            target.loss_tolerance = new_loss_tolerance
-            target.hours_aged = current_age_hours
 
             logger.info(
                 f"📈 Phase transition for {position.symbol}: "
