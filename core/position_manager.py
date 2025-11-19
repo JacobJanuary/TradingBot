@@ -2452,9 +2452,12 @@ class PositionManager:
                 trailing_manager = self.trailing_managers.get(position.exchange)
 
                 # В position_manager.py, метод _on_position_update, после строки 1969
+                # В position_manager.py, метод _on_position_update, после строки 1969
                 logger.info(f"[TS_DEBUG] Exchange: {position.exchange}, "
                             f"Trailing manager exists: {trailing_manager is not None}, "
-                            f"TS symbols in memory: {list(trailing_manager.trailing_stops.keys()) if trailing_manager else []}")
+                            f"TS symbols in memory: {list(trailing_manager.trailing_stops.keys()) if trailing_manager else []}, "
+                            f"Pos TS Activated: {position.trailing_activated}, "
+                            f"Opened: {position.opened_at}")
 
                 if trailing_manager and position.has_trailing_stop:
                     # NEW: Update TS health timestamp before calling TS Manager

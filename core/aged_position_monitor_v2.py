@@ -1156,6 +1156,10 @@ class AgedPositionMonitorV2:
 
                 # Check age - already calculated above
 
+                # ✅ DEBUG for RONINUSDT investigation
+                if symbol == 'RONINUSDT':
+                     logger.info(f"🔍 [RONIN-DEBUG] age={age_hours:.2f}h, ts_act={ts_activated}, has_ts={has_ts}, tracked={already_tracked}, max_age={self.max_age_hours}")
+
                 if age_hours > self.max_age_hours:
                     logger.info(
                         f"✅ [DEBUG-ЭТАП1] {symbol}: QUALIFIES for aged monitoring! "
