@@ -434,6 +434,11 @@ class AgedPositionMonitorV2:
             if position.side in ['long', 'buy']:
                 # LONG: close if price >= target (accepting loss)
                 should_close = current_price >= target.target_price
+                
+                # ✅ DEBUG RONIN
+                if symbol == 'RONINUSDT':
+                     logger.info(f"🔍 [RONIN-CALC] Price={current_price}, Target={target.target_price}, Phase={target.phase}, Side={position.side}, PnL={pnl_percent}, Age={target.hours_aged:.2f}, Grace={self.grace_period_hours}, Step={self.loss_step_percent}, ShouldClose={should_close}")
+
             else:
                 # SHORT: close if price <= target
                 should_close = current_price <= target.target_price
