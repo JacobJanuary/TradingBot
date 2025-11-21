@@ -446,6 +446,28 @@ class TradingBot:
             logger.error(f"System error: {data}")
             self.health_monitor.record_error(data)
 
+        @self.event_router.on('stream.subscribe')
+        async def handle_stream_subscribe(data: Dict):
+            """Handle explicit subscription requests"""
+            symbol = data.get('symbol')
+            exchange = data.get('exchange', 'binance')
+
+            if not symbol:
+                return
+
+            try:
+                # Route to appropriate stream
+                if exchange == 'binance':
+                    stream = self.websockets.get('binance_hybrid')
+                    if stream:
+                        logger.info(f"🔌 Triggering explicit subscription for {symbol}")
+                        await stream.subscribe_symbol(symbol)
+                    else:
+                        logger.warning("Binance stream not available for subscription")
+
+            except Exception as e:
+                logger.error(f"Failed to handle subscription request for {symbol}: {e}")
+
         @self.event_router.on('position.opened')
         async def handle_position_opened(data: Dict):
             logger.info(f"📈 Position opened: {data['symbol']} {data['side']}")

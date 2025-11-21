@@ -925,6 +925,10 @@ class BinanceHybridStream:
             except Exception as e:
                 logger.error(f"[MARK] Subscription manager error: {e}", exc_info=True)
 
+    async def subscribe_symbol(self, symbol: str):
+        """Public method to subscribe to mark price stream for a symbol"""
+        await self._request_mark_subscription(symbol)
+
     async def _request_mark_subscription(self, symbol: str, subscribe: bool = True):
         """Queue mark price subscription request"""
         # NOTE: pending_subscriptions управляется в _subscription_manager()

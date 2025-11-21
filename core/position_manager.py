@@ -1744,8 +1744,19 @@ class PositionManager:
                             severity='ERROR'
                         )
 
-            # 11. Update internal tracking
+            # 4. Update internal state
             self.positions[symbol] = position
+            self._save_position(position)
+
+            # 5. Trigger explicit subscription to ensure we get price updates
+            # This fixes the issue where missed ACCOUNT_UPDATE prevents mark price subscription
+            await self.event_router.emit('stream.subscribe', {
+                'symbol': symbol,
+                'exchange': exchange_name,
+                'timestamp': datetime.now().timestamp()
+            })
+
+            logger.info(f"✅ Position opened successfully for {symbol}")
             self.position_count += 1
             self.total_exposure += Decimal(str(position.quantity * position.entry_price))
             self.stats['positions_opened'] += 1
