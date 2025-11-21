@@ -1352,6 +1352,16 @@ class SmartTrailingStopManager:
                     
                     return False  # Stop SL update
                 except Exception as e:
+                    # Check for "ReduceOnly Order is rejected" (Binance code -2022)
+                    # This means the position is already closed (or size is 0), which is our goal.
+                    error_msg = str(e)
+                    if "-2022" in error_msg or "ReduceOnly" in error_msg:
+                        logger.info(
+                            f"ℹ️ {ts.symbol}: Emergency close skipped - Position already closed by exchange "
+                            f"(ReduceOnly rejected). This is expected if SL triggered."
+                        )
+                        return False
+                    
                     logger.error(f"❌ {ts.symbol}: Failed to execute emergency market close: {e}", exc_info=True)
                     return False
 
