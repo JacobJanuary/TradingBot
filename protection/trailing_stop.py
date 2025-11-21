@@ -1308,6 +1308,54 @@ class SmartTrailingStopManager:
             is_sl_valid = False
             validation_error = None
 
+            # NEW: Check for instant price crossing (Emergency Close Condition)
+            # If price has already crossed the proposed SL, we must close immediately
+            should_emergency_close = False
+            if sl_price is not None:
+                if ts.side == 'long' and current_price <= sl_price:
+                    should_emergency_close = True
+                elif ts.side == 'short' and current_price >= sl_price:
+                    should_emergency_close = True
+
+            if should_emergency_close:
+                logger.warning(
+                    f"⚡ {ts.symbol}: Price crossed SL level ({sl_price:.8f}) instantly! "
+                    f"Current: {current_price:.8f}. Executing EMERGENCY MARKET CLOSE."
+                )
+                
+                try:
+                    # Execute market close
+                    close_side = 'sell' if ts.side == 'long' else 'buy'
+                    await self.exchange.create_market_order(
+                        symbol=ts.symbol,
+                        side=close_side,
+                        amount=float(ts.quantity),
+                        params={'reduceOnly': True}
+                    )
+
+                    # Log event
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.WARNING_RAISED,
+                            {
+                                'warning_type': 'ts_emergency_close_instant_cross',
+                                'symbol': ts.symbol,
+                                'close_price': float(current_price),
+                                'sl_price': float(sl_price),
+                                'message': 'Emergency market close triggered due to instant price crossing SL level'
+                            },
+                            symbol=ts.symbol,
+                            exchange=self.exchange_name,
+                            severity='WARNING'
+                        )
+                    
+                    return False  # Stop SL update
+                except Exception as e:
+                    logger.error(f"❌ {ts.symbol}: Failed to execute emergency market close: {e}", exc_info=True)
+                    return False
+
+            # Normal validation
             if ts.side == 'long':
                 # For LONG: SL must be < current price
                 if sl_price is not None and sl_price < current_price:
