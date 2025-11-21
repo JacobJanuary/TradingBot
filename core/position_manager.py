@@ -2336,14 +2336,17 @@ class PositionManager:
             if position_amt == 0:
                 logger.info(f"❌ Position closure detected via WebSocket: {symbol}")
                 if symbol in self.positions:
-                    position = self.positions[symbol]
-                    await self.close_position(
-                        symbol=symbol,
-                        close_price=float(data.get('mark_price', position.current_price)),
-                        realized_pnl=float(data.get('unrealized_pnl', position.unrealized_pnl)),
-                        reason='websocket_closure'
-                    )
-                    logger.info(f"✅ Position {symbol} closed via WebSocket event")
+                    try:
+                        position = self.positions[symbol]
+                        await self.close_position(
+                            symbol=symbol,
+                            close_price=float(data.get('mark_price', position.current_price)),
+                            realized_pnl=float(data.get('unrealized_pnl', position.unrealized_pnl)),
+                            reason='websocket_closure'
+                        )
+                        logger.info(f"✅ Position {symbol} closed via WebSocket event")
+                    except Exception as e:
+                        logger.error(f"Failed to process WebSocket closure for {symbol}: {e}", exc_info=True)
                 return
 
         if not symbol or symbol not in self.positions:
@@ -2715,7 +2718,13 @@ class PositionManager:
 
             await self.close_position(symbol, 'stop_loss')
 
-    async def close_position(self, symbol: str, reason: str = 'manual'):
+    async def close_position(
+        self, 
+        symbol: str, 
+        reason: str = 'manual',
+        close_price: Optional[float] = None,
+        realized_pnl: Optional[float] = None
+    ):
         """Close position and update records"""
 
         if symbol not in self.positions:
@@ -2730,19 +2739,43 @@ class PositionManager:
             return
 
         try:
-            # Close position on exchange
-            success = await exchange.close_position(symbol)
+            # Skip exchange closure if already closed via WebSocket
+            success = True
+            if reason == 'websocket_closure':
+                logger.info(f"ℹ️ Skipping exchange closure for {symbol} (already closed via WebSocket)")
+            else:
+                # Close position on exchange
+                success = await exchange.close_position(symbol)
 
             if success:
                 # Calculate realized PnL
-                exit_price = position.current_price
-
-                if position.side == 'long':
-                    realized_pnl = (exit_price - position.entry_price) * position.quantity
-                    realized_pnl_percent = (exit_price - position.entry_price) / position.entry_price * 100
+                if close_price is not None:
+                    exit_price = to_decimal(close_price)
                 else:
-                    realized_pnl = (position.entry_price - exit_price) * position.quantity
-                    realized_pnl_percent = (position.entry_price - exit_price) / position.entry_price * 100
+                    exit_price = position.current_price
+
+                if realized_pnl is not None:
+                    # Use provided PnL (from WebSocket)
+                    pnl_val = to_decimal(realized_pnl)
+                    pnl_percent_val = Decimal('0') # We might not have this from WS, or need to calc it
+                    
+                    # Recalculate percent if possible
+                    if position.entry_price > 0:
+                         if position.side == 'long':
+                            pnl_percent_val = (exit_price - position.entry_price) / position.entry_price * 100
+                         else:
+                            pnl_percent_val = (position.entry_price - exit_price) / position.entry_price * 100
+                    
+                    realized_pnl = pnl_val
+                    realized_pnl_percent = pnl_percent_val
+                else:
+                    # Calculate PnL manually
+                    if position.side == 'long':
+                        realized_pnl = (exit_price - position.entry_price) * position.quantity
+                        realized_pnl_percent = (exit_price - position.entry_price) / position.entry_price * 100
+                    else:
+                        realized_pnl = (position.entry_price - exit_price) * position.quantity
+                        realized_pnl_percent = (position.entry_price - exit_price) / position.entry_price * 100
 
                 # Log exit order to database
                 try:
