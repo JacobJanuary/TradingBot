@@ -446,6 +446,7 @@ class BinanceHybridStream:
         Detects:
         1. Frozen WebSocket connections (alive but not sending data)
         2. Idle mark streams (0 subscriptions for extended period)
+        3. ✅ FIX #6.2: Stuck "Connecting" state and dead tasks
 
         Args:
             check_interval: How often to check (default: 30s)
@@ -454,7 +455,10 @@ class BinanceHybridStream:
         logger.info(f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring (check: {check_interval}s, timeout: {timeout}s)")
 
         # ✅ FIX #2.1: Track idle stream threshold
-        idle_stream_threshold = 120.0  # 2 minutes without data
+        IDLE_THRESHOLD = 300  # 5 minutes allowed without messages if 0 subscriptions
+        
+        # ✅ FIX #6.2: Track connection attempts
+        last_connected_check = asyncio.get_event_loop().time()
 
         while self.running:
             try:
@@ -465,39 +469,46 @@ class BinanceHybridStream:
 
                 current_time = asyncio.get_event_loop().time()
 
-                # Check Mark Price Stream heartbeat (original logic)
-                if self.mark_connected and self.last_mark_message_time > 0:
-                    mark_silence = current_time - self.last_mark_message_time
-                    if mark_silence > timeout:
+                # --- CHECK 1: Mark Price Stream ---
+                
+                # A. Check if task is dead (crashed/exited)
+                if self.mark_task and self.mark_task.done():
+                    try:
+                        exc = self.mark_task.exception()
+                        logger.error(f"💀 [HEARTBEAT] Mark stream task DIED! Exception: {exc}")
+                    except Exception:
+                        logger.error("💀 [HEARTBEAT] Mark stream task DIED (no exception)")
+                    
+                    await self._restart_mark_stream()
+                    last_connected_check = current_time # Reset timer
+                    continue
+
+                # B. Check if stuck in "Connecting" state
+                if not self.mark_connected:
+                    time_disconnected = current_time - last_connected_check
+                    if time_disconnected > 60.0: # 60s grace period for connection
+                        logger.error(f"🔒 [HEARTBEAT] Mark stream stuck in CONNECTING for {time_disconnected:.1f}s. Forcing restart...")
+                        await self._restart_mark_stream()
+                        last_connected_check = current_time
+                    continue
+                else:
+                    last_connected_check = current_time # Reset when connected
+
+                # C. Check for frozen connection (connected but no data)
+                mark_silence = current_time - self.last_mark_message_time
+                
+                # If we have subscriptions, we MUST receive data
+                has_subscriptions = len(self.subscribed_symbols) > 0 or len(self.pending_subscriptions) > 0
+                
+                effective_timeout = timeout if has_subscriptions else IDLE_THRESHOLD
+
+                if mark_silence > effective_timeout:
+                    if has_subscriptions:
                         logger.warning(
                             f"💔 [HEARTBEAT] Mark stream frozen! "
                             f"No messages for {mark_silence:.1f}s (threshold: {timeout}s). "
                             f"Forcing reconnect..."
                         )
-                        self.mark_connected = False
-
-                # ✅ FIX #2.2: Check for idle stream (0 subscriptions)
-                if self.mark_connected:
-                    num_subscriptions = len(self.subscribed_symbols)
-                    num_pending = len(self.pending_subscriptions)
-
-                    if num_subscriptions == 0 and num_pending > 0:
-                        # Idle stream with pending subscriptions - force reconnect
-                        logger.error(
-                            f"🚨 [HEARTBEAT] IDLE STREAM DETECTED! "
-                            f"Mark stream connected but 0 active subscriptions, "
-                            f"{num_pending} pending. Forcing reconnect to process pending..."
-                        )
-                        self.mark_connected = False
-
-                    elif num_subscriptions == 0 and num_pending == 0:
-                        # Truly idle stream (no subscriptions, none pending)
-                        # This is OK if no positions open
-                        logger.debug(
-                            f"[HEARTBEAT] Mark stream idle (0 subscriptions, 0 pending). "
-                            f"This is normal if no positions are open."
-                        )
-
                 # ✅ FIX #2.3: Track last price data update (not just any message)
                 # This detects subscription failure (connected, subscriptions sent, but no data)
                 if self.mark_connected and len(self.subscribed_symbols) > 0:
@@ -773,10 +784,6 @@ class BinanceHybridStream:
                 # Restore subscriptions after reconnect
                 await self._restore_subscriptions()
 
-                # Reset reconnect delay
-                reconnect_delay = 5
-
-                # Receive loop
                 async for msg in self.mark_ws:
                     if not self.running:
                         break
@@ -798,6 +805,10 @@ class BinanceHybridStream:
                         logger.error("[MARK] WebSocket error")
                         break
 
+            except asyncio.TimeoutError:
+                logger.error("❌ [MARK] Connection timed out (handshake > 15s)")
+                # Loop will retry automatically
+                
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -810,6 +821,31 @@ class BinanceHybridStream:
                     logger.info(f"[MARK] Reconnecting in {reconnect_delay}s...")
                     await asyncio.sleep(reconnect_delay)
                     reconnect_delay = min(reconnect_delay * 2, 60)
+
+    async def _restart_mark_stream(self):
+        """
+        ✅ FIX #6.3: Explicit task restart
+        
+        Cleanly cancels the old task and starts a new one.
+        Used when the task is stuck or crashed.
+        """
+        logger.warning("🔄 [MARK] Forcing restart of Mark Price Stream task...")
+        
+        # 1. Cancel existing task
+        if self.mark_task and not self.mark_task.done():
+            self.mark_task.cancel()
+            try:
+                await self.mark_task
+            except asyncio.CancelledError:
+                pass
+                
+        # 2. Close existing socket/session if open
+        if self.mark_ws and not self.mark_ws.closed:
+            await self.mark_ws.close()
+            
+        # 3. Start new task
+        self.mark_task = asyncio.create_task(self._run_mark_stream())
+        logger.info("✅ [MARK] Mark Price Stream task restarted")
 
     async def _handle_mark_message(self, data: Dict):
         """Handle Mark Price Stream message"""
