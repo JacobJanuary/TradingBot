@@ -1410,6 +1410,26 @@ class PositionManager:
                     else:
                         logger.warning(f"⚠️ No trailing manager for exchange {exchange_name}")
 
+                    # 11. Trigger explicit subscription to ensure we get price updates
+                    # CRITICAL FIX: This must happen BEFORE returning, regardless of creation path
+                    # Previously this was only in non-atomic path (line 1753), causing atomic positions to miss subscriptions
+                    logger.info(f"🔌 Emitting stream.subscribe event for {symbol}")
+                    await self.event_router.emit('stream.subscribe', {
+                        'symbol': symbol,
+                        'exchange': exchange_name,
+                        'timestamp': datetime.now().timestamp()
+                    })
+
+                    # 12. Update internal statistics
+                    self.position_count += 1
+                    self.total_exposure += Decimal(str(position.quantity * position.entry_price))
+                    self.stats['positions_opened'] += 1
+
+                    logger.info(
+                        f"✅ Position opened: {symbol} {position.side} "
+                        f"{position.quantity:.6f} @ ${position.entry_price:.4f}"
+                    )
+
                     return position  # Return early - atomic creation is complete
 
                 else:
