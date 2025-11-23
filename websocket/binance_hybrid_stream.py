@@ -441,7 +441,7 @@ class BinanceHybridStream:
                 logger.error(f"[MARK] Error in health check task: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
-    async def _heartbeat_monitoring_task(self, check_interval: int = 30, timeout: int = 45):
+    async def _heartbeat_monitoring_task(self, check_interval: int = 30, timeout: int = 45, idle_stream_threshold: int = 120):
         """
         PHASE 4: WebSocket heartbeat monitoring
 
@@ -453,6 +453,7 @@ class BinanceHybridStream:
         Args:
             check_interval: How often to check (default: 30s)
             timeout: No-message threshold (default: 45s)
+            idle_stream_threshold: Threshold for stale data detection (default: 120s)
         """
         logger.info(f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring (check: {check_interval}s, timeout: {timeout}s)")
 
@@ -511,6 +512,7 @@ class BinanceHybridStream:
                             f"No messages for {mark_silence:.1f}s (threshold: {timeout}s). "
                             f"Forcing reconnect..."
                         )
+                        self.mark_connected = False
                 # ✅ FIX #2.3: Track last price data update (not just any message)
                 # This detects subscription failure (connected, subscriptions sent, but no data)
                 if self.mark_connected and len(self.subscribed_symbols) > 0:
