@@ -480,32 +480,34 @@ class WaveSignalProcessor:
                             self.total_filtered_low_volume = getattr(self, 'total_filtered_low_volume', 0) + 1
                             return True, f"1h volume ${volume_1h_usdt:,.0f} below minimum ${min_volume:,}"
 
-                    # Filter 3: Price Change <= 4% (overheating check)
+                    # Filter 3: Price Change Check (5min and 15min)
                     if getattr(self.config, 'signal_filter_price_change_enabled', True):
-                        price_at_signal, price_5min_before = await self._fetch_price_5min_before(
+                        price_at_signal, price_5min_before, price_15min_before = await self._fetch_price_change_data(
                             exchange_manager, symbol, signal_timestamp
                         )
-                        max_change = float(getattr(self.config, 'signal_max_price_change_5min_percent', 4.0))
+                        max_change_5m = float(getattr(self.config, 'signal_max_price_change_5min_percent', 4.0))
+                        max_change_15m = max_change_5m * 2.0  # 15min threshold is double the 5min one
 
+                        # Check 1: 5-minute change
                         if price_at_signal and price_5min_before and price_5min_before > 0:
-                            price_change_percent = ((price_at_signal - price_5min_before) / price_5min_before) * 100
+                            price_change_5m_percent = ((price_at_signal - price_5min_before) / price_5min_before) * 100
+                            
+                            should_filter_5m = False
+                            reason_5m = ""
+                            
+                            if direction == 'BUY' and price_change_5m_percent > max_change_5m:
+                                should_filter_5m = True
+                                reason_5m = f"overheated 5m (BUY after +{price_change_5m_percent:.2f}% rise)"
+                            elif direction == 'SELL' and price_change_5m_percent < -max_change_5m:
+                                should_filter_5m = True
+                                reason_5m = f"oversold 5m (SELL after {price_change_5m_percent:.2f}% drop)"
 
-                            # For BUY: reject if price rose >4%
-                            # For SELL: reject if price fell >4%
-                            should_filter = False
-                            if direction == 'BUY' and price_change_percent > max_change:
-                                should_filter = True
-                                reason = f"overheated (BUY after +{price_change_percent:.2f}% rise)"
-                            elif direction == 'SELL' and price_change_percent < -max_change:
-                                should_filter = True
-                                reason = f"oversold (SELL after {price_change_percent:.2f}% drop)"
-
-                            if should_filter:
+                            if should_filter_5m:
                                 logger.info(
-                                    f"⏭️ Signal skipped: {symbol} {reason} on {exchange}"
+                                    f"⏭️ Signal skipped: {symbol} {reason_5m} on {exchange}"
                                 )
-
-                                # Log event (только в режиме process)
+                                
+                                # Log event
                                 from core.event_logger import get_event_logger, EventType
                                 event_logger = get_event_logger()
                                 if event_logger and getattr(self, '_current_mode', 'process') == 'process':
@@ -515,10 +517,10 @@ class WaveSignalProcessor:
                                             'signal_id': signal.get('id'),
                                             'symbol': symbol,
                                             'exchange': exchange,
-                                            'filter_reason': 'price_overheated' if direction == 'BUY' else 'price_oversold',
+                                            'filter_reason': 'price_overheated_5m' if direction == 'BUY' else 'price_oversold_5m',
                                             'direction': direction,
-                                            'price_change_5min_percent': float(price_change_percent),
-                                            'max_change_allowed': float(max_change),
+                                            'price_change_5min_percent': float(price_change_5m_percent),
+                                            'max_change_allowed': float(max_change_5m),
                                             'price_at_signal': float(price_at_signal),
                                             'price_5min_before': float(price_5min_before)
                                         },
@@ -526,9 +528,53 @@ class WaveSignalProcessor:
                                         exchange=exchange,
                                         severity='INFO'
                                     )
-
+                                
                                 self.total_filtered_price_change = getattr(self, 'total_filtered_price_change', 0) + 1
-                                return True, reason
+                                return True, reason_5m
+
+                        # Check 2: 15-minute change
+                        if price_at_signal and price_15min_before and price_15min_before > 0:
+                            price_change_15m_percent = ((price_at_signal - price_15min_before) / price_15min_before) * 100
+                            
+                            should_filter_15m = False
+                            reason_15m = ""
+                            
+                            if direction == 'BUY' and price_change_15m_percent > max_change_15m:
+                                should_filter_15m = True
+                                reason_15m = f"overheated 15m (BUY after +{price_change_15m_percent:.2f}% rise)"
+                            elif direction == 'SELL' and price_change_15m_percent < -max_change_15m:
+                                should_filter_15m = True
+                                reason_15m = f"oversold 15m (SELL after {price_change_15m_percent:.2f}% drop)"
+
+                            if should_filter_15m:
+                                logger.info(
+                                    f"⏭️ Signal skipped: {symbol} {reason_15m} on {exchange}"
+                                )
+                                
+                                # Log event
+                                from core.event_logger import get_event_logger, EventType
+                                event_logger = get_event_logger()
+                                if event_logger and getattr(self, '_current_mode', 'process') == 'process':
+                                    await event_logger.log_event(
+                                        EventType.SIGNAL_FILTERED,
+                                        {
+                                            'signal_id': signal.get('id'),
+                                            'symbol': symbol,
+                                            'exchange': exchange,
+                                            'filter_reason': 'price_overheated_15m' if direction == 'BUY' else 'price_oversold_15m',
+                                            'direction': direction,
+                                            'price_change_15min_percent': float(price_change_15m_percent),
+                                            'max_change_allowed': float(max_change_15m),
+                                            'price_at_signal': float(price_at_signal),
+                                            'price_15min_before': float(price_15min_before)
+                                        },
+                                        symbol=symbol,
+                                        exchange=exchange,
+                                        severity='INFO'
+                                    )
+                                
+                                self.total_filtered_price_change = getattr(self, 'total_filtered_price_change', 0) + 1
+                                return True, reason_15m
 
                 except Exception as e:
                     logger.warning(f"Error applying new filters to {symbol}: {e}", exc_info=True)
@@ -780,66 +826,71 @@ class WaveSignalProcessor:
             logger.debug(f"Could not fetch 1h volume for {symbol}: {e}")
             return None
 
-    async def _fetch_price_5min_before(
+    async def _fetch_price_change_data(
         self,
         exchange_manager,
         symbol: str,
         signal_timestamp: datetime
     ) -> tuple:
         """
-        Получить цену за 5 минут ДО сигнала для проверки перегрева.
+        Fetch price data for 5min and 15min change calculations.
+        Optimized to use a single API call.
 
         Args:
             exchange_manager: Exchange manager instance
             symbol: Trading symbol
-            signal_timestamp: Timestamp сигнала
+            signal_timestamp: Timestamp of the signal
 
         Returns:
-            tuple: (price_at_signal, price_5min_before) or (None, None)
+            tuple: (price_at_signal, price_5min_before, price_15min_before)
+                   Returns (None, None, None) if data unavailable
         """
         try:
             exchange_symbol = exchange_manager.find_exchange_symbol(symbol)
-
-            # Get price at signal (1m candles around signal time)
-            ts_signal_ms = int(signal_timestamp.timestamp() * 1000)
-            ohlcv_signal = await exchange_manager.exchange.fetch_ohlcv(
-                exchange_symbol,
-                timeframe='1m',
-                since=ts_signal_ms - (5 * 60 * 1000),  # 5 min before
-                limit=10
-            )
-
-            if not ohlcv_signal:
-                return None, None
-
-            # Find closest candle to signal time
-            closest_signal = min(ohlcv_signal, key=lambda x: abs(x[0] - ts_signal_ms))
-            price_at_signal = closest_signal[4]  # close price
-
-            # Get price 5 minutes before signal
+            
+            # We need data from 15 mins before up to signal time
+            # Fetch 20 mins to be safe and ensure we find the candles
             from datetime import timedelta
-            ts_5min_before = signal_timestamp - timedelta(minutes=5)
-            ts_5min_before_ms = int(ts_5min_before.timestamp() * 1000)
-
-            ohlcv_before = await exchange_manager.exchange.fetch_ohlcv(
+            
+            ts_signal_ms = int(signal_timestamp.timestamp() * 1000)
+            ts_start_ms = ts_signal_ms - (20 * 60 * 1000)  # 20 mins before signal
+            
+            # Fetch 1m candles
+            # Limit 30 should cover 20 mins + some buffer
+            ohlcv = await exchange_manager.exchange.fetch_ohlcv(
                 exchange_symbol,
                 timeframe='1m',
-                since=ts_5min_before_ms - (5 * 60 * 1000),  # 5 min window
-                limit=10
+                since=ts_start_ms,
+                limit=30
             )
 
-            if not ohlcv_before:
-                return None, None
+            if not ohlcv:
+                return None, None, None
 
-            # Find closest candle to 5min before time
-            closest_before = min(ohlcv_before, key=lambda x: abs(x[0] - ts_5min_before_ms))
-            price_5min_before = closest_before[4]  # close price
+            # Helper to find closest candle price
+            def get_price_at_time(target_ts_ms, candles):
+                # Find candle with timestamp closest to target
+                # Candle timestamp is usually open time
+                closest = min(candles, key=lambda x: abs(x[0] - target_ts_ms))
+                
+                # Check if it's within reasonable range (e.g. 2 mins)
+                if abs(closest[0] - target_ts_ms) > (2 * 60 * 1000):
+                    return None
+                return closest[4]  # close price
 
-            return price_at_signal, price_5min_before
+            price_at_signal = get_price_at_time(ts_signal_ms, ohlcv)
+            
+            ts_5min_before_ms = ts_signal_ms - (5 * 60 * 1000)
+            price_5min_before = get_price_at_time(ts_5min_before_ms, ohlcv)
+            
+            ts_15min_before_ms = ts_signal_ms - (15 * 60 * 1000)
+            price_15min_before = get_price_at_time(ts_15min_before_ms, ohlcv)
+
+            return price_at_signal, price_5min_before, price_15min_before
 
         except Exception as e:
-            logger.debug(f"Could not fetch 5min-before price for {symbol}: {e}")
-            return None, None
+            logger.debug(f"Could not fetch price change data for {symbol}: {e}")
+            return None, None, None
 
     async def _get_open_positions(self) -> List[Dict]:
         """Get all open positions with details."""

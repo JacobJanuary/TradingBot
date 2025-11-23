@@ -219,143 +219,152 @@ class TestVolumeFilter:
 class TestPriceChangeFilter:
     """Tests for price change (overheating) filter."""
 
+    def _setup_candles(self, mock_exchange_manager, price_at_signal, price_5min_before, price_15min_before=None):
+        """Helper to setup mock candles."""
+        now = datetime.now(timezone.utc)
+        ts_now = int(now.timestamp() * 1000)
+        ts_5m = int((now - timedelta(minutes=5)).timestamp() * 1000)
+        ts_15m = int((now - timedelta(minutes=15)).timestamp() * 1000)
+
+        candles = [
+            [ts_now, price_at_signal, price_at_signal, price_at_signal, price_at_signal, 1.0],
+            [ts_5m, price_5min_before, price_5min_before, price_5min_before, price_5min_before, 1.0]
+        ]
+        
+        if price_15min_before is not None:
+            candles.append([ts_15m, price_15min_before, price_15min_before, price_15min_before, price_15min_before, 1.0])
+        else:
+            # Default 15m price same as 5m if not specified (no change)
+            candles.append([ts_15m, price_5min_before, price_5min_before, price_5min_before, price_5min_before, 1.0])
+
+        mock_exchange_manager.exchange.fetch_ohlcv = AsyncMock(
+            side_effect=[
+                [[0, 100000, 102000, 99000, 100000, 2.0]],  # Volume check
+                candles                                     # Price check (single call)
+            ]
+        )
+        return now
+
     @pytest.mark.asyncio
     async def test_buy_signal_small_price_rise_passes(self, processor, mock_position_manager, mock_exchange_manager):
         """Test BUY signal with price rise <= 4% passes."""
-        # Setup
         mock_position_manager.exchanges = {'binance': mock_exchange_manager}
+        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(return_value={'openInterestValue': 2_000_000})
 
-        # Mock OI and volume above thresholds
-        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(
-            return_value={'openInterestValue': 2_000_000}
-        )
-
-        # Price rose 2% in 5 min (within threshold)
-        # First call (at signal): price = 51000
-        # Second call (5min before): price = 50000
-        # Change = (51000 - 50000) / 50000 = 2%
-        mock_exchange_manager.exchange.fetch_ohlcv = AsyncMock(
-            side_effect=[
-                [[0, 100000, 102000, 99000, 100000, 2.0]],  # Volume check (passes)
-                [[0, 51000, 52000, 50000, 51000, 1.0]],     # Price at signal
-                [[0, 50000, 51000, 49000, 50000, 1.0]]      # Price 5min before
-            ]
-        )
+        # Price rose 2% in 5 min (50000 -> 51000)
+        timestamp = self._setup_candles(mock_exchange_manager, 51000, 50000)
 
         signal = {
             'symbol': 'BTCUSDT',
             'exchange': 'binance',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timestamp': timestamp.isoformat(),
             'recommended_action': 'BUY'
         }
 
-        # Test
         is_duplicate, reason = await processor._is_duplicate(signal, 'test_wave')
-
-        # Should NOT be filtered (2% < 4%)
         assert is_duplicate is False
 
     @pytest.mark.asyncio
     async def test_buy_signal_large_price_rise_filtered(self, processor, mock_position_manager, mock_exchange_manager):
         """Test BUY signal with price rise > 4% is filtered (overheated)."""
-        # Setup
         mock_position_manager.exchanges = {'binance': mock_exchange_manager}
+        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(return_value={'openInterestValue': 2_000_000})
 
-        # Mock OI and volume above thresholds
-        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(
-            return_value={'openInterestValue': 2_000_000}
-        )
-
-        # Price rose 6% in 5 min (above threshold - overheated)
-        mock_exchange_manager.exchange.fetch_ohlcv = AsyncMock(
-            side_effect=[
-                [[0, 100000, 102000, 99000, 100000, 2.0]],  # Volume check
-                [[0, 53000, 54000, 52000, 53000, 1.0]],     # Price at signal
-                [[0, 50000, 51000, 49000, 50000, 1.0]]      # Price 5min before (+6%)
-            ]
-        )
+        # Price rose 6% in 5 min (50000 -> 53000)
+        timestamp = self._setup_candles(mock_exchange_manager, 53000, 50000)
 
         signal = {
             'symbol': 'OVERHEATED',
             'exchange': 'binance',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timestamp': timestamp.isoformat(),
             'recommended_action': 'BUY'
         }
 
-        # Test
         is_duplicate, reason = await processor._is_duplicate(signal, 'test_wave')
-
-        # Should be filtered (6% > 4%)
         assert is_duplicate is True
-        assert 'overheated' in reason.lower() or 'rise' in reason.lower()
+        assert 'overheated 5m' in reason
         assert processor.total_filtered_price_change == 1
 
     @pytest.mark.asyncio
     async def test_sell_signal_small_price_drop_passes(self, processor, mock_position_manager, mock_exchange_manager):
         """Test SELL signal with price drop <= 4% passes."""
-        # Setup
         mock_position_manager.exchanges = {'binance': mock_exchange_manager}
+        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(return_value={'openInterestValue': 2_000_000})
 
-        # Mock OI and volume above thresholds
-        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(
-            return_value={'openInterestValue': 2_000_000}
-        )
-
-        # Price dropped 2% in 5 min (within threshold)
-        mock_exchange_manager.exchange.fetch_ohlcv = AsyncMock(
-            side_effect=[
-                [[0, 100000, 102000, 99000, 100000, 2.0]],  # Volume check
-                [[0, 49000, 50000, 48000, 49000, 1.0]],     # Price at signal
-                [[0, 50000, 51000, 49000, 50000, 1.0]]      # Price 5min before (-2%)
-            ]
-        )
+        # Price dropped 2% in 5 min (50000 -> 49000)
+        timestamp = self._setup_candles(mock_exchange_manager, 49000, 50000)
 
         signal = {
             'symbol': 'BTCUSDT',
             'exchange': 'binance',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timestamp': timestamp.isoformat(),
             'recommended_action': 'SELL'
         }
 
-        # Test
         is_duplicate, reason = await processor._is_duplicate(signal, 'test_wave')
-
-        # Should NOT be filtered (-2% > -4%)
         assert is_duplicate is False
 
     @pytest.mark.asyncio
     async def test_sell_signal_large_price_drop_filtered(self, processor, mock_position_manager, mock_exchange_manager):
         """Test SELL signal with price drop > 4% is filtered (oversold)."""
-        # Setup
         mock_position_manager.exchanges = {'binance': mock_exchange_manager}
+        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(return_value={'openInterestValue': 2_000_000})
 
-        # Mock OI and volume above thresholds
-        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(
-            return_value={'openInterestValue': 2_000_000}
-        )
-
-        # Price dropped 6% in 5 min (below threshold - oversold)
-        mock_exchange_manager.exchange.fetch_ohlcv = AsyncMock(
-            side_effect=[
-                [[0, 100000, 102000, 99000, 100000, 2.0]],  # Volume check
-                [[0, 47000, 48000, 46000, 47000, 1.0]],     # Price at signal
-                [[0, 50000, 51000, 49000, 50000, 1.0]]      # Price 5min before (-6%)
-            ]
-        )
+        # Price dropped 6% in 5 min (50000 -> 47000)
+        timestamp = self._setup_candles(mock_exchange_manager, 47000, 50000)
 
         signal = {
             'symbol': 'OVERSOLD',
             'exchange': 'binance',
-            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'timestamp': timestamp.isoformat(),
             'recommended_action': 'SELL'
         }
 
-        # Test
         is_duplicate, reason = await processor._is_duplicate(signal, 'test_wave')
-
-        # Should be filtered (-6% < -4%)
         assert is_duplicate is True
-        assert 'oversold' in reason.lower() or 'drop' in reason.lower()
+        assert 'oversold 5m' in reason
+
+    @pytest.mark.asyncio
+    async def test_buy_signal_15m_rise_filtered(self, processor, mock_position_manager, mock_exchange_manager):
+        """Test BUY signal with 15m price rise > 8% is filtered."""
+        mock_position_manager.exchanges = {'binance': mock_exchange_manager}
+        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(return_value={'openInterestValue': 2_000_000})
+
+        # 5m change: 50000 -> 51000 (+2%, OK)
+        # 15m change: 46000 -> 51000 (+10.8%, > 8% limit)
+        timestamp = self._setup_candles(mock_exchange_manager, 51000, 50000, price_15min_before=46000)
+
+        signal = {
+            'symbol': 'PUMP15M',
+            'exchange': 'binance',
+            'timestamp': timestamp.isoformat(),
+            'recommended_action': 'BUY'
+        }
+
+        is_duplicate, reason = await processor._is_duplicate(signal, 'test_wave')
+        assert is_duplicate is True
+        assert 'overheated 15m' in reason
+
+    @pytest.mark.asyncio
+    async def test_sell_signal_15m_drop_filtered(self, processor, mock_position_manager, mock_exchange_manager):
+        """Test SELL signal with 15m price drop > 8% is filtered."""
+        mock_position_manager.exchanges = {'binance': mock_exchange_manager}
+        mock_exchange_manager.exchange.fetch_open_interest = AsyncMock(return_value={'openInterestValue': 2_000_000})
+
+        # 5m change: 50000 -> 49000 (-2%, OK)
+        # 15m change: 55000 -> 49000 (-10.9%, > 8% limit)
+        timestamp = self._setup_candles(mock_exchange_manager, 49000, 50000, price_15min_before=55000)
+
+        signal = {
+            'symbol': 'DUMP15M',
+            'exchange': 'binance',
+            'timestamp': timestamp.isoformat(),
+            'recommended_action': 'SELL'
+        }
+
+        is_duplicate, reason = await processor._is_duplicate(signal, 'test_wave')
+        assert is_duplicate is True
+        assert 'oversold 15m' in reason
 
 
 class TestFilterStatistics:
