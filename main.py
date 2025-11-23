@@ -193,10 +193,21 @@ class TradingBot:
 
                         if api_key and api_secret:
                             try:
+                                # Define callback for snapshot sync
+                                async def fetch_active_positions():
+                                    try:
+                                        # Use exchange manager to fetch positions
+                                        # This uses CCXT which goes via REST API
+                                        return await self.exchanges[name].fetch_positions()
+                                    except Exception as e:
+                                        logger.error(f"Failed to fetch positions for snapshot sync: {e}")
+                                        return []
+
                                 hybrid_stream = BinanceHybridStream(
                                     api_key=api_key,
                                     api_secret=api_secret,
                                     event_handler=self._handle_stream_event,
+                                    position_fetch_callback=fetch_active_positions,
                                     testnet=False
                                 )
                                 await hybrid_stream.start()

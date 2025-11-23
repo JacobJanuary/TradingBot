@@ -37,6 +37,7 @@ class BinanceHybridStream:
                  api_key: str,
                  api_secret: str,
                  event_handler: Optional[Callable] = None,
+                 position_fetch_callback: Optional[Callable] = None,
                  testnet: bool = False):
         """
         Initialize Binance Hybrid WebSocket
@@ -50,6 +51,7 @@ class BinanceHybridStream:
         self.api_key = api_key
         self.api_secret = api_secret
         self.event_handler = event_handler
+        self.position_fetch_callback = position_fetch_callback
         self.testnet = testnet
 
         # URLs
@@ -638,6 +640,10 @@ class BinanceHybridStream:
                 self.user_connected = True
                 logger.info("✅ [USER] Connected")
 
+                # ✅ FIX: Sync state with snapshot on reconnect
+                # This handles positions opened while disconnected
+                await self._sync_state_with_snapshot()
+
                 # Reset reconnect delay on successful connection
                 reconnect_delay = 5
 
@@ -751,6 +757,68 @@ class BinanceHybridStream:
 
                 # Request mark price unsubscription
                 await self._request_mark_subscription(symbol, subscribe=False)
+
+                # Request mark price unsubscription
+                await self._request_mark_subscription(symbol, subscribe=False)
+
+    async def _sync_state_with_snapshot(self):
+        """
+        Sync internal state with position snapshot from exchange.
+        
+        Called on (re)connection to detect positions opened while disconnected.
+        """
+        if not self.position_fetch_callback:
+            logger.warning("⚠️ [USER] No position_fetch_callback configured - skipping snapshot sync")
+            return
+
+        try:
+            logger.info("🔄 [USER] Syncing state with snapshot...")
+            
+            # Fetch active positions via callback (REST API)
+            # Expected format: List of dicts with 'symbol', 'positionAmt'/'contracts', etc.
+            positions = await self.position_fetch_callback()
+            
+            if not positions:
+                logger.info("✅ [USER] Snapshot sync: No active positions")
+                return
+
+            synced_count = 0
+            for pos in positions:
+                symbol = pos.get('symbol')
+                if not symbol:
+                    continue
+                    
+                # Normalize data
+                # Binance 'positionAmt', Bybit 'size'/'contracts'
+                amount = float(pos.get('positionAmt') or pos.get('contracts') or pos.get('size') or 0)
+                
+                if amount == 0:
+                    continue
+                    
+                # Update internal state
+                side = 'LONG' if amount > 0 else 'SHORT'
+                
+                # Store position data
+                self.positions[symbol] = {
+                    'symbol': symbol,
+                    'side': side,
+                    'size': str(abs(amount)),
+                    'entry_price': str(pos.get('entryPrice') or pos.get('avgPrice') or 0),
+                    'unrealized_pnl': str(pos.get('unrealizedProfit') or pos.get('unrealizedPnl') or 0),
+                    'mark_price': self.mark_prices.get(symbol, '0')
+                }
+                
+                # Ensure mark price subscription is active
+                if symbol not in self.subscribed_symbols:
+                    logger.info(f"➕ [USER] Found missing subscription for {symbol} in snapshot")
+                    await self._request_mark_subscription(symbol, subscribe=True)
+                
+                synced_count += 1
+                
+            logger.info(f"✅ [USER] Snapshot sync complete: {synced_count} positions synced")
+            
+        except Exception as e:
+            logger.error(f"❌ [USER] Snapshot sync failed: {e}")
 
     # ==================== MARK PRICE STREAM ====================
 
