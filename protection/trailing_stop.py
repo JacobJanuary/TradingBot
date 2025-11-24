@@ -731,67 +731,139 @@ class SmartTrailingStopManager:
 
         return None
 
-    async def _activate_trailing_stop(self, ts: TrailingStopInstance) -> Dict:
-        """Activate trailing stop"""
-        ts.state = TrailingStopState.ACTIVE
-        ts.activated_at = datetime.now()
-        self.stats['total_activated'] += 1
-
+    async def _activate_trailing_stop(self, ts: TrailingStopInstance) -> Optional[Dict]:
+        """
+        Activate trailing stop with retry logic
+        
+        FIX: Don't mark as activated if SL update fails (prevents unprotected positions)
+        Implements 3 retry attempts with exponential backoff
+        """
+        MAX_RETRIES = 3
+        RETRY_DELAYS = [0.3, 0.7, 1.5]  # Exponential backoff in seconds
+        
+        # Save original state for rollback
+        original_state = ts.state
+        original_stop_price = ts.current_stop_price
+        
         # Calculate initial trailing stop price
         distance = self._get_trailing_distance(ts)
 
         if ts.side == 'long':
-            ts.current_stop_price = ts.highest_price * (1 - distance / 100)
+            proposed_stop_price = ts.highest_price * (1 - distance / 100)
         else:
-            ts.current_stop_price = ts.lowest_price * (1 + distance / 100)
+            proposed_stop_price = ts.lowest_price * (1 + distance / 100)
+        
+        # Try activation with retries
+        for attempt in range(MAX_RETRIES):
+            try:
+                # Set state for this attempt
+                ts.state = TrailingStopState.ACTIVE
+                ts.current_stop_price = proposed_stop_price
+                
+                # Update stop order on exchange
+                success = await self._update_stop_order(ts)
+                
+                if success:
+                    # SUCCESS: Mark as activated
+                    ts.activated_at = datetime.now()
+                    self.stats['total_activated'] += 1
+                    
+                    logger.info(
+                        f"✅ {ts.symbol}: TS ACTIVATED - "
+                        f"side={ts.side}, "
+                        f"price={ts.current_price:.8f}, "
+                        f"sl={ts.current_stop_price:.8f}, "
+                        f"entry={ts.entry_price:.8f}, "
+                        f"profit={self._calculate_profit_percent(ts):.2f}%, "
+                        f"attempt={attempt + 1}/{MAX_RETRIES}, "
+                        f"[SEARCH: ts_activated_{ts.symbol}]"
+                    )
 
-        # Update stop order
-        await self._update_stop_order(ts)
+                    # Log trailing stop activation
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.TRAILING_STOP_ACTIVATED,
+                            {
+                                'symbol': ts.symbol,
+                                'activation_price': float(ts.current_price),
+                                'stop_price': float(ts.current_stop_price),
+                                'distance_percent': float(distance),
+                                'side': ts.side,
+                                'entry_price': float(ts.entry_price),
+                                'profit_percent': float(self._calculate_profit_percent(ts)),
+                                'attempts': attempt + 1
+                            },
+                            symbol=ts.symbol,
+                            exchange=self.exchange_name,
+                            severity='INFO'
+                        )
 
-        # FIX #5: Improved logging with side validation
-        logger.info(
-            f"✅ {ts.symbol}: TS ACTIVATED - "
-            f"side={ts.side}, "
-            f"price={ts.current_price:.8f}, "
-            f"sl={ts.current_stop_price:.8f}, "
-            f"entry={ts.entry_price:.8f}, "
-            f"profit={self._calculate_profit_percent(ts):.2f}%, "
-            f"[SEARCH: ts_activated_{ts.symbol}]"
+                    logger.debug(f"{ts.symbol} SL ownership: trailing_stop (via trailing_activated=True)")
+
+                    # Save activated state to database
+                    await self._save_state(ts)
+
+                    return {
+                        'action': 'activated',
+                        'symbol': ts.symbol,
+                        'stop_price': float(ts.current_stop_price),
+                        'distance_percent': float(distance)
+                    }
+                
+                # FAILED: Rollback state
+                ts.state = original_state
+                ts.current_stop_price = original_stop_price
+                
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"⚠️ {ts.symbol}: TS activation failed (attempt {attempt + 1}/{MAX_RETRIES}), "
+                        f"retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    
+            except Exception as e:
+                # Exception during activation - rollback and retry
+                ts.state = original_state
+                ts.current_stop_price = original_stop_price
+                
+                logger.error(
+                    f"❌ {ts.symbol}: Exception during TS activation (attempt {attempt + 1}/{MAX_RETRIES}): {e}",
+                    exc_info=True
+                )
+                
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAYS[attempt])
+        
+        # ALL RETRIES FAILED - critical error
+        logger.error(
+            f"🔴 {ts.symbol}: TS ACTIVATION FAILED after {MAX_RETRIES} attempts! "
+            f"Position remains with Protection SL (if exists). "
+            f"[SEARCH: ts_activation_failed_{ts.symbol}]"
         )
-
-        # Log trailing stop activation
+        
+        # Log critical failure event
         event_logger = get_event_logger()
         if event_logger:
             await event_logger.log_event(
-                EventType.TRAILING_STOP_ACTIVATED,
+                EventType.TRAILING_STOP_ACTIVATION_FAILED,
                 {
                     'symbol': ts.symbol,
-                    'activation_price': float(ts.current_price),
-                    'stop_price': float(ts.current_stop_price),
-                    'distance_percent': float(distance),
+                    'attempts': MAX_RETRIES,
                     'side': ts.side,
+                    'current_price': float(ts.current_price),
+                    'proposed_sl': float(proposed_stop_price),
                     'entry_price': float(ts.entry_price),
                     'profit_percent': float(self._calculate_profit_percent(ts))
                 },
                 symbol=ts.symbol,
                 exchange=self.exchange_name,
-                severity='INFO'
+                severity='ERROR'
             )
-
-        # NEW: Mark SL ownership (logging only for now)
-        # Note: sl_managed_by field already exists in PositionState
-        # PositionManager will see trailing_activated=True and skip protection
-        logger.debug(f"{ts.symbol} SL ownership: trailing_stop (via trailing_activated=True)")
-
-        # NEW: Save activated state to database
-        await self._save_state(ts)
-
-        return {
-            'action': 'activated',
-            'symbol': ts.symbol,
-            'stop_price': float(ts.current_stop_price),
-            'distance_percent': float(distance)
-        }
+        
+        # Return None to indicate failure (caller should handle)
+        return None
 
     async def _update_trailing_stop(self, ts: TrailingStopInstance) -> Optional[Dict]:
         """Update trailing stop if price moved favorably"""
@@ -1070,26 +1142,44 @@ class SmartTrailingStopManager:
             # Fetch all open orders for this symbol
             logger.debug(f"{ts.symbol} Fetching open orders to find Protection SL...")
             orders = await self.exchange.fetch_open_orders(ts.symbol)
+            
+            logger.info(f"🔍 {ts.symbol}: Found {len(orders)} open orders, checking for Protection SL...")
 
             # Find Protection Manager SL order
             # Characteristics:
-            # - type: 'STOP_MARKET' or 'stop_market'
+            # - type: 'STOP_MARKET' or 'stop_market' or 'STOPMARKET' (variations)
             # - side: opposite of position (sell for long, buy for short)
             # - reduceOnly: True
             expected_side = 'sell' if ts.side == 'long' else 'buy'
 
             protection_sl_orders = []
             for order in orders:
-                # OrderResult attributes (not dict methods)
-                order_type = order.type.upper() if order.type else ''
-                order_side = order.side.lower() if order.side else ''
-                # CCXT raw data from order.info
-                reduce_only = order.info.get('reduceOnly', False)
+                # FIX #2: More robust type detection
+                # Normalize: uppercase, remove underscores/spaces
+                order_type_raw = order.type or ''
+                order_type = order_type_raw.upper().replace('_', '').replace(' ', '')
+                
+                order_side_raw = order.side or ''
+                order_side = order_side_raw.lower()
+                
+                # Check reduceOnly in multiple formats
+                reduce_only = order.info.get('reduceOnly', order.info.get('reduce_only', False))
+                
+                # Log each order for debugging
+                logger.debug(
+                    f"  Order {order.id}: type={order_type_raw} (normalized: {order_type}), "
+                    f"side={order_side_raw}, reduceOnly={reduce_only}"
+                )
 
-                if (order_type == 'STOP_MARKET' and
+                # Match any STOP-type order on correct side with reduceOnly
+                if ('STOP' in order_type and
                     order_side == expected_side and
                     reduce_only):
                     protection_sl_orders.append(order)
+                    logger.info(
+                        f"  ✅ Found Protection SL candidate: {order.id} "
+                        f"(type={order_type_raw}, side={order_side_raw}, stopPrice={order.info.get('stopPrice', 'N/A')})"
+                    )
 
             # Cancel found Protection SL orders
             if protection_sl_orders:
@@ -1447,6 +1537,55 @@ class SmartTrailingStopManager:
             )
 
             if result['success']:
+                # FIX #3: VERIFY that SL actually exists on exchange
+                # Don't trust 'success' blindly - confirm order is there
+                try:
+                    await asyncio.sleep(0.2)  # Let exchange process the order
+                    
+                    orders = await self.exchange.fetch_open_orders(ts.symbol)
+                    expected_side = 'sell' if ts.side == 'long' else 'buy'
+                    
+                    sl_exists = any(
+                        'STOP' in (o.type or '').upper() and
+                        o.side.lower() == expected_side
+                        for o in orders
+                    )
+                    
+                    if not sl_exists:
+                        logger.error(
+                            f"❌ {ts.symbol}: SL update claimed success but NO SL found on exchange! "
+                            f"Expected {expected_side} STOP order. This is a critical bug."
+                        )
+                        
+                        # Log critical verification failure
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            await event_logger.log_event(
+                                EventType.WARNING_RAISED,
+                                {
+                                    'warning_type': 'sl_verification_failed',
+                                    'symbol': ts.symbol,
+                                    'message': 'SL update succeeded but order not found on exchange',
+                                    'expected_side': expected_side,
+                                    'method': result['method']
+                                },
+                                symbol=ts.symbol,
+                                exchange=self.exchange.name,
+                                severity='ERROR'
+                            )
+                        
+                        return False  # Trigger rollback in caller
+                    
+                    logger.debug(f"✅ {ts.symbol}: SL verified on exchange (expected {expected_side} STOP found)")
+                    
+                except Exception as e:
+                    # Verification failed but don't fail the update
+                    # (Exchange might be slow, order might appear later)
+                    logger.warning(
+                        f"⚠️ {ts.symbol}: Failed to verify SL existence: {e}. "
+                        f"Assuming success since exchange returned success."
+                    )
+                
                 # Log success with metrics
                 event_logger = get_event_logger()
                 if event_logger:
