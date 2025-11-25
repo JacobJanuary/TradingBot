@@ -93,6 +93,9 @@ class BinanceHybridStream:
         self.last_mark_message_time = 0.0  # Monotonic time of last mark stream message
         self.last_user_message_time = 0.0  # Monotonic time of last user stream message
 
+        # NEW: Position manager reference for health check
+        self.position_manager = None  # Set via set_position_manager()
+
         # Tasks
         self.user_task = None
         self.mark_task = None
@@ -210,6 +213,11 @@ class BinanceHybridStream:
             await self._delete_listen_key()
 
         logger.info("✅ Binance Hybrid WebSocket stopped")
+
+    def set_position_manager(self, position_manager):
+        """Set position manager reference for health check"""
+        self.position_manager = position_manager
+        logger.info("✅ Position manager reference set for WebSocket health check")
 
     async def sync_positions(self, positions: list):
         """
@@ -1304,6 +1312,8 @@ class BinanceHybridStream:
         """
         PHASE 2: Enhanced health check - verify all open positions have active subscriptions
         AND are receiving fresh data (not silent fails)
+        
+        PHASE 3 (NEW): Check position manager for stale positions
         """
         if not self.positions:
             return
@@ -1312,7 +1322,7 @@ class BinanceHybridStream:
         all_subscriptions = self.subscribed_symbols.union(self.pending_subscriptions)
         missing_subscriptions = set(self.positions.keys()) - all_subscriptions
 
-        # LAYER 2: Check for "silent fails" - subscriptions exist but no data flowing
+        # LAYER 2: Check for "silent fails"  - subscriptions exist but no data flowing
         STALE_DATA_THRESHOLD = 60.0  # seconds
         stale_subscriptions = []
 
@@ -1325,8 +1335,29 @@ class BinanceHybridStream:
             if data_age > STALE_DATA_THRESHOLD:
                 stale_subscriptions.append((symbol, data_age))
 
+        # LAYER 3: NEW - Check position manager for positions without recent price updates
+        # This catches positions that exist in bot memory but aren't receiving WebSocket updates
+        POSITION_STALE_THRESHOLD = 120.0  # 2 minutes without price update
+        stale_positions = []
+        
+        if self.position_manager:
+            from datetime import datetime
+            now = datetime.now()
+            
+            for symbol, position in self.position_manager.positions.items():
+                # Skip if position just created (no last_price_update yet)
+                if not position.last_price_update:
+                    # Set initial timestamp
+                    position.last_price_update = now
+                    continue
+                
+                time_since_update = (now - position.last_price_update).total_seconds()
+                
+                if time_since_update > POSITION_STALE_THRESHOLD:
+                    stale_positions.append((symbol, time_since_update))
+
         # Report findings
-        issues_found = len(missing_subscriptions) + len(stale_subscriptions)
+        issues_found = len(missing_subscriptions) + len(stale_subscriptions) + len(stale_positions)
 
         if missing_subscriptions:
             logger.warning(f"⚠️ [MARK] Found {len(missing_subscriptions)} positions WITHOUT subscriptions: {missing_subscriptions}")
@@ -1358,6 +1389,27 @@ class BinanceHybridStream:
                 # Request fresh subscription
                 logger.info(f"🔄 [MARK] Requesting fresh subscription for {symbol}")
                 await self._request_mark_subscription(symbol, subscribe=True)
+        
+        # NEW: Handle stale positions (LAYER 3)
+        if stale_positions:
+            logger.warning(f"🔴 [HEALTH] Found {len(stale_positions)} STALE POSITIONS (no price update):")
+            for symbol, time_stale in stale_positions:
+                logger.warning(f"   - {symbol}: no price update for {time_stale:.0f}s (threshold: {POSITION_STALE_THRESHOLD}s)")
+            
+            # Auto-recovery: re-subscribe to stale positions
+            for symbol, time_stale in stale_positions:
+                logger.warning(
+                    f"🔴 {symbol}: STALE SUBSCRIPTION detected! "
+                    f"No price update for {time_stale:.0f}s. "
+                    f"Re-subscribing..."
+                )
+                
+                # Re-subscribe (this will go through subscription queue)
+                await self._request_mark_subscription(symbol, subscribe=True)
+                
+                # Reset timestamp to avoid immediate re-trigger
+                if self.position_manager and symbol in self.position_manager.positions:
+                    self.position_manager.positions[symbol].last_price_update = now
 
         if issues_found == 0:
             logger.debug(f"✅ [MARK] Subscription health OK: {len(self.positions)} positions, "

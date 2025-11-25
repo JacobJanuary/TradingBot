@@ -323,6 +323,9 @@ class TradingBot:
             # so we need to explicitly subscribe to mark prices for existing positions
             binance_ws = self.websockets.get('binance_hybrid')
             if binance_ws:
+                #  NEW: Connect position_manager for health check
+                binance_ws.set_position_manager(self.position_manager)
+                
                 # Get active Binance positions (PositionState objects)
                 binance_position_states = [
                     p for p in self.position_manager.positions.values()

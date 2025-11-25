@@ -173,6 +173,9 @@ class PositionState:
     # NEW: TS health tracking for fallback
     ts_last_update_time: Optional[datetime] = None  # Last TS update
 
+    # NEW: WebSocket subscription health tracking
+    last_price_update: Optional[datetime] = None  # Last mark price update from WebSocket
+
     opened_at: Optional[datetime] = None
     age_hours: float = 0
 
@@ -2436,6 +2439,10 @@ class PositionManager:
             # Update position state
             old_price = position.current_price
             position.current_price: Decimal = to_decimal(data.get('mark_price', position.current_price))
+            
+            # NEW: Track last price update time for health check
+            position.last_price_update = datetime.now()
+            
             logger.info(f"  → Price updated {symbol}: {old_price} → {position.current_price}")
 
             # UNIFIED PRICE UPDATE (if enabled)
