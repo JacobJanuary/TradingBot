@@ -1404,6 +1404,17 @@ class BinanceHybridStream:
                     f"Re-subscribing..."
                 )
                 
+                # CRITICAL FIX: Remove from subscribed_symbols BEFORE re-subscribe
+                # Without this, _subscribe_mark_price() will see symbol already subscribed and skip!
+                self.subscribed_symbols.discard(symbol)
+                
+                # Clear stale price data
+                if symbol in self.mark_prices:
+                    del self.mark_prices[symbol]
+                timestamp_key = f"{symbol}_timestamp"
+                if timestamp_key in self.mark_prices:
+                    del self.mark_prices[timestamp_key]
+                
                 # Re-subscribe (this will go through subscription queue)
                 await self._request_mark_subscription(symbol, subscribe=True)
                 
