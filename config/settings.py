@@ -172,33 +172,53 @@ class Config:
         exchanges = {}
 
         # Binance configuration
-        binance_key = os.getenv('BINANCE_API_KEY')
-        binance_secret = os.getenv('BINANCE_API_SECRET')
-
-        if binance_key and binance_secret:
+        binance_trade = os.getenv('BINANCE_TRADE', 'true').lower() == 'true'
+        if not binance_trade:
             exchanges['binance'] = ExchangeConfig(
                 name='binance',
-                api_key=binance_key,
-                api_secret=binance_secret,
-                enabled=True,  # Always enabled if keys present
-                testnet=os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
+                api_key='disabled',
+                api_secret='disabled',
+                enabled=False
             )
-            logger.info(f"Binance configured: testnet={exchanges['binance'].testnet}")
+            logger.info("Binance trading disabled via BINANCE_TRADE=false")
+        else:
+            binance_key = os.getenv('BINANCE_API_KEY')
+            binance_secret = os.getenv('BINANCE_API_SECRET')
+
+            if binance_key and binance_secret:
+                exchanges['binance'] = ExchangeConfig(
+                    name='binance',
+                    api_key=binance_key,
+                    api_secret=binance_secret,
+                    enabled=True,  # Always enabled if keys present
+                    testnet=os.getenv('BINANCE_TESTNET', 'false').lower() == 'true'
+                )
+                logger.info(f"Binance configured: testnet={exchanges['binance'].testnet}")
 
         # Bybit configuration
-        bybit_key = os.getenv('BYBIT_API_KEY')
-        bybit_secret = os.getenv('BYBIT_API_SECRET')
-
-        if bybit_key and bybit_secret:
+        bybit_trade = os.getenv('BYBIT_TRADE', 'true').lower() == 'true'
+        if not bybit_trade:
             exchanges['bybit'] = ExchangeConfig(
                 name='bybit',
-                api_key=bybit_key,
-                api_secret=bybit_secret,
-                enabled=True,  # Always enabled if keys present
-                testnet=os.getenv('BYBIT_TESTNET', 'false').lower() == 'true'
+                api_key='disabled',
+                api_secret='disabled',
+                enabled=False
             )
-            logger.info(f"Bybit configured: testnet={exchanges['bybit'].testnet}")
-            logger.info(f"Bybit API Key (first 4 chars): {bybit_key[:4]}...")
+            logger.info("Bybit trading disabled via BYBIT_TRADE=false")
+        else:
+            bybit_key = os.getenv('BYBIT_API_KEY')
+            bybit_secret = os.getenv('BYBIT_API_SECRET')
+
+            if bybit_key and bybit_secret:
+                exchanges['bybit'] = ExchangeConfig(
+                    name='bybit',
+                    api_key=bybit_key,
+                    api_secret=bybit_secret,
+                    enabled=True,  # Always enabled if keys present
+                    testnet=os.getenv('BYBIT_TESTNET', 'false').lower() == 'true'
+                )
+                logger.info(f"Bybit configured: testnet={exchanges['bybit'].testnet}")
+                logger.info(f"Bybit API Key (first 4 chars): {bybit_key[:4]}...")
 
         if not exchanges:
             logger.warning("No exchange API keys found in .env file!")
