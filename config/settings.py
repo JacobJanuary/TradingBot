@@ -57,6 +57,18 @@ class TradingConfig:
     # Position sizing mode
     use_smart_limit: bool = True          # True = dynamic (balance/POSITIONS_SMART_LIMIT), False = fixed (POSITION_SIZE_USD)
 
+    # Smart Entry configuration (Hunter pattern)
+    smart_entry_enabled: bool = False               # Master toggle: True = Smart Entry Hunter, False = immediate entry
+    smart_entry_timeout_minutes: int = 30           # How long to search for ideal entry point
+    smart_entry_check_interval_seconds: int = 4     # How often to check conditions (lower = more precise, higher = fewer API calls)
+    max_concurrent_hunters: int = 30                # Maximum simultaneous Hunter tasks
+    
+    # Smart Entry thresholds
+    hunter_mfi_momentum_threshold: float = 50.0     # MFI threshold for Momentum Breakout scenario
+    hunter_mfi_reversion_threshold: float = 30.0    # MFI threshold for Mean Reversion scenario
+    hunter_vwap_tolerance_percent: float = 0.2      # VWAP touch tolerance for Mean Reversion (±%)
+    hunter_volume_spike_multiplier: float = 2.0     # Volume multiplier for Momentum Breakout (2.0 = 2x average)
+
     # Trailing Stop SL Update settings (Freqtrade-inspired)
     trailing_min_update_interval_seconds: int = 30  # Min 30s between SL updates
     # ✅ FIX #2.1: Lower threshold from 0.05% to 0.01% for more responsive TS updates
@@ -314,10 +326,32 @@ class Config:
         if val := os.getenv('SIGNAL_FILTER_PRICE_CHANGE_ENABLED'):
             config.signal_filter_price_change_enabled = val.lower() == 'true'
 
+        # Smart Entry Configuration (NEW)
+        if val := os.getenv('SMART_ENTRY'):
+            config.smart_entry_enabled = val.lower() == 'true'
+        if val := os.getenv('SMART_ENTRY_TIMEOUT_MINUTES'):
+            config.smart_entry_timeout_minutes = int(val)
+        if val := os.getenv('SMART_ENTRY_CHECK_INTERVAL_SECONDS'):
+            config.smart_entry_check_interval_seconds = int(val)
+        if val := os.getenv('MAX_CONCURRENT_HUNTERS'):
+            config.max_concurrent_hunters = int(val)
+        if val := os.getenv('HUNTER_MFI_MOMENTUM_THRESHOLD'):
+            config.hunter_mfi_momentum_threshold = float(val)
+        if val := os.getenv('HUNTER_MFI_REVERSION_THRESHOLD'):
+            config.hunter_mfi_reversion_threshold = float(val)
+        if val := os.getenv('HUNTER_VWAP_TOLERANCE_PERCENT'):
+            config.hunter_vwap_tolerance_percent = float(val)
+        if val := os.getenv('HUNTER_VOLUME_SPIKE_MULTIPLIER'):
+            config.hunter_volume_spike_multiplier = float(val)
+
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
         logger.info(f"Wave limits: max_trades={config.max_trades_per_15min} (fallback), buffer_fixed=+{config.signal_buffer_fixed}")
         logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
         logger.info(f"Position sizing mode: {'DYNAMIC (smart limit)' if config.use_smart_limit else 'FIXED'}")
+        logger.info(f"Smart Entry: {'ENABLED' if config.smart_entry_enabled else 'DISABLED'}")
+        if config.smart_entry_enabled:
+            logger.info(f"  Timeout: {config.smart_entry_timeout_minutes}min, Check interval: {config.smart_entry_check_interval_seconds}s, Max hunters: {config.max_concurrent_hunters}")
+            logger.info(f"  Thresholds: MFI_momentum={config.hunter_mfi_momentum_threshold}, MFI_reversion={config.hunter_mfi_reversion_threshold}, VWAP_tolerance={config.hunter_vwap_tolerance_percent}%, Volume_spike={config.hunter_volume_spike_multiplier}x")
         logger.info(f"Signal filters: min_oi=${config.signal_min_open_interest_usdt}, min_vol_1h=${config.signal_min_volume_1h_usdt}, max_price_change_5m={config.signal_max_price_change_5min_percent}%")
         return config
 

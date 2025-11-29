@@ -596,11 +596,15 @@ class WaveSignalProcessor:
     async def _process_single_signal(self, signal: Dict, wave_timestamp: str) -> Optional[Dict]:
         """
         Обрабатывает один сигнал.
-
+        
+        BEHAVIOR:
+        - If SMART_ENTRY=true → Launch Hunter (Fire & Forget)
+        - If SMART_ENTRY=false → Old logic (immediate processing)
+        
         Args:
             signal: Сигнал для обработки
             wave_timestamp: Timestamp волны
-
+        
         Returns:
             Dict с результатом обработки или None если не удалось
         """
@@ -608,6 +612,7 @@ class WaveSignalProcessor:
             # FIX: 2025-10-03 - CRITICAL: Modify original signal to ensure SignalProcessor gets correct action
             # Используем ту же логику что в SignalProcessor (signal_type или recommended_action)
             action = signal.get('signal_type') or signal.get('recommended_action') or signal.get('action')
+            symbol = signal.get('symbol', signal.get('pair_symbol', ''))
 
             # CRITICAL FIX: Modify the original signal so SignalProcessor gets the correct action
             if action and not signal.get('action'):
@@ -617,17 +622,77 @@ class WaveSignalProcessor:
             # Also ensure signal_type is set for SignalProcessor validation
             if action and not signal.get('signal_type'):
                 signal['signal_type'] = action
-
-            # Return processing result
-            return {
-                'symbol': signal.get('symbol', signal.get('pair_symbol', '')),
-                'action': action,
-                'processed_at': wave_timestamp,
-                'status': 'processed'
-            }
+            
+            # ═══════════════════════════════════════════════════
+            # SMART ENTRY INTEGRATION POINT
+            # ═══════════════════════════════════════════════════
+            
+            if self.config.smart_entry_enabled:
+                # NEW PATH: Smart Entry Hunter
+                try:
+                    from core.smart_entry_hunter import launch_hunter
+                    
+                    exchange = signal.get('exchange', signal.get('exchange_name', ''))
+                    exchange_manager = self.position_manager.exchanges.get(exchange)
+                    
+                    if not exchange_manager:
+                        logger.error(f"❌ Smart Entry: Exchange {exchange} not available for {symbol}")
+                        # Fallback to old logic if exchange not found
+                        logger.warning(f"⚠️  Falling back to immediate entry for {symbol}")
+                        return self._immediate_entry_fallback(signal, action, wave_timestamp)
+                    
+                    # Launch Hunter (Fire & Forget)
+                    hunter_task = launch_hunter(
+                        signal=signal,
+                        exchange_manager=exchange_manager,
+                        position_manager=self.position_manager
+                    )
+                    
+                    logger.info(
+                        f"🎯 Smart Entry Hunter launched for {symbol} "
+                        f"(timeout: {self.config.smart_entry_timeout_minutes}min)"
+                    )
+                    
+                    return {
+                        'symbol': symbol,
+                        'action': action,
+                        'processed_at': wave_timestamp,
+                        'status': 'hunter_launched',
+                        'hunter_task_id': id(hunter_task)
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"❌ Smart Entry launch failed for {symbol}: {e}", exc_info=True)
+                    # Graceful fallback to old logic
+                    logger.warning(f"⚠️  Falling back to immediate entry for {symbol}")
+                    return self._immediate_entry_fallback(signal, action, wave_timestamp)
+            
+            else:
+                # OLD PATH: Immediate entry (original behavior)
+                logger.debug(f"📍 Immediate entry mode for {symbol} (SMART_ENTRY=false)")
+                return {
+                    'symbol': symbol,
+                    'action': action,
+                    'processed_at': wave_timestamp,
+                    'status': 'processed'
+                }
+        
         except Exception as e:
             logger.error(f"Error processing single signal: {e}", exc_info=True)
             return None
+
+    def _immediate_entry_fallback(self, signal: Dict, action: str, wave_timestamp: str) -> Dict:
+        """
+        Fallback для immediate entry (если Smart Entry failed)
+        
+        Используется когда SmartEntry включен, но произошла ошибка запуска Hunter
+        """
+        return {
+            'symbol': signal.get('symbol', signal.get('pair_symbol', '')),
+            'action': action,
+            'processed_at': wave_timestamp,
+            'status': 'processed_fallback'
+        }
 
     async def _get_minimum_cost(
         self,
@@ -787,7 +852,16 @@ class WaveSignalProcessor:
         signal_timestamp: datetime
     ) -> Optional[float]:
         """
-        Получить объем торгов за 1 час ПОСЛЕ сигнала в USDT.
+        Получить объем торгов за 1 час ПЕРЕД сигналом в USDT.
+        
+        CRITICAL FIX 2025-11-30: Fetch PREVIOUS complete hour, not current incomplete hour.
+        
+        Example:
+            Signal at 14:37:22
+            - Current hour: 14:00-14:59 (only 37 minutes, INCOMPLETE)
+            - Previous hour: 13:00-13:59 (full 60 minutes, COMPLETE) ✅
+        
+        We check the PREVIOUS hour's volume to ensure we have a full 60 minutes of data.
 
         Args:
             exchange_manager: Exchange manager instance
@@ -798,11 +872,17 @@ class WaveSignalProcessor:
             1h volume in USDT or None if not available
         """
         try:
+            from datetime import timedelta
+            
             # Round timestamp down to hour boundary
             hour_start = signal_timestamp.replace(minute=0, second=0, microsecond=0)
-            ts_ms = int(hour_start.timestamp() * 1000)
+            
+            # CRITICAL FIX: Subtract 1 hour to get PREVIOUS COMPLETE hour
+            # If signal is at 14:37, we want 13:00-13:59 candle (complete), not 14:00-14:37 (incomplete)
+            prev_hour_start = hour_start - timedelta(hours=1)
+            ts_ms = int(prev_hour_start.timestamp() * 1000)
 
-            # Fetch 1h candle starting at signal hour
+            # Fetch 1h candle from PREVIOUS hour (complete data)
             ohlcv = await exchange_manager.exchange.fetch_ohlcv(
                 exchange_manager.find_exchange_symbol(symbol),
                 timeframe='1h',

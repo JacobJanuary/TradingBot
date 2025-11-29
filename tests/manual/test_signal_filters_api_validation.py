@@ -149,6 +149,8 @@ class SignalFilterAPITester:
     ) -> Tuple[Optional[float], bool, str]:
         """
         Test Method 2: fetch_ohlcv() for 1h volume
+        
+        CRITICAL FIX 2025-11-30: Fetch PREVIOUS complete hour, not current incomplete hour.
 
         Returns:
             (volume_usdt, success, method_used)
@@ -159,9 +161,13 @@ class SignalFilterAPITester:
 
             # Round timestamp to hour boundary
             hour_start = signal_timestamp.replace(minute=0, second=0, microsecond=0)
-            ts_ms = int(hour_start.timestamp() * 1000)
+            
+            # CRITICAL FIX: Subtract 1 hour to get PREVIOUS COMPLETE hour
+            # If signal is at 14:37, we want 13:00-13:59 candle (complete), not 14:00-14:37 (incomplete)
+            prev_hour_start = hour_start - timedelta(hours=1)
+            ts_ms = int(prev_hour_start.timestamp() * 1000)
 
-            # Fetch 1h candle
+            # Fetch 1h candle from PREVIOUS hour (complete data)
             ohlcv = await exchange.fetch_ohlcv(
                 normalized_symbol,
                 timeframe='1h',
