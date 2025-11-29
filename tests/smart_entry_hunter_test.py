@@ -218,18 +218,32 @@ class SmartEntryTest:
                         self.results[symbol] = result
                         
                         if status == 'entered':
+                            entry_price = result.get('entry_price', 0)
+                            initial_price = result.get('initial_price', 0)
+                            price_change = result.get('price_change_pct', 0)
+                            elapsed = result.get('elapsed_seconds', 0)
+                            minutes = int(elapsed // 60)
+                            seconds = int(elapsed % 60)
+                            
                             logger.info(
                                 f"🎉 ENTRY SIGNAL: {symbol} - {result.get('reason')}"
                             )
                             logger.info(
-                                f"   Price: ${result.get('price'):.4f} "
-                                f"after {result.get('iterations')} iterations"
+                                f"   📍 Initial: ${initial_price:.6f} → Entry: ${entry_price:.6f} "
+                                f"({price_change:+.2f}%)"
+                            )
+                            logger.info(
+                                f"   ⏱️  Time to entry: {minutes}m {seconds}s "
+                                f"({result.get('iterations')} checks)"
                             )
                         elif status == 'timeout':
+                            initial_price = result.get('initial_price')
                             logger.info(
                                 f"⏱️ TIMEOUT: {symbol} - No entry found after 30 min "
                                 f"({result.get('iterations')} checks)"
                             )
+                            if initial_price:
+                                logger.info(f"   📍 Initial price was: ${initial_price:.6f}")
                         elif status == 'error':
                             logger.error(
                                 f"❌ ERROR: {symbol} - {result.get('error')}"
@@ -276,12 +290,24 @@ class SmartEntryTest:
         for symbol, result in self.results.items():
             status = result.get('status')
             if status == 'entered':
+                entry_price = result.get('entry_price', 0)
+                initial_price = result.get('initial_price', 0)
+                price_change = result.get('price_change_pct', 0)
+                elapsed = result.get('elapsed_seconds', 0)
+                minutes = int(elapsed // 60)
+                seconds = int(elapsed % 60)
+                
                 logger.info(
-                    f"  ✅ {symbol}: ENTRY at ${result.get('price'):.4f} "
-                    f"- {result.get('reason')[:60]}..."
+                    f"  ✅ {symbol}: ENTRY at ${entry_price:.6f} "
+                    f"(from ${initial_price:.6f}, {price_change:+.2f}%) "
+                    f"after {minutes}m {seconds}s"
                 )
             elif status == 'timeout':
-                logger.info(f"  ⏱️ {symbol}: TIMEOUT after {result.get('iterations')} checks")
+                initial_price = result.get('initial_price')
+                price_str = f" - started at ${initial_price:.6f}" if initial_price else ""
+                logger.info(
+                    f"  ⏱️ {symbol}: TIMEOUT after {result.get('iterations')} checks{price_str}"
+                )
             elif status == 'error':
                 logger.info(f"  ❌ {symbol}: ERROR - {result.get('error')}")
         

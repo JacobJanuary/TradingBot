@@ -273,6 +273,9 @@ async def monitor_entry_conditions(
     
     logger.info(f"🎯 Smart Entry Hunter monitoring {symbol} ({direction}) for {timeout_minutes}min")
     
+    # Track initial price
+    initial_price = None
+    
     try:
         iteration = 0
         while True:
@@ -282,7 +285,12 @@ async def monitor_entry_conditions(
             elapsed = datetime.now(timezone.utc) - start_time
             if elapsed > timeout_duration:
                 logger.info(f"⏱️ Hunter timeout for {symbol} ({timeout_minutes} min)")
-                return {'status': 'timeout', 'symbol': symbol, 'iterations': iteration}
+                return {
+                    'status': 'timeout',
+                    'symbol': symbol,
+                    'iterations': iteration,
+                    'initial_price': initial_price
+                }
             
             # 1. Fetch 1m candles (last 50)
             candles = await _fetch_candles_safely(
@@ -303,10 +311,21 @@ async def monitor_entry_conditions(
                 await asyncio.sleep(check_interval)
                 continue
             
+            # Store initial price on first successful iteration
+            if initial_price is None:
+                initial_price = indicators['current_price']
+                logger.info(
+                    f"📍 {symbol} initial price: ${initial_price:.6f} "
+                    f"(starting monitoring)"
+                )
+            
             # 4. Check entry scenarios
             should_enter, reason = _check_entry_criteria(indicators, direction)
             
             if should_enter:
+                entry_price = indicators['current_price']
+                elapsed_seconds = (datetime.now(timezone.utc) - start_time).total_seconds()
+                
                 logger.info(f"✅ Entry criteria met for {symbol}: {reason}")
                 
                 # Open position if position_manager provided
@@ -319,7 +338,7 @@ async def monitor_entry_conditions(
                         symbol=symbol,
                         exchange=exchange,
                         side=direction,
-                        entry_price=Decimal(str(indicators['current_price']))
+                        entry_price=Decimal(str(entry_price))
                     )
                     
                     result = await position_manager.open_position(request)
@@ -330,7 +349,10 @@ async def monitor_entry_conditions(
                             'status': 'entered',
                             'symbol': symbol,
                             'reason': reason,
-                            'price': indicators['current_price'],
+                            'entry_price': entry_price,
+                            'initial_price': initial_price,
+                            'price_change_pct': ((entry_price - initial_price) / initial_price * 100) if initial_price else 0,
+                            'elapsed_seconds': elapsed_seconds,
                             'iterations': iteration
                         }
                     else:
@@ -339,6 +361,7 @@ async def monitor_entry_conditions(
                             'status': 'error',
                             'symbol': symbol,
                             'error': 'position_open_failed',
+                            'initial_price': initial_price,
                             'iterations': iteration
                         }
                 else:
@@ -347,7 +370,10 @@ async def monitor_entry_conditions(
                         'status': 'entered',
                         'symbol': symbol,
                         'reason': reason,
-                        'price': indicators['current_price'],
+                        'entry_price': entry_price,
+                        'initial_price': initial_price,
+                        'price_change_pct': ((entry_price - initial_price) / initial_price * 100) if initial_price else 0,
+                        'elapsed_seconds': elapsed_seconds,
                         'iterations': iteration,
                         'test_mode': True
                     }
