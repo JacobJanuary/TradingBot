@@ -17,7 +17,7 @@ prometheus-client==0.19.0
 
 # Utils
 numpy  # pandas-ta requires >=2.2.6
-pandas==2.0.3
+pandas>=2.3.2  # Required by pandas-ta
 scipy>=1.13.0  # Compatible with NumPy 2.x
 pandas-ta>=0.3.14b  # Technical Analysis indicators for Smart Entry
 
