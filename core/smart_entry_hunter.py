@@ -385,12 +385,18 @@ async def _fetch_candles_safely(exchange_manager, symbol: str, timeframe: str, l
 
 
 def _candles_to_df(candles) -> pd.DataFrame:
-    """Convert CCXT candles to pandas DataFrame"""
+    """Convert CCXT candles to pandas DataFrame with DatetimeIndex"""
     df = pd.DataFrame(
         candles,
         columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
     )
+    
+    # Convert timestamp to datetime and set as index (required for pandas_ta)
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df = df.set_index('timestamp')
+    df = df.sort_index()  # Ensure ordered
+    
+    # Convert to float
     df = df.astype({
         'open': float,
         'high': float,
