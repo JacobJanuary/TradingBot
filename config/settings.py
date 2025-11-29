@@ -54,6 +54,9 @@ class TradingConfig:
     max_leverage: int = 2                 # Maximum allowed leverage (safety limit)
     auto_set_leverage: bool = True        # Auto-set leverage before opening position
 
+    # Position sizing mode
+    use_smart_limit: bool = True          # True = dynamic (balance/POSITIONS_SMART_LIMIT), False = fixed (POSITION_SIZE_USD)
+
     # Trailing Stop SL Update settings (Freqtrade-inspired)
     trailing_min_update_interval_seconds: int = 30  # Min 30s between SL updates
     # ✅ FIX #2.1: Lower threshold from 0.05% to 0.01% for more responsive TS updates
@@ -293,6 +296,10 @@ class Config:
         if val := os.getenv('SIGNAL_BUFFER_FIXED'):
             config.signal_buffer_fixed = int(val)
 
+        # Position sizing mode
+        if val := os.getenv('USE_SMART_LIMIT'):
+            config.use_smart_limit = val.lower() == 'true'
+
         # FIX: 2025-10-30 - Добавлена загрузка SIGNAL фильтров из .env
         if val := os.getenv('SIGNAL_MIN_OPEN_INTEREST_USDT'):
             config.signal_min_open_interest_usdt = int(val)
@@ -310,6 +317,7 @@ class Config:
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
         logger.info(f"Wave limits: max_trades={config.max_trades_per_15min} (fallback), buffer_fixed=+{config.signal_buffer_fixed}")
         logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
+        logger.info(f"Position sizing mode: {'DYNAMIC (smart limit)' if config.use_smart_limit else 'FIXED'}")
         logger.info(f"Signal filters: min_oi=${config.signal_min_open_interest_usdt}, min_vol_1h=${config.signal_min_volume_1h_usdt}, max_price_change_5m={config.signal_max_price_change_5min_percent}%")
         return config
 

@@ -1093,6 +1093,11 @@ class PositionManager:
 
         ⚠️ CRITICAL: Position and SL are created atomically
         If SL fails, position is rolled back
+        
+        Position sizing logic:
+        1. If request.position_size_usd is provided → use it (highest priority)
+        2. Else if USE_SMART_LIMIT=true → calculate dynamic size from balance
+        3. Else → use POSITION_SIZE_USD from config (fixed)
         """
 
         symbol = request.symbol
@@ -1163,12 +1168,20 @@ class PositionManager:
                 return {'error': 'invalid_entry_price', 'message': f'Entry price must be > 0, got {request.entry_price}'}
 
             # 5. Calculate position size
-            # Use dynamic position sizing if not explicitly provided
+            # Priority: explicit request > config mode (dynamic or fixed)
             if request.position_size_usd:
+                # Explicitly provided - always use it (highest priority)
                 position_size_usd = request.position_size_usd
-            else:
-                # Calculate dynamic size based on total balance
+                logger.info(f"📊 Using explicitly provided position size: ${position_size_usd}")
+            elif self.config.use_smart_limit:
+                # Dynamic sizing enabled - calculate based on balance
                 position_size_usd = await self._get_dynamic_position_size(exchange_name)
+                logger.info(f"💰 Using DYNAMIC position size: ${position_size_usd}")
+            else:
+                # Fixed sizing - use config value
+                position_size_usd = self.config.position_size_usd
+                logger.info(f"📍 Using FIXED position size: ${position_size_usd}")
+                
             quantity = await self._calculate_position_size(
                 exchange, symbol, Decimal(str(request.entry_price)), Decimal(str(position_size_usd))
             )
@@ -2027,7 +2040,20 @@ class PositionManager:
             return False
 
         # Check max exposure
-        position_size_usd = request.position_size_usd or self.config.position_size_usd
+        # CRITICAL FIX: Calculate actual position size that will be used
+        if request.position_size_usd:
+            position_size_usd = request.position_size_usd
+        elif self.config.use_smart_limit:
+            # Must calculate dynamic size for accurate exposure check
+            try:
+                position_size_usd = await self._get_dynamic_position_size(request.exchange)
+            except Exception as e:
+                # Fallback to config if calculation fails
+                position_size_usd = self.config.position_size_usd
+                logger.warning(f"Failed to calculate dynamic size for risk check: {e}, using config fallback")
+        else:
+            position_size_usd = self.config.position_size_usd
+            
         new_exposure = self.total_exposure + Decimal(str(position_size_usd))
 
         if new_exposure > self.config.max_exposure_usd:
@@ -2198,6 +2224,9 @@ class PositionManager:
         Calculate dynamic position size based on total balance and leverage
         
         Formula: position_size = (total_balance / POSITIONS_SMART_LIMIT) * LEVERAGE
+        
+        This method is ONLY used when USE_SMART_LIMIT=true (default).
+        When USE_SMART_LIMIT=false, POSITION_SIZE_USD is used directly.
         
         Args:
             exchange_name: Exchange name (binance/bybit)
