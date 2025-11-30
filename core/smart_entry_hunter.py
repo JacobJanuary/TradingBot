@@ -267,9 +267,9 @@ async def monitor_entry_conditions(
     direction = signal.get('recommended_action') or signal.get('signal_type', 'BUY')
     
     start_time = datetime.now(timezone.utc)
-    timeout_minutes = int(os.getenv('HUNTER_TIMEOUT_MINUTES', '30'))
+    timeout_minutes = int(os.getenv('SMART_ENTRY_TIMEOUT_MINUTES', '30'))
     timeout_duration = timedelta(minutes=timeout_minutes)
-    check_interval = int(os.getenv('HUNTER_CHECK_INTERVAL_SECONDS', '4'))
+    check_interval = int(os.getenv('SMART_ENTRY_CHECK_INTERVAL_SECONDS', '4'))
     
     logger.info(f"🎯 Smart Entry Hunter monitoring {symbol} ({direction}) for {timeout_minutes}min")
     
@@ -356,11 +356,12 @@ async def monitor_entry_conditions(
                             'iterations': iteration
                         }
                     else:
-                        logger.error(f"Failed to open position for {symbol}")
+                        # Check if it failed because position already exists
+                        logger.warning(f"⚠️ Failed to open position for {symbol} (likely duplicate)")
                         return {
-                            'status': 'error',
+                            'status': 'skipped_duplicate',
                             'symbol': symbol,
-                            'error': 'position_open_failed',
+                            'reason': 'position_already_exists',
                             'initial_price': initial_price,
                             'iterations': iteration
                         }

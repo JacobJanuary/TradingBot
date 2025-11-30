@@ -998,6 +998,19 @@ class WebSocketSignalProcessor:
                     logger.info(f"✅ {exchange_name_cap}: Target {max_trades} reached, stopping")
                     break
 
+                # CRITICAL FIX: Check if signal was already handled by Smart Entry Hunter
+                result_info = signal_result.get('result', {})
+                if result_info.get('status') == 'hunter_launched':
+                    logger.info(f"🎯 Signal {idx+1} handled by Smart Entry Hunter, skipping immediate execution")
+                    executed += 1  # Count as executed since Hunter is working on it
+                    execution_details.append({
+                        'index': idx + 1,
+                        'symbol': signal_result.get('symbol', 'UNKNOWN'),
+                        'result': 'hunter_launched',
+                        'executed': True
+                    })
+                    continue
+
                 signal_data = signal_result.get('signal_data')
                 if signal_data:
                     # Open position using PositionManager
