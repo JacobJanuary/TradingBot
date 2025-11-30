@@ -344,6 +344,13 @@ class Config:
         if val := os.getenv('HUNTER_VOLUME_SPIKE_MULTIPLIER'):
             config.hunter_volume_spike_multiplier = float(val)
 
+        # DEBUG: Check if we reach here and what values we have
+        print("=" * 80)
+        print("DEBUG: Reached Smart Entry config logging block")
+        print(f"DEBUG: config.smart_entry_enabled = {config.smart_entry_enabled}")
+        print(f"DEBUG: ENV SMART_ENTRY = {os.getenv('SMART_ENTRY')}")
+        print("=" * 80)
+
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
         logger.info(f"Wave limits: max_trades={config.max_trades_per_15min} (fallback), buffer_fixed=+{config.signal_buffer_fixed}")
         logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
