@@ -143,24 +143,33 @@ async def apply_critical_fixes(position_manager):
 
         # FIX: Handle position_locks as Dict[str, asyncio.Lock] instead of set
         # After apply_critical_fixes, position_locks is converted to dict
-        # but original code still uses set methods (.add, .discard)
         lock_key = f"{request.exchange.lower()}_{request.symbol}"
 
-        # Check if already being processed (replaces: if lock_key in self.position_locks)
-        if lock_key in position_manager.position_locks and position_manager.position_locks[lock_key].locked():
-            logger.warning(f"Position already being processed for {request.symbol}")
-            return None
+        # CRITICAL FIX: Check and create lock ONLY if position_locks is a dict
+        # This prevents TypeError when position_locks is temporarily set to set()
+        if isinstance(position_manager.position_locks, dict):
+            # Check if already being processed
+            if lock_key in position_manager.position_locks and position_manager.position_locks[lock_key].locked():
+                logger.warning(f"Position already being processed for {request.symbol}")
+                return None
 
-        # Create lock for this position (replaces: self.position_locks.add(lock_key))
-        if not hasattr(position_manager, '_lock_creation_lock'):
-            position_manager._lock_creation_lock = asyncio.Lock()
+            # Create lock for this position if needed
+            if not hasattr(position_manager, '_lock_creation_lock'):
+                position_manager._lock_creation_lock = asyncio.Lock()
 
-        async with position_manager._lock_creation_lock:
-            if lock_key not in position_manager.position_locks:
-                position_manager.position_locks[lock_key] = asyncio.Lock()
+            async with position_manager._lock_creation_lock:
+                if lock_key not in position_manager.position_locks:
+                    position_manager.position_locks[lock_key] = asyncio.Lock()
 
-        # Acquire the lock
-        async with position_manager.position_locks[lock_key]:
+            # Acquire the lock
+            lock = position_manager.position_locks[lock_key]
+        else:
+            # If position_locks is not a dict (shouldn't happen after fix),
+            # create a temporary lock for this operation
+            logger.warning(f"position_locks is not a dict (type: {type(position_manager.position_locks)}), creating temporary lock")
+            lock = asyncio.Lock()
+
+        async with lock:
             try:
                 # CRITICAL FIX: Removed premature logging - log only after successful creation
                 # This prevents position_created events for positions that fail to open
