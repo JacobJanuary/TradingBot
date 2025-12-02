@@ -753,6 +753,33 @@ class SmartTrailingStopManager:
         else:
             proposed_stop_price = ts.lowest_price * (1 + distance / 100)
         
+        # ============================================================
+        # DEBUG: Log exact values for Emergency Close investigation
+        # ============================================================
+        should_emergency = False
+        if ts.side == 'short':
+            should_emergency = ts.current_price >= proposed_stop_price
+        elif ts.side == 'long':
+            should_emergency = ts.current_price <= proposed_stop_price
+        
+        logger.warning(
+            f"🔧 {ts.symbol}: TS ACTIVATION DEBUG:\n"
+            f"  Side: {ts.side}\n"
+            f"  Entry price: {ts.entry_price:.8f}\n"
+            f"  Current price: {ts.current_price:.8f}\n"
+            f"  {'Lowest' if ts.side == 'short' else 'Highest'} price (peak): "
+            f"{ts.lowest_price:.8f if ts.side == 'short' else ts.highest_price:.8f}\n"
+            f"  Proposed SL: {proposed_stop_price:.8f}\n"
+            f"  Distance (callback): {distance}%\n"
+            f"  Price vs SL diff: "
+            f"{'+' if ts.current_price > proposed_stop_price else ''}{(ts.current_price - proposed_stop_price):.8f}\n"
+            f"  Should Emergency Close: {should_emergency}\n"
+            f"  [SEARCH: ts_activation_debug_{ts.symbol}]"
+        )
+        # ============================================================
+        # END DEBUG
+        # ============================================================
+        
         # Try activation with retries
         for attempt in range(MAX_RETRIES):
             try:
@@ -1397,6 +1424,23 @@ class SmartTrailingStopManager:
             # Determine if SL direction is valid
             is_sl_valid = False
             validation_error = None
+
+            # ============================================================
+            # DEBUG: Log Emergency Close check values
+            # ============================================================
+            logger.debug(
+                f"🔧 {ts.symbol}: Emergency Close check in _update_stop_order:\n"
+                f"  sl_price (ts.current_stop_price): {sl_price:.8f if sl_price else 'None'}\n"
+                f"  current_price (ts.current_price): {current_price:.8f}\n"
+                f"  side: {ts.side}\n"
+                f"  Check (SHORT): current >= sl? "
+                f"{current_price >= sl_price if sl_price and ts.side == 'short' else 'N/A'}\n"
+                f"  Check (LONG): current <= sl? "
+                f"{current_price <= sl_price if sl_price and ts.side == 'long' else 'N/A'}"
+            )
+            # ============================================================
+            # END DEBUG
+            # ============================================================
 
             # NEW: Check for instant price crossing (Emergency Close Condition)
             # If price has already crossed the proposed SL, we must close immediately
