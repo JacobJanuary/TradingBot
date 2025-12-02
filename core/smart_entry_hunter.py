@@ -491,7 +491,8 @@ def _calculate_indicators(df: pd.DataFrame) -> Optional[Dict]:
             'volume_avg': float(latest['volume_avg']) if not pd.isna(latest['volume_avg']) else float(latest['volume']),
             'close': float(latest['close']),
             'open': float(latest['open']),
-            'prev_high': float(prev['high'])
+            'prev_high': float(prev['high']),
+            'prev_low': float(prev['low'])
         }
         
     except Exception as e:
@@ -549,8 +550,34 @@ def _check_entry_criteria(indicators: Dict, direction: str) -> tuple:
                         f"+ Reversal (close > open & close > prev_high)"
                     )
     
-    elif direction == 'SELL':
-        # SELL logic - inverse of BUY (not implemented yet)
-        pass
+    elif direction == 'SELL' or direction == 'SHORT':
+        # Scenario 1: Momentum Breakdown (SHORT)
+        # Price broke below VWAP Lower Band with volume spike
+        if price < vwap_lower:
+            if volume > (volume_spike_multiplier * volume_avg):
+                # MFI should be low (selling pressure)
+                if mfi < (100 - mfi_momentum_threshold):  # e.g., MFI < 50
+                    return (
+                        True,
+                        f"Momentum Breakdown: Price ${price:.4f} < VWAP Lower ${vwap_lower:.4f} "
+                        f"+ Volume {volume:.0f} > {volume_spike_multiplier}x avg "
+                        f"+ MFI {mfi:.1f} < {100 - mfi_momentum_threshold}"
+                    )
+        
+        # Scenario 2: Mean Reversion SHORT (from resistance)
+        # Price touched VWAP (±tolerance%) or VWAP Upper Band
+        vwap_tolerance = vwap * (vwap_tolerance_pct / 100)
+        if abs(price - vwap) <= vwap_tolerance or price >= vwap_upper:
+            # MFI should indicate not overbought (room to fall)
+            if mfi < (100 - mfi_reversion_threshold):  # e.g., MFI < 70
+                # Reversal pattern: Current candle red AND Close < Prev Low
+                prev_low = indicators.get('prev_low', open_price)
+                if close < open_price and close < prev_low:
+                    return (
+                        True,
+                        f"Mean Reversion SHORT: Price ${price:.4f} at VWAP ${vwap:.4f} "
+                        f"+ MFI {mfi:.1f} < {100 - mfi_reversion_threshold} "
+                        f"+ Reversal (close < open & close < prev_low)"
+                    )
     
     return (False, "")
