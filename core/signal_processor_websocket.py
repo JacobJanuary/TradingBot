@@ -993,7 +993,7 @@ class WebSocketSignalProcessor:
             executed = 0
             failed = 0
 
-            for signal_result in process_result.get('successful', []):
+            for idx, signal_result in enumerate(process_result.get('successful', [])):
                 if executed >= max_trades:
                     logger.info(f"✅ {exchange_name_cap}: Target {max_trades} reached, stopping")
                     break
