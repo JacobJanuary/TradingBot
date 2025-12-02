@@ -992,6 +992,7 @@ class WebSocketSignalProcessor:
             # Execute successful signals until target reached
             executed = 0
             failed = 0
+            execution_details = []  # Track execution results for reporting
 
             for idx, signal_result in enumerate(process_result.get('successful', [])):
                 if executed >= max_trades:
