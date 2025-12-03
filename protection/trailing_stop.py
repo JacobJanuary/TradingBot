@@ -753,6 +753,86 @@ class SmartTrailingStopManager:
         else:
             proposed_stop_price = ts.lowest_price * (1 + distance / 100)
         
+        # ============================================================
+        # EMERGENCY CLOSE PRE-CHECK
+        # ============================================================
+        # If price already crossed proposed SL, close immediately
+        # Don't retry - position already lost!
+        #
+        # This prevents:
+        # 1. Binance -2021 errors (order would immediately trigger)
+        # 2. Unprotected positions during retry loops
+        # 3. Unnecessary API calls when result is predetermined
+        
+        should_emergency_close = False
+        if ts.side == 'short' and ts.current_price >= proposed_stop_price:
+            should_emergency_close = True
+        elif ts.side == 'long' and ts.current_price <= proposed_stop_price:
+            should_emergency_close = True
+        
+        if should_emergency_close:
+            logger.error(
+                f"🔴 {ts.symbol}: EMERGENCY - Price crossed proposed SL during activation! "
+                f"side={ts.side}, current={ts.current_price:.8f}, proposed_sl={proposed_stop_price:.8f}. "
+                f"Executing IMMEDIATE MARKET CLOSE (bypassing retry loop). "
+                f"[SEARCH: ts_emergency_close_pre_activation_{ts.symbol}]"
+            )
+            
+            try:
+                # Close position immediately via market order
+                close_side = 'sell' if ts.side == 'long' else 'buy'
+                await self.exchange.create_market_order(
+                    symbol=ts.symbol,
+                    side=close_side,
+                    amount=float(ts.quantity),
+                    params={'reduceOnly': True}
+                )
+                
+                logger.info(f"✅ {ts.symbol}: Emergency market close executed successfully")
+                
+                # Log emergency close event
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.WARNING_RAISED,
+                        {
+                            'warning_type': 'ts_emergency_close_pre_activation',
+                            'symbol': ts.symbol,
+                            'side': ts.side,
+                            'current_price': float(ts.current_price),
+                            'proposed_sl': float(proposed_stop_price),
+                            'entry_price': float(ts.entry_price),
+                            'message': 'Position closed immediately - price crossed SL during activation'
+                        },
+                        symbol=ts.symbol,
+                        exchange=self.exchange_name,
+                        severity='ERROR'
+                    )
+                
+                # Return None - don't activate TS, position closed
+                return None
+                
+            except Exception as e:
+                error_msg = str(e)
+                # Check for "ReduceOnly rejected" - position already closed
+                if "-2022" in error_msg or "ReduceOnly" in error_msg:
+                    logger.info(
+                        f"ℹ️ {ts.symbol}: Emergency close skipped - position already closed "
+                        f"(ReduceOnly rejected). SL likely triggered by exchange."
+                    )
+                    return None
+                
+                logger.error(
+                    f"❌ {ts.symbol}: Emergency market close FAILED: {e}. "
+                    f"Will attempt normal TS activation (may fail with -2021).",
+                    exc_info=True
+                )
+                # Fall through to normal retry logic
+        
+        # ============================================================
+        # END EMERGENCY CLOSE PRE-CHECK
+        # ============================================================
+        
         # Try activation with retries
         for attempt in range(MAX_RETRIES):
             try:
