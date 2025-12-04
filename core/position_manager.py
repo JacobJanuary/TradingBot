@@ -145,6 +145,8 @@ class PositionRequest:
     # Optional overrides
     position_size_usd: Optional[float] = None
     stop_loss_percent: Optional[float] = None
+    trailing_activation_percent: Optional[float] = None  # NEW: Per-signal override
+    trailing_callback_percent: Optional[float] = None    # NEW: Per-signal override
     # take_profit_percent: Optional[float] = None  # DEPRECATED - Using Smart Trailing Stop
 
 
@@ -631,21 +633,9 @@ class PositionManager:
 
             # Process each exchange with its trailing params
             for exchange_name, exchange_positions in positions_by_exchange.items():
-                # Load trailing params from monitoring.params (CRITICAL FIX)
-                exchange_params = None
-                trailing_activation_percent = None
-                trailing_callback_percent = None
-
-                try:
-                    exchange_params = await self.repository.get_params_by_exchange_name(exchange_name)
-                except Exception as e:
-                    logger.warning(f"⚠️  Failed to load exchange params for {exchange_name}: {e}")
-
-                if exchange_params:
-                    if exchange_params.get('trailing_activation_filter') is not None:
-                        trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
-                    if exchange_params.get('trailing_distance_filter') is not None:
-                        trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
+                # MIGRATION: No longer loading global params from monitoring.params
+                # We will use per-position parameters stored in the position object
+                pass
 
                 # Fallback to config if not in DB
                 if trailing_activation_percent is None:
@@ -680,7 +670,18 @@ class PositionManager:
                                 logger.info(f"✅ {symbol}: TS state restored from DB")
                             else:
                                 # No state in DB - create new trailing stop
-                                # FIX: Now using correctly loaded trailing params
+                                # FIX: Use per-position params or fallback to config
+                                
+                                # Get params from position object (loaded from DB)
+                                pos_activation = getattr(position, 'trailing_activation_percent', None)
+                                pos_callback = getattr(position, 'trailing_callback_percent', None)
+                                
+                                # Fallback to config if not in position
+                                if pos_activation is None:
+                                    pos_activation = float(self.config.trailing_activation_percent)
+                                if pos_callback is None:
+                                    pos_callback = float(self.config.trailing_callback_percent)
+
                                 await asyncio.wait_for(
                                     trailing_manager.create_trailing_stop(
                                         symbol=symbol,
@@ -688,8 +689,8 @@ class PositionManager:
                                         entry_price=to_decimal(position.entry_price),
                                         quantity=to_decimal(safe_get_attr(position, 'quantity', 'qty', 'size', default=0)),
                                         position_params={
-                                            'trailing_activation_percent': trailing_activation_percent,
-                                            'trailing_callback_percent': trailing_callback_percent
+                                            'trailing_activation_percent': pos_activation,
+                                            'trailing_callback_percent': pos_callback
                                         }
                                     ),
                                     timeout=10.0
@@ -1568,15 +1569,14 @@ class PositionManager:
                 logger.info(f"🔍 DEBUG: Trade created with ID={trade_id} for {symbol}")
 
                 logger.info(f"🔍 DEBUG: About to create position for {symbol}, quantity={position.quantity}")
-                position_id = await self.repository.create_position({
-                    'symbol': symbol,
-                    'exchange': exchange_name,
-                    'side': position.side,
-                    'quantity': position.quantity,
-                    'entry_price': position.entry_price,
-                    'trailing_activation_percent': trailing_activation_percent,
-                    'trailing_callback_percent': trailing_callback_percent
-                })
+                position = await AtomicPositionManager(self.repository, self.config, self.exchanges).open_position_atomic(
+        request=request,
+        quantity=quantity,
+        exchange_manager=exchange_manager,
+        # NEW: Pass per-signal parameters from request
+        trailing_activation_percent=request.trailing_activation_percent,
+        trailing_callback_percent=request.trailing_callback_percent,
+    )
                 logger.info(f"🔍 DEBUG: Position created with ID={position_id} for {symbol}")
 
                 # Log position created event (legacy path)

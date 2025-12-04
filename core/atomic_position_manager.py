@@ -466,25 +466,21 @@ class AtomicPositionManager:
 
     async def open_position_atomic(
         self,
-        signal_id: int,
-        symbol: str,
-        exchange: str,
-        side: str,
+        request: Any,  # PositionRequest
         quantity: float,
-        entry_price: float,
-        stop_loss_percent: float  # FIX: Changed from stop_loss_price to stop_loss_percent
+        exchange_manager: Dict[str, Any],
+        trailing_activation_percent: Optional[float] = None,
+        trailing_callback_percent: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Атомарное создание позиции с гарантированным stop-loss
 
         Args:
-            signal_id: ID сигнала
-            symbol: Торговый символ
-            exchange: Название биржи
-            side: 'buy' или 'sell'
+            request: Объект запроса позиции (PositionRequest)
             quantity: Размер позиции
-            entry_price: Цена входа (сигнальная, может отличаться от execution)
-            stop_loss_percent: Процент stop-loss (будет пересчитан от execution price)
+            exchange_manager: Словарь менеджеров бирж
+            trailing_activation_percent: Процент активации трейлинга (per-signal)
+            trailing_callback_percent: Процент отката трейлинга (per-signal)
 
         Returns:
             Dict с информацией о позиции или None при ошибке
@@ -492,6 +488,14 @@ class AtomicPositionManager:
         Raises:
             AtomicPositionError: При нарушении атомарности
         """
+        # Extract params from request
+        signal_id = request.signal_id
+        symbol = request.symbol
+        exchange = request.exchange
+        side = request.side
+        entry_price = float(request.entry_price)
+        stop_loss_percent = request.stop_loss_percent
+
         operation_id = f"pos_{symbol}_{now_utc().timestamp()}"
 
         position_id = None
@@ -501,45 +505,22 @@ class AtomicPositionManager:
 
         async with self.atomic_operation(operation_id):
             try:
-                # Step 0.5: Load trailing params from monitoring.params (PHASE 3)
-                exchange_params = None
-                trailing_activation_percent = None
-                trailing_callback_percent = None
+                # Step 0.5: Use passed trailing params (MIGRATION: No longer querying monitoring.params)
+                # We use the values passed from PositionRequest (per-signal)
 
-                try:
-                    exchange_params = await self.repository.get_params_by_exchange_name(exchange)
-                except Exception as e:
-                    logger.warning(f"⚠️  Failed to load exchange params for {exchange}: {e}")
-
-                if exchange_params:
-                    # Try to get trailing params from DB
-                    if exchange_params.get('trailing_activation_filter') is not None:
-                        trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
-                        logger.debug(
-                            f"📊 Using trailing_activation_filter from DB for {exchange}: "
-                            f"{trailing_activation_percent}%"
-                        )
-
-                    if exchange_params.get('trailing_distance_filter') is not None:
-                        trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
-                        logger.debug(
-                            f"📊 Using trailing_distance_filter from DB for {exchange}: "
-                            f"{trailing_callback_percent}%"
-                        )
-
-                # Fallback to config if not in DB
+                # Fallback to config if not provided in signal
                 if self.config:
                     if trailing_activation_percent is None:
                         trailing_activation_percent = float(self.config.trailing_activation_percent)
                         logger.warning(
-                            f"⚠️  trailing_activation_filter not in DB for {exchange}, "
+                            f"⚠️  trailing_activation_percent not provided for {exchange}, "
                             f"using .env fallback: {trailing_activation_percent}%"
                         )
 
                     if trailing_callback_percent is None:
                         trailing_callback_percent = float(self.config.trailing_callback_percent)
                         logger.warning(
-                            f"⚠️  trailing_distance_filter not in DB for {exchange}, "
+                            f"⚠️  trailing_callback_percent not provided for {exchange}, "
                             f"using .env fallback: {trailing_callback_percent}%"
                         )
 
