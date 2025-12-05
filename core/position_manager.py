@@ -1341,14 +1341,11 @@ class PositionManager:
                 )
 
                 # Execute atomic creation
+                # Execute atomic creation
                 atomic_result = await atomic_manager.open_position_atomic(
-                    signal_id=request.signal_id,
-                    symbol=symbol,
-                    exchange=exchange_name,
-                    side=order_side,
+                    request=request,
                     quantity=float(quantity),
-                    entry_price=float(request.entry_price),
-                    stop_loss_percent=float(stop_loss_percent)  # FIX: Pass percent, not price
+                    exchange_manager=self.exchanges
                 )
 
                 if atomic_result:
