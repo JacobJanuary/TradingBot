@@ -333,12 +333,42 @@ async def monitor_entry_conditions(
                     from core.position_manager import PositionRequest
                     from decimal import Decimal
                     
+                    # CRITICAL FIX: Extract SL/TS parameters from signal
+                    # Hunter MUST pass signal params to prevent .env fallback
+                    stop_loss_pct = None
+                    trailing_activation_pct = None
+                    trailing_callback_pct = None
+                    
+                    # Check root level
+                    stop_loss_pct = signal.get('stop_loss_filter') or signal.get('stop_loss_percent')
+                    trailing_activation_pct = signal.get('trailing_activation_filter') or signal.get('trailing_activation_percent')
+                    trailing_callback_pct = signal.get('trailing_distance_filter') or signal.get('trailing_callback_percent')
+                    
+                    # Fallback to filter_params
+                    if not stop_loss_pct or not trailing_activation_pct:
+                        filter_params = signal.get('filter_params') or {}
+                        if not stop_loss_pct:
+                            stop_loss_pct = filter_params.get('stop_loss_filter') or filter_params.get('stop_loss_percent')
+                        if not trailing_activation_pct:
+                            trailing_activation_pct = filter_params.get('trailing_activation_filter') or filter_params.get('trailing_activation_percent')
+                        if not trailing_callback_pct:
+                            trailing_callback_pct = filter_params.get('trailing_distance_filter') or filter_params.get('trailing_callback_percent')
+                    
+                    logger.info(
+                        f"🔍 Hunter extracted params for {symbol}: "
+                        f"SL={stop_loss_pct}, TS_Act={trailing_activation_pct}, TS_Call={trailing_callback_pct}"
+                    )
+                    
                     request = PositionRequest(
                         signal_id=signal.get('id'),
                         symbol=symbol,
                         exchange=exchange,
                         side=direction,
-                        entry_price=Decimal(str(entry_price))
+                        entry_price=Decimal(str(entry_price)),
+                        # CRITICAL: Pass signal parameters to prevent .env fallback
+                        stop_loss_percent=float(stop_loss_pct) if stop_loss_pct else None,
+                        trailing_activation_percent=float(trailing_activation_pct) if trailing_activation_pct else None,
+                        trailing_callback_percent=float(trailing_callback_pct) if trailing_callback_pct else None
                     )
                     
                     result = await position_manager.open_position(request)
