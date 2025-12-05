@@ -13,7 +13,10 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 # Load .env file IMMEDIATELY
-load_dotenv(override=True)
+# Load .env file from project root explicitly
+# This prevents issues where CWD is different (e.g. systemd, cron)
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(dotenv_path=env_path, override=True)
 
 
 @dataclass
