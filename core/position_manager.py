@@ -1283,20 +1283,20 @@ class PositionManager:
                 to_decimal(request.entry_price), position_side, stop_loss_percent
             )
 
-            # Get trailing params from monitoring.params
-            trailing_activation_percent = None
-            trailing_callback_percent = None
+            # Get trailing params (Prioritize REQUEST -> DB -> ENV)
+            trailing_activation_percent = request.trailing_activation_percent
+            trailing_callback_percent = request.trailing_callback_percent
 
+            # If not in request, try monitoring.params (DB)
             if exchange_params:
-                # Try to get trailing params from DB
-                if exchange_params.get('trailing_activation_filter') is not None:
+                if trailing_activation_percent is None and exchange_params.get('trailing_activation_filter') is not None:
                     trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
                     logger.debug(
                         f"📊 Using trailing_activation_filter from DB for {request.exchange}: "
                         f"{trailing_activation_percent}%"
                     )
 
-                if exchange_params.get('trailing_distance_filter') is not None:
+                if trailing_callback_percent is None and exchange_params.get('trailing_distance_filter') is not None:
                     trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
                     logger.debug(
                         f"📊 Using trailing_distance_filter from DB for {request.exchange}: "
