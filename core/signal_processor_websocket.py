@@ -1062,6 +1062,13 @@ class WebSocketSignalProcessor:
                              if trailing_callback_pct is None:
                                  trailing_callback_pct = filter_params.get('trailing_distance_filter')
 
+                        # DEBUG LOGGING for verification
+                        logger.info(
+                            f"🔍 Signal #{signal_data.get('id')} params extraction: "
+                            f"SL={stop_loss_pct}, TS_Act={trailing_activation_pct}, TS_Call={trailing_callback_pct} "
+                            f"(Keys in signal: {list(signal_data.keys())})"
+                        )
+
                         position_request = PositionRequest(
                             signal_id=signal_data.get('id') or signal_data.get('signal_id'),
                             symbol=symbol,
