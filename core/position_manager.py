@@ -1329,6 +1329,11 @@ class PositionManager:
             try:
                 # Initialize atomic manager
                 from core.stop_loss_manager import StopLossManager
+                
+                # CRITICAL FIX: Update request with resolved SL percent/price
+                # If request.stop_loss_percent was None, we calculated fallback above but didn't update request
+                request.stop_loss_percent = float(stop_loss_percent)
+                
                 # ✅ FIX #1.5a: Pass position_manager for TS-awareness
                 sl_manager = StopLossManager(exchange.exchange, exchange_name, position_manager=self)
 

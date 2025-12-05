@@ -496,6 +496,12 @@ class AtomicPositionManager:
         entry_price = float(request.entry_price)
         stop_loss_percent = request.stop_loss_percent
 
+        # Extract trailing params from request if not provided in args
+        if trailing_activation_percent is None:
+            trailing_activation_percent = request.trailing_activation_percent
+        if trailing_callback_percent is None:
+            trailing_callback_percent = request.trailing_callback_percent
+
         operation_id = f"pos_{symbol}_{now_utc().timestamp()}"
 
         position_id = None
