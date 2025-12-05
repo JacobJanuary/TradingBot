@@ -638,21 +638,9 @@ class PositionManager:
                 positions_by_exchange[position.exchange].append((symbol, position))
 
             # Process each exchange with its trailing params
+            # Process each exchange with its trailing params
             for exchange_name, exchange_positions in positions_by_exchange.items():
-                # MIGRATION: No longer loading global params from monitoring.params
-                # We will use per-position parameters stored in the position object
-                pass
-
-                # Fallback to config if not in DB
-                if trailing_activation_percent is None:
-                    trailing_activation_percent = float(self.config.trailing_activation_percent)
-                if trailing_callback_percent is None:
-                    trailing_callback_percent = float(self.config.trailing_callback_percent)
-
-                logger.debug(
-                    f"📊 {exchange_name}: Using trailing params: "
-                    f"activation={trailing_activation_percent}%, callback={trailing_callback_percent}%"
-                )
+                logger.debug(f"🔍 Initializing trailing stops for {exchange_name}...")
 
                 # Initialize TS for all positions on this exchange
                 for symbol, position in exchange_positions:
