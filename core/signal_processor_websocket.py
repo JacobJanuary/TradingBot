@@ -1283,6 +1283,26 @@ class WebSocketSignalProcessor:
                 logger.error(f"Invalid signal action: {validated_signal.action}")
                 return False
             
+            # ═══════════════════════════════════════════════════
+            # SMART ENTRY INTEGRATION (Restored)
+            # ═══════════════════════════════════════════════════
+            if self.config.smart_entry_enabled:
+                try:
+                    from core.smart_entry_hunter import launch_hunter
+                    
+                    # Launch Hunter (Fire & Forget)
+                    launch_hunter(
+                        signal=signal,
+                        exchange_manager=exchange_manager,
+                        position_manager=self.position_manager
+                    )
+                    logger.info(f"🎯 Smart Entry Hunter launched for {symbol} (direct execution)")
+                    return True # Handled by Hunter
+                        
+                except Exception as e:
+                    logger.error(f"❌ Smart Entry launch failed for {symbol}: {e}")
+                    # Fallback to immediate execution
+            
             # Create position request (dataclass from position_manager)
             from core.position_manager import PositionRequest
             
