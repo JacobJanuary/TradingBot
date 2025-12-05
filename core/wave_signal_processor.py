@@ -115,6 +115,8 @@ class WaveSignalProcessor:
             f"🌊 Starting wave processing: {len(signals)} signals at "
             f"timestamp {wave_id}"
         )
+        # DEBUG CONFIGURATION
+        logger.info(f"🔧 CONFIG CHECK: SMART_ENTRY={self.config.smart_entry_enabled} (Timeout={self.config.smart_entry_timeout_minutes}m)")
 
         # ✅ ГЛАВНОЕ ИЗМЕНЕНИЕ: используем try-except с continue
         # Based on: Freqtrade pattern for batch processing
