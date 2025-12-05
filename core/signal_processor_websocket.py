@@ -1046,12 +1046,32 @@ class WebSocketSignalProcessor:
                             failed += 1
                             continue
 
+                        # Extract filter params
+                        # CRITICAL FIX: Server sends params at root level, not inside filter_params
+                        stop_loss_pct = signal_data.get('stop_loss_filter')
+                        trailing_activation_pct = signal_data.get('trailing_activation_filter')
+                        trailing_callback_pct = signal_data.get('trailing_distance_filter')
+                        
+                        # Fallback to filter_params if not at root
+                        if stop_loss_pct is None or trailing_activation_pct is None:
+                             filter_params = signal_data.get('filter_params') or {}
+                             if stop_loss_pct is None:
+                                 stop_loss_pct = filter_params.get('stop_loss_filter')
+                             if trailing_activation_pct is None:
+                                 trailing_activation_pct = filter_params.get('trailing_activation_filter')
+                             if trailing_callback_pct is None:
+                                 trailing_callback_pct = filter_params.get('trailing_distance_filter')
+
                         position_request = PositionRequest(
                             signal_id=signal_data.get('id') or signal_data.get('signal_id'),
                             symbol=symbol,
                             exchange=exchange_name,
                             side=side,
-                            entry_price=entry_price
+                            entry_price=entry_price,
+                            # Pass extracted parameters
+                            stop_loss_percent=float(stop_loss_pct) if stop_loss_pct is not None else None,
+                            trailing_activation_percent=float(trailing_activation_pct) if trailing_activation_pct is not None else None,
+                            trailing_callback_percent=float(trailing_callback_pct) if trailing_callback_pct is not None else None
                         )
 
                         # Open position
