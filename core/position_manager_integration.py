@@ -98,12 +98,29 @@ async def apply_critical_fixes(position_manager):
             return result
 
     # Patch close_position with proper locking
-    async def patched_close_position(position_id: int, reason: str = "manual"):
+    async def patched_close_position(*args, **kwargs):
         """Patched version with LockManager"""
-        resource = f"position_close_{position_id}"
-
+        # Determine position_id (arg 0 or kwarg 'position_id' or from 'symbol' if logic requires)
+        # Original close_position(self, symbol: str, close_price: float, realized_pnl: float, reason: str)
+        # BUT this patch seemed to assume (position_id, reason).
+        # Let's handle generic args to be safe and compatible with whatever usage.
+        
+        position_id = kwargs.get('position_id')
+        symbol = kwargs.get('symbol')
+        reason = kwargs.get('reason', 'manual')
+        
+        # If positional args used, try to guess (legacy support)
+        if args:
+            if len(args) > 0 and isinstance(args[0], int):
+                position_id = args[0]
+            elif len(args) > 0 and isinstance(args[0], str):
+                symbol = args[0]
+                
+        # Prefer symbol for locking if position_id not available (close_position often called by symbol)
+        lock_key = f"position_close_{position_id if position_id else symbol}"
+        
         async with lock_manager.acquire_lock(
-            resource=resource,
+            resource=lock_key,
             operation="close_position",
             timeout=60.0
         ):
@@ -112,13 +129,17 @@ async def apply_critical_fixes(position_manager):
                 EventType.POSITION_CLOSED,
                 {
                     'position_id': position_id,
-                    'reason': reason
+                    'symbol': symbol,
+                    'reason': reason,
+                    'close_price': kwargs.get('close_price'),
+                    'realized_pnl': kwargs.get('realized_pnl')
                 },
-                position_id=position_id
+                position_id=position_id,
+                symbol=symbol
             )
 
             # Call original method
-            return await original_close_position(position_id, reason)
+            return await original_close_position(*args, **kwargs)
 
     # Apply patches
     position_manager._set_stop_loss = patched_set_stop_loss
