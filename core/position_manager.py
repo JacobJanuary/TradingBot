@@ -168,6 +168,10 @@ class PositionState:
 
     has_trailing_stop: bool = False
     trailing_activated: bool = False
+    
+    # NEW: Persisted TS params
+    trailing_activation_percent: Optional[float] = None
+    trailing_callback_percent: Optional[float] = None
 
     # NEW: SL ownership tracking
     sl_managed_by: Optional[str] = None  # 'protection' | 'trailing_stop' | None
@@ -446,6 +450,8 @@ class PositionManager:
                     stop_loss_price=pos['stop_loss'],
                     has_trailing_stop=pos['has_trailing_stop'] or False,
                     trailing_activated=pos['trailing_activated'] or False,
+                    trailing_activation_percent=pos.get('trailing_activation_percent'),
+                    trailing_callback_percent=pos.get('trailing_callback_percent'),
                     opened_at=opened_at,
                     age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
                 )
