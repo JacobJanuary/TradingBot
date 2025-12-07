@@ -297,6 +297,17 @@ async def monitor_entry_conditions(
                 exchange_manager, symbol, timeframe='1m', limit=50
             )
             if not candles or len(candles) < 30:
+                # CRITICAL FIX: Check timeout BEFORE retry to prevent infinite loop
+                elapsed = datetime.now(timezone.utc) - start_time
+                if elapsed > timeout_duration:
+                    logger.info(f"⏱️ Hunter timeout for {symbol} ({timeout_minutes} min) - failed to fetch candles")
+                    return {
+                        'status': 'timeout',
+                        'symbol': symbol,
+                        'iterations': iteration,
+                        'reason': 'candle_fetch_failed'
+                    }
+                
                 logger.debug(f"Insufficient candles for {symbol}, retrying...")
                 await asyncio.sleep(check_interval)
                 continue
@@ -307,6 +318,17 @@ async def monitor_entry_conditions(
             # 3. Calculate indicators
             indicators = _calculate_indicators(df)
             if not indicators:
+                # CRITICAL FIX: Check timeout BEFORE retry
+                elapsed = datetime.now(timezone.utc) - start_time
+                if elapsed > timeout_duration:
+                    logger.info(f"⏱️ Hunter timeout for {symbol} ({timeout_minutes} min) - indicator calculation failed")
+                    return {
+                        'status': 'timeout',
+                        'symbol': symbol,
+                        'iterations': iteration,
+                        'reason': 'indicator_calculation_failed'
+                    }
+                
                 logger.debug(f"Indicator calculation failed for {symbol}, retrying...")
                 await asyncio.sleep(check_interval)
                 continue
@@ -317,6 +339,15 @@ async def monitor_entry_conditions(
                 logger.info(
                     f"📍 {symbol} initial price: ${initial_price:.6f} "
                     f"(starting monitoring)"
+                )
+            
+            # HEARTBEAT: Log every 5 minutes to show Hunter is alive
+            if iteration % 75 == 0:  # 75 iterations * 4s = 300s = 5min
+                elapsed = datetime.now(timezone.utc) - start_time
+                logger.info(
+                    f"🔍 Hunter monitoring {symbol}: iteration {iteration}, "
+                    f"elapsed {elapsed.total_seconds():.0f}s, "
+                    f"price ${indicators['current_price']:.6f}"
                 )
             
             # 4. Check entry scenarios
