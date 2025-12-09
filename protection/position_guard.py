@@ -746,12 +746,19 @@ class PositionGuard:
             # Place wide stop loss as last resort
             stop_price = Decimal(str(position.entry_price)) * Decimal('0.95')
             
-            await self.exchange_manager.create_order(
+            # DECEMBER 2025 MIGRATION: Use StopLossManager for Algo API
+            # Old create_order with type='stop_market' returns error -4120
+            from core.stop_loss_manager import StopLossManager
+            sl_manager = StopLossManager(
+                self.exchange_manager.exchange,
+                self.exchange_manager.name
+            )
+            
+            await sl_manager.set_stop_loss(
                 symbol=position.symbol,
-                type='stop_market',
                 side='sell' if position.side == 'long' else 'buy',
-                amount=abs(position.quantity),
-                params={'stopPrice': float(stop_price), 'reduceOnly': True}
+                amount=Decimal(str(abs(position.quantity))),
+                stop_price=stop_price
             )
             
             logger.warning(f"Emergency protection activated for {position.id}")

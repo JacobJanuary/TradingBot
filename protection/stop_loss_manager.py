@@ -503,22 +503,51 @@ class StopLossManager:
         """Place single stop loss order"""
         
         try:
-            params = {
-                'stopPrice': float(stop.price),
-                'reduceOnly': True
-            }
-            
             # Determine order side (opposite of position)
-            # This assumes we're closing the position
             order_side = 'sell' if stop.quantity > 0 else 'buy'
             
-            order = await self.exchange_manager.create_order(
-                symbol=symbol,
-                type='stop_market',
-                side=order_side,
-                amount=abs(float(stop.quantity)),
-                params=params
-            )
+            # DECEMBER 2025 MIGRATION: Use core StopLossManager for Binance
+            # Old create_order with type='stop_market' returns error -4120
+            exchange_name = getattr(self.exchange_manager, 'name', 'unknown')
+            
+            if exchange_name == 'binance':
+                from core.stop_loss_manager import StopLossManager as CoreSLManager
+                core_sl = CoreSLManager(
+                    self.exchange_manager.exchange,
+                    exchange_name
+                )
+                
+                result = await core_sl.set_stop_loss(
+                    symbol=symbol,
+                    side=order_side,
+                    amount=Decimal(str(abs(float(stop.quantity)))),
+                    stop_price=stop.price
+                )
+                
+                # Convert to expected format
+                order = {
+                    'id': str(result.get('algoId', 'algo_order')),
+                    'symbol': symbol,
+                    'type': 'STOP_MARKET',
+                    'side': order_side,
+                    'price': float(stop.price),
+                    'amount': abs(float(stop.quantity)),
+                    'info': result
+                }
+            else:
+                # For other exchanges, use standard method
+                params = {
+                    'stopPrice': float(stop.price),
+                    'reduceOnly': True
+                }
+                
+                order = await self.exchange_manager.create_order(
+                    symbol=symbol,
+                    type='stop_market',
+                    side=order_side,
+                    amount=abs(float(stop.quantity)),
+                    params=params
+                )
             
             return order
             

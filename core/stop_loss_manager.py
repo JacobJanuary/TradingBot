@@ -15,6 +15,7 @@
 import logging
 from typing import Optional, Dict, Tuple, List
 from decimal import Decimal
+import asyncio
 import ccxt
 from core.event_logger import get_event_logger, EventType
 
@@ -236,7 +237,10 @@ class StopLossManager:
             if self.exchange_name == 'bybit':
                 return await self._set_bybit_stop_loss(symbol, stop_price)
             else:
-                return await self._set_generic_stop_loss(symbol, side, amount, stop_price)
+                # DECEMBER 2025 MIGRATION: ALL Binance symbols now use Algo API
+                # Old standard API returns error -4120 for all conditional orders
+                # No need for fallback - directly use new Algo Order endpoint
+                return await self._set_binance_stop_loss_algo(symbol, side, amount, stop_price)
 
         except Exception as e:
             self.logger.error(f"Failed to set Stop Loss for {symbol}: {e}")
@@ -455,6 +459,140 @@ class StopLossManager:
                         severity='ERROR'
                     )
 
+            raise
+
+
+
+    async def _set_binance_stop_loss_algo(
+        self,
+        symbol: str,
+        side: str,
+        amount: Decimal,
+        stop_price: Decimal
+    ) -> Dict:
+        """
+        Place stop-loss using NEW Binance Algo Order API (December 2025 migration).
+        
+        IMPORTANT: As of December 9, 2025, ALL conditional orders (STOP_MARKET, etc.)
+        have been migrated to the Algo Service. The old /fapi/v1/order endpoint
+        now returns error -4120 for these order types.
+        
+        New API Endpoint: POST /fapi/v1/algoOrder
+        Documentation: https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/New-Algo-Order
+        
+        Args:
+            symbol: CCXT unified symbol (e.g., 'BTC/USDT:USDT')
+            side: 'sell' for long, 'buy' for short
+            amount: Position size
+            stop_price: Stop loss trigger price
+            
+        Returns:
+            Dict with algo order information including algoId
+        """
+        from decimal import Decimal
+        
+        # Format symbol (remove slash and :USDT suffix for Binance)
+        binance_symbol = symbol.replace('/', '').replace(':USDT', '')
+        
+        # Format price with exchange precision
+        final_stop_price = float(stop_price)
+        final_stop_price = self.exchange.price_to_precision(symbol, final_stop_price)
+        
+        # Prepare Algo API parameters (NEW format for December 2025 migration)
+        params = {
+            'algoType': 'CONDITIONAL',  # Required for conditional orders
+            'symbol': binance_symbol,
+            'side': side.upper(),
+            'type': 'STOP_MARKET',  # Order type within algo
+            'triggerPrice': str(final_stop_price),  # Note: triggerPrice, not stopPrice!
+            'quantity': str(float(amount)),
+            'reduceOnly': 'true',  # String, not boolean
+            'workingType': 'CONTRACT_PRICE',  # Trigger based on contract price
+            'priceProtect': 'FALSE',  # String, not boolean
+            'timeInForce': 'GTC',  # Good Till Cancel
+            'timestamp': self.exchange.milliseconds()  # Required
+        }
+        
+        self.logger.info(
+            f"📊 Creating Algo SL (NEW API) for {symbol}: trigger={final_stop_price}, "
+            f"side={side}, qty={amount}"
+        )
+        
+        try:
+            # CRITICAL: Use NEW Algo Order endpoint (December 2025 migration)
+            # Method: fapiPrivatePostAlgoOrder (verified in CCXT 4.5.26)
+            response = await self.exchange.fapiPrivatePostAlgoOrder(params)
+            
+            # Extract algoId from response
+            algo_id = response.get('algoId')
+            
+            if not algo_id:
+                raise Exception(f"Algo API returned no algoId: {response}")
+            
+            self.logger.info(f"✅ Algo Stop Loss created: algoId={algo_id}")
+            
+            # Verify order was placed (optional, wait 2 seconds)
+            await asyncio.sleep(2)
+            try:
+                verify_response = await self.exchange.fapiPrivateGetOpenAlgoOrders({
+                    'symbol': binance_symbol
+                })
+                
+                # Response is a list of orders
+                found = any(o.get('algoId') == algo_id for o in verify_response)
+                if found:
+                    self.logger.info(f"✅ Verified: Algo order {algo_id} is active")
+                else:
+                    self.logger.warning(f"⚠️ Algo order {algo_id} not found in open orders (may still be valid)")
+            except Exception as verify_error:
+                self.logger.warning(f"⚠️ Could not verify algo order: {verify_error}")
+            
+            # Log event
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.STOP_LOSS_PLACED,
+                    {
+                        'symbol': symbol,
+                        'exchange': self.exchange_name,
+                        'trigger_price': float(final_stop_price),
+                        'algo_id': algo_id,
+                        'method': 'algo_conditional',
+                        'side': side,
+                        'api_version': 'v2_dec2025'
+                    },
+                    symbol=symbol,
+                    exchange=self.exchange_name,
+                    severity='INFO'
+                )
+            
+            return {
+                'status': 'created',
+                'triggerPrice': float(final_stop_price),
+                'algoId': algo_id,
+                'method': 'algo_conditional',
+                'info': response
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create Algo SL for {symbol}: {e}")
+            
+            # Log error event
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.STOP_LOSS_ERROR,
+                    {
+                        'symbol': symbol,
+                        'exchange': self.exchange_name,
+                        'trigger_price': float(stop_price),
+                        'error': str(e),
+                        'method': 'algo_conditional'
+                    },
+                    symbol=symbol,
+                    exchange=self.exchange_name,
+                    severity='ERROR'
+                )
             raise
 
     async def _set_generic_stop_loss(

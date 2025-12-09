@@ -648,7 +648,11 @@ class ExchangeManager:
                                      stop_price: Decimal, reduce_only: bool = True) -> OrderResult:
         """
         Create stop loss order for futures
-        Based on freqtrade and ccxt documentation for Binance futures
+        
+        DECEMBER 2025 MIGRATION:
+        - Binance: Uses StopLossManager (Algo API)
+        - Bybit: Uses position-attached SL
+        - Others: Uses generic CCXT
         """
         try:
             # CRITICAL: Validate and adjust amount to prevent Binance error -4005
@@ -656,28 +660,34 @@ class ExchangeManager:
 
             # Binance futures stop loss implementation
             if self.name == 'binance':
-                # For Binance futures, use STOP_MARKET order type
-                # Build params with enforced reduceOnly
-                params = {
-                    'stopPrice': float(stop_price),
-                    'reduceOnly': True,  # CRITICAL: Always True for futures SL
-                    'workingType': 'CONTRACT_PRICE'  # Use last price as trigger
-                }
-
-                # Validation logging
-                if not params.get('reduceOnly'):
-                    logger.critical(f"🚨 reduceOnly not set for Binance SL on {symbol}!")
-                    params['reduceOnly'] = True
-
-                order = await self.rate_limiter.execute_request(
-                    self.exchange.create_order,
+                # DECEMBER 2025 MIGRATION: Use StopLossManager for Algo API
+                # Old create_order with type='STOP_MARKET' returns error -4120
+                from core.stop_loss_manager import StopLossManager
+                sl_manager = StopLossManager(self.exchange, self.name)
+                
+                result = await sl_manager.set_stop_loss(
                     symbol=symbol,
-                    type='STOP_MARKET',  # Correct type for Binance futures stop loss
-                    side=side.lower(),
-                    amount=validated_amount,
-                    price=None,  # No price needed for STOP_MARKET
-                    params=params
+                    side=side,
+                    amount=Decimal(str(validated_amount)),
+                    stop_price=stop_price
                 )
+                
+                # Convert to OrderResult format for compatibility
+                order = {
+                    'id': str(result.get('algoId', 'algo_order')),
+                    'symbol': symbol,
+                    'type': 'STOP_MARKET',
+                    'side': side,
+                    'price': float(stop_price),
+                    'stopPrice': float(stop_price),
+                    'amount': validated_amount,
+                    'filled': 0.0,
+                    'remaining': validated_amount,
+                    'status': 'open',
+                    'timestamp': None,
+                    'info': result
+                }
+                
             elif self.name == 'bybit':
                 # CRITICAL FIX: Use position-attached stop loss instead of conditional order
                 # This prevents "Insufficient balance" error as it doesn't require margin
@@ -1233,18 +1243,27 @@ class ExchangeManager:
 
             close_side = 'SELL' if position_side == 'long' else 'BUY'
 
+            # DECEMBER 2025 MIGRATION: Use NEW Algo Order API
+            # Old create_order with type='STOP_MARKET' returns error -4120
+            binance_symbol = symbol.replace('/', '').replace(':USDT', '')
+            
+            params = {
+                'algoType': 'CONDITIONAL',
+                'symbol': binance_symbol,
+                'side': close_side,
+                'type': 'STOP_MARKET',
+                'triggerPrice': str(new_sl_price),
+                'quantity': str(amount),
+                'reduceOnly': 'true',
+                'workingType': 'CONTRACT_PRICE',
+                'priceProtect': 'FALSE',
+                'timeInForce': 'GTC',
+                'timestamp': self.exchange.milliseconds()
+            }
+
             new_order = await self.rate_limiter.execute_request(
-                self.exchange.create_order,
-                symbol=symbol,
-                type='STOP_MARKET',
-                side=close_side,
-                amount=amount,
-                price=None,
-                params={
-                    'stopPrice': new_sl_price,
-                    'reduceOnly': True,
-                    'workingType': 'CONTRACT_PRICE'
-                }
+                self.exchange.fapiPrivatePostAlgoOrder,
+                params
             )
 
             result['create_time_ms'] = int((now_utc() - create_start).total_seconds() * 1000)
