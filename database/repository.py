@@ -394,8 +394,9 @@ class Repository:
                 symbol, exchange, side, quantity,
                 entry_price, status, has_trailing_stop,
                 trailing_activation_percent,
-                trailing_callback_percent
-            ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE, $6, $7)
+                trailing_callback_percent,
+                signal_stop_loss_percent
+            ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE, $6, $7, $8)
             RETURNING id
         """
 
@@ -438,7 +439,8 @@ class Repository:
                         position_data['quantity'],
                         position_data['entry_price'],
                         position_data.get('trailing_activation_percent'),
-                        position_data.get('trailing_callback_percent')
+                        position_data.get('trailing_callback_percent'),
+                        position_data.get('signal_stop_loss_percent')  # NEW: Option 2
                     )
 
                     logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {symbol}")
@@ -649,7 +651,8 @@ class Repository:
                    quantity, leverage, stop_loss, take_profit,
                    status, pnl, pnl_percentage, trailing_activated,
                    has_trailing_stop, created_at, updated_at,
-                   trailing_activation_percent, trailing_callback_percent
+                   trailing_activation_percent, trailing_callback_percent,
+                   signal_stop_loss_percent
             FROM monitoring.positions
             WHERE status = 'active'
             ORDER BY created_at DESC

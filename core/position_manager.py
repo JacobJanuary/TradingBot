@@ -145,8 +145,9 @@ class PositionRequest:
     # Optional overrides
     position_size_usd: Optional[float] = None
     stop_loss_percent: Optional[float] = None
-    trailing_activation_percent: Optional[float] = None  # NEW: Per-signal override
-    trailing_callback_percent: Optional[float] = None    # NEW: Per-signal override
+    trailing_activation_percent: Optional[float] = None    # NEW: Per-signal override
+    trailing_callback_percent: Optional[float] = None
+    signal_stop_loss_percent: Optional[float] = None # NEW: Per-signal SL percent
     # take_profit_percent: Optional[float] = None  # DEPRECATED - Using Smart Trailing Stop
 
 
@@ -172,6 +173,9 @@ class PositionState:
     # NEW: Persisted TS params
     trailing_activation_percent: Optional[float] = None
     trailing_callback_percent: Optional[float] = None
+    
+    # Signal-specific SL parameter (Option 2)
+    signal_stop_loss_percent: Optional[float] = None
 
     # NEW: SL ownership tracking
     sl_managed_by: Optional[str] = None  # 'protection' | 'trailing_stop' | None
@@ -452,6 +456,7 @@ class PositionManager:
                     trailing_activated=pos['trailing_activated'] or False,
                     trailing_activation_percent=pos.get('trailing_activation_percent'),
                     trailing_callback_percent=pos.get('trailing_callback_percent'),
+                    signal_stop_loss_percent=pos.get('signal_stop_loss_percent'),  # NEW: Option 2
                     opened_at=opened_at,
                     age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
                 )
@@ -3714,25 +3719,37 @@ class PositionManager:
                         # STEP 3: Choose base price for SL calculation
                         # If price drifted more than STOP_LOSS_PERCENT, use current price
                         # This prevents creating invalid SL that would be rejected by exchange
-                        # Get params from DB
-                        try:
-                            exchange_params = await self.repository.get_params_by_exchange_name(position.exchange)
+                        # STEP 3: Get SL percent with proper priority
+                        # Priority: Signal > Database > .env
+                        stop_loss_percent = None
 
-                            if exchange_params and exchange_params.get('stop_loss_filter') is not None:
-                                stop_loss_percent = float(exchange_params['stop_loss_filter'])
-                                logger.debug(
-                                    f"📊 {position.symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
-                                )
-                            else:
-                                # Fallback
-                                logger.warning(
-                                    f"⚠️  {position.symbol}: stop_loss_filter not in DB, using .env fallback"
-                                )
+                        # Priority 1: Signal-specific params (highest priority)
+                        if hasattr(position, 'signal_stop_loss_percent') and position.signal_stop_loss_percent is not None:
+                            stop_loss_percent = float(position.signal_stop_loss_percent)
+                            logger.info(
+                                f"📊 {position.symbol}: Using SIGNAL SL: {stop_loss_percent}% "
+                                f"(preserving signal optimization)"
+                            )
+                        else:
+                            # Priority 2: Database exchange params
+                            try:
+                                exchange_params = await self.repository.get_params_by_exchange_name(position.exchange)
+
+                                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                                    stop_loss_percent = float(exchange_params['stop_loss_filter'])
+                                    logger.debug(
+                                        f"📊 {position.symbol}: Using DATABASE SL: {stop_loss_percent}%"
+                                    )
+                                else:
+                                    # Priority 3: .env fallback (lowest priority)
+                                    stop_loss_percent = self.config.stop_loss_percent
+                                    logger.warning(
+                                        f"⚠️ {position.symbol}: Using .ENV SL: {stop_loss_percent}% (fallback)"
+                                    )
+
+                            except Exception as e:
+                                logger.error(f"❌ {position.symbol}: Error loading params from DB: {e}. Using .env")
                                 stop_loss_percent = self.config.stop_loss_percent
-
-                        except Exception as e:
-                            logger.error(f"❌ {position.symbol}: Error loading params from DB: {e}. Using .env")
-                            stop_loss_percent = self.config.stop_loss_percent
 
                         stop_loss_percent_decimal = float(stop_loss_percent) / 100  # Convert from percent to decimal (e.g. 2.0 -> 0.02)
 
@@ -3789,6 +3806,21 @@ class PositionManager:
                         # Use enhanced SL manager with auto-validation and retry
                         # ✅ FIX #1.4b: Pass position_manager for TS-awareness
                         sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
+                        has_sl, sl_price = await sl_manager.has_stop_loss(
+                        symbol=symbol,
+                        side=position.side
+                    )
+
+                    # Update position state based on actual SL status
+                    if has_sl:
+                        position.has_stop_loss = True
+                        position.stop_loss_price = sl_price
+                    else:
+                        # CRITICAL FIX (Option 1): Reset flag if SL not found
+                        # Prevents stale flag causing Protection Manager to skip check
+                        # Essential for Option 2 to work - ensures signal params are used
+                        position.has_stop_loss = False
+                        position.stop_loss_price = None
                         success, order_id = await sl_manager.verify_and_fix_missing_sl(
                             position=position,
                             stop_price=stop_loss_price,

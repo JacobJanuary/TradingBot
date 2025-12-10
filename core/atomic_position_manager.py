@@ -875,7 +875,8 @@ class AtomicPositionManager:
                     'status': state.value,
                     'exchange_order_id': entry_order.id,
                     'trailing_activation_percent': trailing_activation_percent,
-                    'trailing_callback_percent': trailing_callback_percent
+                    'trailing_callback_percent': trailing_callback_percent,
+                    'signal_stop_loss_percent': request.stop_loss_percent  # NEW: Option 2
                 }
 
                 position_id = await self.repository.create_position(position_data)
