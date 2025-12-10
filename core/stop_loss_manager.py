@@ -57,18 +57,70 @@ class StopLossManager:
             Tuple[bool, Optional[str]]: (has_sl, sl_price)
 
         Проверяет в следующем порядке:
-        1. Position-attached SL (для Bybit через position.info.stopLoss) - ПРИОРИТЕТ 1
-        2. Conditional stop orders (через fetch_open_orders) - ПРИОРИТЕТ 2
-
-        Источник логики: core/position_manager.py:1324 (ПРОВЕРЕН в production)
+        1. Binance: Algo orders ONLY (December 2025 migration)
+        2. Bybit: Position-attached SL (через position.info.stopLoss)
+        3. Others: Conditional stop orders (через fetch_open_orders)
         """
         try:
             self.logger.debug(f"Checking Stop Loss for {symbol} on {self.exchange_name}")
 
             # ============================================================
+            # BINANCE: Check Algo orders ONLY (December 2025)
+            # ============================================================
+            if self.exchange_name == 'binance':
+                try:
+                    # Format symbol for Binance (remove slash and :USDT)
+                    binance_symbol = symbol.replace('/', '').replace(':USDT', '')
+                    
+                    self.logger.debug(f"Checking Algo orders for {binance_symbol}")
+                    
+                    # Fetch Algo orders
+                    algo_orders = await self.exchange.fapiPrivateGetOpenAlgoOrders({
+                        'symbol': binance_symbol
+                    })
+                    
+                    self.logger.debug(f"Found {len(algo_orders)} algo orders for {binance_symbol}")
+                    
+                    # Check for CONDITIONAL algo orders (Stop Loss)
+                    for algo_order in algo_orders:
+                        algo_type = algo_order.get('algoType')
+                        algo_status = algo_order.get('algoStatus')
+                        
+                        # Only check active CONDITIONAL orders
+                        if algo_type == 'CONDITIONAL' and algo_status in ['NEW', 'WORKING']:
+                            # Validate order side matches position side (if provided)
+                            if position_side:
+                                order_side = algo_order.get('side', '').lower()
+                                expected_side = 'sell' if position_side == 'long' else 'buy'
+                                
+                                if order_side != expected_side:
+                                    self.logger.debug(
+                                        f"Skip Algo order {algo_order.get('algoId')}: "
+                                        f"wrong side ({order_side} vs {expected_side})"
+                                    )
+                                    continue  # Skip this order - wrong side
+                            
+                            # Found matching Algo SL
+                            trigger_price = algo_order.get('triggerPrice')
+                            algo_id = algo_order.get('algoId')
+                            
+                            self.logger.info(
+                                f"✅ {symbol} has Algo SL: algoId={algo_id} at {trigger_price}"
+                            )
+                            return True, trigger_price
+                    
+                    # No Algo SL found
+                    self.logger.debug(f"No Algo SL found for {symbol}")
+                    return False, None
+                    
+                except Exception as e:
+                    self.logger.error(f"Error checking Algo orders for {symbol}: {e}")
+                    return False, None
+
+            # ============================================================
             # ПРИОРИТЕТ 1: Position-attached Stop Loss (для Bybit)
             # ============================================================
-            if self.exchange_name == 'bybit':
+            elif self.exchange_name == 'bybit':
                 try:
                     # CRITICAL FIX: Import normalize_symbol for symbol comparison
                     from core.position_manager import normalize_symbol
@@ -306,14 +358,16 @@ class StopLossManager:
                         stop_price=stop_price
                     )
 
-                    if result['status'] in ['created', 'already_exists']:
-                        # CRITICAL FIX: Return order_id for whitelist protection
-                        order_id = result.get('orderId') or result.get('info', {}).get('id')
+                    if result.get('status') == 'success':
+                    # DECEMBER 2025: Algo API returns algoId and triggerPrice
+                        algo_id = result.get('algoId')
+                        trigger_price = result.get('triggerPrice', stop_price)
+                        
                         self.logger.info(
-                            f"✅ SL recreated for {symbol} at {result['stopPrice']} "
-                            f"(attempt {attempt + 1}/{max_retries}), order_id={order_id}"
+                            f"✅ SL recreated for {symbol} at {trigger_price} "
+                            f"(attempt {attempt + 1}/{max_retries}), algoId={algo_id}"
                         )
-                        return True, order_id
+                        return True, str(algo_id) if algo_id else None
 
                 except Exception as e:
                     error_msg = str(e).lower()
@@ -531,21 +585,12 @@ class StopLossManager:
             
             self.logger.info(f"✅ Algo Stop Loss created: algoId={algo_id}")
             
-            # Verify order was placed (optional, wait 2 seconds)
-            await asyncio.sleep(2)
-            try:
-                verify_response = await self.exchange.fapiPrivateGetOpenAlgoOrders({
-                    'symbol': binance_symbol
-                })
-                
-                # Response is a list of orders
-                found = any(o.get('algoId') == algo_id for o in verify_response)
-                if found:
-                    self.logger.info(f"✅ Verified: Algo order {algo_id} is active")
-                else:
-                    self.logger.warning(f"⚠️ Algo order {algo_id} not found in open orders (may still be valid)")
-            except Exception as verify_error:
-                self.logger.warning(f"⚠️ Could not verify algo order: {verify_error}")
+            # PERFORMANCE OPTIMIZATION (December 10, 2025):
+            # Removed verification sleep(2) + API call
+            # - Saves ~2500ms per SL creation
+            # - API response is reliable, no immediate verification needed
+            # - Protection manager verifies SL in 60s monitoring loop
+            # - If SL missing, it will be recreated automatically
             
             # Log event
             event_logger = get_event_logger()
@@ -567,7 +612,7 @@ class StopLossManager:
                 )
             
             return {
-                'status': 'created',
+                'status': 'success',
                 'triggerPrice': float(final_stop_price),
                 'algoId': algo_id,
                 'method': 'algo_conditional',
@@ -844,7 +889,13 @@ class StopLossManager:
     def _extract_stop_price(self, order: Dict) -> Optional[float]:
         """Извлекает цену Stop Loss из ордера"""
         try:
-            # Попробовать разные поля
+            # DECEMBER 2025: For Binance Algo orders, triggerPrice is at top level
+            if self.exchange_name == 'binance':
+                trigger_price = order.get('triggerPrice')
+                if trigger_price and trigger_price not in ['0', '0.00', '', None]:
+                    return float(trigger_price)
+            
+            # For other exchanges: check various fields
             price_fields = [
                 'stopPrice',
                 'triggerPrice',
