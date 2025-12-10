@@ -3564,14 +3564,26 @@ class PositionManager:
                     has_sl_on_exchange, sl_price = await sl_manager.has_stop_loss(symbol)
 
                     logger.info(f"Checking position {symbol}: has_sl={has_sl_on_exchange}, price={sl_price}")
+                    
+                    # CRITICAL FIX (Option 1): Update flag based on actual exchange status
+                    # This prevents stale flag from causing Protection Manager to skip check
+                    if has_sl_on_exchange:
+                        position.has_stop_loss = True
+                        position.stop_loss_price = sl_price
+                    else:
+                        position.has_stop_loss = False
+                        position.stop_loss_price = None
 
                 except Exception as e:
                     logger.warning(f"Could not check SL for {symbol}: {e}")
                     # Assume no SL if we can't check
                     has_sl_on_exchange = False
+                    # CRITICAL FIX (Option 1): Reset flag on error too
+                    position.has_stop_loss = False
+                    position.stop_loss_price = None
 
                 # Update position state based on actual exchange status
-                position.has_stop_loss = has_sl_on_exchange
+                # (Already done above in Option 1 fix)
 
                 # CRITICAL: Sync DB with discovered state
                 if has_sl_on_exchange and sl_price:
@@ -3806,21 +3818,6 @@ class PositionManager:
                         # Use enhanced SL manager with auto-validation and retry
                         # ✅ FIX #1.4b: Pass position_manager for TS-awareness
                         sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
-                        has_sl, sl_price = await sl_manager.has_stop_loss(
-                        symbol=symbol,
-                        side=position.side
-                    )
-
-                    # Update position state based on actual SL status
-                    if has_sl:
-                        position.has_stop_loss = True
-                        position.stop_loss_price = sl_price
-                    else:
-                        # CRITICAL FIX (Option 1): Reset flag if SL not found
-                        # Prevents stale flag causing Protection Manager to skip check
-                        # Essential for Option 2 to work - ensures signal params are used
-                        position.has_stop_loss = False
-                        position.stop_loss_price = None
                         success, order_id = await sl_manager.verify_and_fix_missing_sl(
                             position=position,
                             stop_price=stop_loss_price,
