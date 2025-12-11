@@ -580,8 +580,8 @@ class StopLossManager:
         }
         
         self.logger.info(
-            f"📊 Creating Algo SL (NEW API) for {symbol}: trigger={validated_stop_price}, "
-            f"side={side}, qty={validated_amount}"
+            f"📊 Creating Algo SL (NEW API) for {symbol}: trigger={final_stop_price}, "
+            f"side={side}, qty={amount}"
         )
         
         try:
