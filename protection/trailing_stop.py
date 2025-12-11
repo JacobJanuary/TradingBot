@@ -1631,6 +1631,40 @@ class SmartTrailingStopManager:
                         for o in orders
                     )
                     
+                    # FIX (Dec 11, 2025): Check Algo Orders for Binance
+                    # Since we now use fapiPrivatePostAlgoOrder, orders don't show in standard fetch_open_orders
+                    if not sl_exists and self.exchange.name == 'binance':
+                        try:
+                            # Normalize symbol for Binance
+                            binance_symbol = ts.symbol.replace('/', '').replace(':USDT', '')
+                            
+                            # Fetch open Algo orders
+                            algo_res = await self.exchange.exchange.fapiPrivateGetOpenAlgoOrders({
+                                'symbol': binance_symbol,
+                                'algoType': 'STOP_MARKET'
+                            })
+                            
+                            # Handle response (list or dict with 'orders')
+                            algo_orders = []
+                            if isinstance(algo_res, dict) and 'orders' in algo_res:
+                                algo_orders = algo_res['orders']
+                            elif isinstance(algo_res, list):
+                                algo_orders = algo_res
+                                
+                            for order in algo_orders:
+                                # Check matches
+                                if (order.get('side', '').lower() == expected_side and 
+                                    order.get('orderType') == 'STOP_MARKET'):
+                                    sl_exists = True
+                                    logger.info(
+                                        f"✅ Found SL in Binance Algo API: {order.get('algoId')} "
+                                        f"@{order.get('triggerPrice') or order.get('stopPrice')}"
+                                    )
+                                    break
+                                    
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to verify Binance Algo Orders: {e}")
+                    
                     if not sl_exists:
                         logger.error(
                             f"❌ {ts.symbol}: SL update claimed success but NO SL found on exchange! "
