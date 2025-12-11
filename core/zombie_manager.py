@@ -205,8 +205,6 @@ class EnhancedZombieOrderManager:
         order_status = order.get('status', '').lower()
         side = order.get('side', '')
         amount = float(order.get('amount', 0))
-        price = float(order.get('price', 0))
-
         # Skip already completed orders
         if order_status in ['closed', 'canceled', 'filled', 'rejected', 'expired']:
             return None
@@ -321,49 +319,119 @@ class EnhancedZombieOrderManager:
         # Not a zombie
         return None
 
-    async def _fetch_all_open_orders_paginated(self) -> List[Dict]:
+    async def _fetch_all_open_orders_paginated(self, active_symbols: Set[str] = None) -> List[Dict]:
         """
         Fetch all open orders with proper pagination handling
         Critical for Bybit which limits to 50 orders per request
+        FIX (Dec 2025): Also fetch Algo Orders for Binance
         """
         all_orders = []
 
         try:
+            # 1. Fetch Standard Orders (Global)
             # Try CCXT first (handles pagination internally for some exchanges)
             if hasattr(self.exchange.exchange, 'fetch_open_orders'):
+                # Suppress warning for global fetch
+                if 'warnOnFetchOpenOrdersWithoutSymbol' not in self.exchange.exchange.options:
+                    self.exchange.exchange.options['warnOnFetchOpenOrdersWithoutSymbol'] = False
+                
+                # Note: Legacy Binance endpoint returns all symbols if symbol is None
                 orders = await self.exchange.exchange.fetch_open_orders()
-                return orders
+                all_orders.extend(orders)
+            else:
+                # Manual pagination for Bybit if needed
+                # This is a fallback if CCXT doesn't handle it
+                logger.debug("Using manual pagination for orders")
+                cursor = None
+                page = 0
+                max_pages = 20  # Safety limit
 
-            # Manual pagination for Bybit if needed
-            # This is a fallback if CCXT doesn't handle it
-            logger.debug("Using manual pagination for orders")
-            cursor = None
-            page = 0
-            max_pages = 20  # Safety limit
+                while page < max_pages:
+                    params = {'limit': 50}
+                    if cursor:
+                        params['cursor'] = cursor
 
-            while page < max_pages:
-                params = {'limit': 50}
-                if cursor:
-                    params['cursor'] = cursor
+                    # Fetch page
+                    response = await self.exchange.exchange.fetch_open_orders(params=params)
 
-                # Fetch page
-                response = await self.exchange.exchange.fetch_open_orders(params=params)
+                    if not response:
+                        break
 
-                if not response:
-                    break
+                    all_orders.extend(response)
 
-                all_orders.extend(response)
+                    # Check for more pages (Bybit specific)
+                    if len(response) < 50:
+                        break  # Last page
 
-                # Check for more pages (Bybit specific)
-                if len(response) < 50:
-                    break  # Last page
+                    page += 1
+                    await asyncio.sleep(0.1)  # Rate limiting
 
-                page += 1
-                await asyncio.sleep(0.1)  # Rate limiting
-
-            if page >= max_pages:
-                logger.warning(f"Reached pagination limit ({max_pages} pages)")
-
+                if page >= max_pages:
+                    logger.warning(f"Reached pagination limit ({max_pages} pages)")
+            
+            # 2. Fetch Algo Orders (Binance Only) - REQUIRES per-symbol fetch
+            if self.exchange.name == 'binance':
+                # Strategy: Scan Algo orders for:
+                # 1. Active positions (High priority)
+                # 2. Symbols with open standard orders (Medium priority - user might have left dust)
+                
+                scan_symbols = set()
+                if active_symbols:
+                    scan_symbols.update(active_symbols)
+                    
+                # Add symbols from standard orders we just fetched
+                for o in all_orders:
+                    if 'symbol' in o and o['symbol']:
+                        scan_symbols.add(o['symbol'])
+                
+                if scan_symbols:
+                    logger.debug(f"🔍 Scanning Algo Orders for {len(scan_symbols)} target symbols...")
+                    
+                    for symbol in scan_symbols:
+                        try:
+                            # Normalize symbol if needed (CCXT usually handles this, but raw API might need simple)
+                            # We use CCXT's private method which wraps signature
+                            # fapiPrivateGetOpenAlgoOrders requires standard params
+                            
+                            # We must send symbol in exchange format (e.g. BTCUSDT)
+                            # CCXT usually expects standardized 'BTC/USDT:USDT', but this raw method might need raw symbol
+                            # Let's try to derive it or use the one from positions
+                            market = self.exchange.exchange.market(symbol)
+                            raw_symbol = market['id'] # e.g. "BTCUSDT"
+    
+                            algo_res = await self.exchange.exchange.fapiPrivateGetOpenAlgoOrders({
+                                'symbol': raw_symbol,
+                                'algo_type': 'STOP_MARKET'
+                            })
+                            
+                            # Result can be list or dict
+                            orders_list = []
+                            if isinstance(algo_res, dict) and 'orders' in algo_res:
+                                orders_list = algo_res['orders']
+                            elif isinstance(algo_res, list):
+                                orders_list = algo_res
+                                
+                            # Convert to standardized format for analysis
+                            for ao in orders_list:
+                                # Map Algo fields to standard checking fields
+                                # id, symbol, type, status, side, amount, price
+                                mapped = {
+                                    'id': str(ao.get('algoId')),
+                                    'symbol': symbol, # Keep standardized symbol
+                                    'type': ao.get('orderType', 'STOP_MARKET'), # "STOP_MARKET"
+                                    'status': 'open', # Algo orders in this list are open
+                                    'side': ao.get('side'),
+                                    'amount': float(ao.get('quantity', 0)),
+                                    'price': float(ao.get('triggerPrice', 0)), # Trigger price is key for stops
+                                    'info': ao, # Keep raw info
+                                    '_is_algo': True # Flag internal use
+                                }
+                                all_orders.append(mapped)
+                                
+                        except Exception as e:
+                            # Don't break loop for one failed symbol
+                            logger.debug(f"Failed to fetch algo orders for {symbol}: {e}")
+                        
         except Exception as e:
             logger.error(f"Error fetching orders: {e}")
             self.stats['errors'].append(f"Fetch error: {str(e)[:100]}")
@@ -374,11 +442,11 @@ class EnhancedZombieOrderManager:
                                    aggressive: bool = False) -> Dict:
         """
         Clean up detected zombie orders
-
+        
         Args:
             dry_run: If True, only log but don't cancel
             aggressive: If True, use more aggressive cleanup (cancel all for symbol)
-
+            
         Returns:
             Cleanup statistics
         """
@@ -428,7 +496,7 @@ class EnhancedZombieOrderManager:
                     self.stats['zombies_cleaned'] += 1
                 else:
                     results['failed'] += 1
-
+                
                 await asyncio.sleep(0.2)  # Rate limiting
 
             # Cancel conditional orders with special handling
@@ -439,7 +507,7 @@ class EnhancedZombieOrderManager:
                     self.stats['zombies_cleaned'] += 1
                 else:
                     results['failed'] += 1
-
+                
                 await asyncio.sleep(0.2)
 
             # Handle TP/SL orders
@@ -452,7 +520,7 @@ class EnhancedZombieOrderManager:
             # Aggressive cleanup for problematic symbols
             if aggressive and symbols_for_aggressive:
                 logger.warning(f"🔥 Aggressive cleanup for symbols: {symbols_for_aggressive}")
-
+                
                 # Log aggressive cleanup trigger (FIX #3: using safe wrapper)
                 await self._log_event_safe(
                     EventType.AGGRESSIVE_CLEANUP_TRIGGERED,
@@ -475,7 +543,7 @@ class EnhancedZombieOrderManager:
                 f"🧹 Cleanup complete: {results['cancelled']}/{results['detected']} cancelled, "
                 f"{results['failed']} failed"
             )
-
+            
             # Log zombie cleanup completion (FIX #3: using safe wrapper)
             await self._log_event_safe(
                 EventType.ZOMBIE_CLEANUP_COMPLETED,
@@ -500,14 +568,18 @@ class EnhancedZombieOrderManager:
     async def _cancel_order_safe(self, zombie: ZombieOrderInfo) -> bool:
         """
         Safely cancel a zombie order with retry logic
+        FIX (Dec 2025): Use ExchangeManager wrapper to handle Algo Orders fallback
         """
         max_retries = 3
 
         for attempt in range(max_retries):
             try:
-                await self.exchange.exchange.cancel_order(zombie.order_id, zombie.symbol)
+                # Use WRAPPER (self.exchange.cancel_order) not raw ccxt (self.exchange.exchange.cancel_order)
+                # This ensures Algo Order fallback logic is used
+                await self.exchange.cancel_order(zombie.order_id, zombie.symbol)
+                
                 logger.info(f"✅ Cancelled zombie order {zombie.order_id} for {zombie.symbol}")
-
+                
                 # Log zombie order cancellation
                 # FIX #3: using safe wrapper
                 await self._log_event_safe(
@@ -532,7 +604,7 @@ class EnhancedZombieOrderManager:
 
                 # Order already gone - success
                 if any(phrase in error_msg for phrase in [
-                    'not found', 'does not exist', 'already cancelled', 'no order'
+                    'not found', 'does not exist', 'already cancelled', 'no order', 'unknown order'
                 ]):
                     logger.debug(f"Order {zombie.order_id} already gone")
                     return True
@@ -552,8 +624,12 @@ class EnhancedZombieOrderManager:
         Cancel conditional/stop order with special parameters
         """
         try:
-            # Use special parameter for conditional orders
-            await self.exchange.exchange.cancel_order(
+            # Use WRAPPER here too, but passing params
+            # Note: ExchangeManager.cancel_order might not pass params for Algo fallback,
+            # but usually cond orders are Algo orders anyway.
+            # If it's a legacy conditional order, it will fail and fallback to Algo delete.
+            
+            await self.exchange.cancel_order(
                 zombie.order_id,
                 zombie.symbol,
                 params={'stop': True, 'orderFilter': 'StopOrder'}
@@ -563,7 +639,9 @@ class EnhancedZombieOrderManager:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if 'not found' in error_msg or 'does not exist' in error_msg:
+            if any(phrase in error_msg for phrase in [
+                    'not found', 'does not exist', 'already cancelled', 'no order', 'unknown order'
+                ]):
                 return True
 
             logger.error(f"Failed to cancel conditional {zombie.order_id}: {e}")

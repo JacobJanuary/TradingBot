@@ -122,6 +122,8 @@ class ExchangeManager:
         # Add exchange-specific settings
         if self.name == 'binance':
             exchange_options['options']['fetchPositions'] = 'positionRisk'
+            # Enable global fetch for Zombie Manager
+            exchange_options['options']['warnOnFetchOpenOrdersWithoutSymbol'] = False
         elif self.name == 'bybit':
             # CRITICAL: Bybit V5 API requires UNIFIED account
             exchange_options['options']['accountType'] = 'UNIFIED'
@@ -1331,7 +1333,7 @@ class ExchangeManager:
             logger.error(f"❌ Binance optimized SL update failed: {e}", exc_info=True)
             return result
 
-    async def cancel_order(self, order_id: str, symbol: str) -> bool:
+    async def cancel_order(self, order_id: str, symbol: str, params: Dict = None) -> bool:
         """Cancel order"""
         try:
             # CRITICAL FIX: Convert symbol to exchange format
@@ -1340,7 +1342,7 @@ class ExchangeManager:
                 logger.warning(f"Symbol {symbol} not found for cancellation")
                 return False
 
-            result = await self.exchange.cancel_order(order_id, exchange_symbol)
+            result = await self.exchange.cancel_order(order_id, exchange_symbol, params=params or {})
             return result.get('status') == 'canceled'
             
         except (ccxt.OrderNotFound, ccxt.OrderNotCached) as e:
