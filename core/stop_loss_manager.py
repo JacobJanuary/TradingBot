@@ -215,7 +215,9 @@ class StopLossManager:
         symbol: str,
         side: str,
         amount: Decimal,
-        stop_price: Decimal
+        stop_price: Decimal,
+        operation_id: Optional[str] = None,
+        created_in_operation: Optional[str] = None
     ) -> Dict:
         """
         ЕДИНСТВЕННАЯ функция установки Stop Loss.
@@ -250,6 +252,19 @@ class StopLossManager:
                 }
 
             if has_sl:
+            # NEW FIX (Dec 11, 2025): Check if this SL was created in CURRENT operation
+            # This prevents retry loop from detecting own SL as "existing from previous position"
+                if created_in_operation and str(existing_sl) == str(created_in_operation):
+                    self.logger.info(
+                        f"✅ {symbol}: SL already created in THIS operation "
+                        f"(algoId={created_in_operation}), reusing"
+                    )
+                    return {
+                        'status': 'already_exists',
+                        'algoId': created_in_operation,
+                        'stopPrice': existing_sl
+                    }
+            
                 # CRITICAL FIX: Validate existing SL before reusing
                 # This prevents reusing old SL from previous positions with different entry prices
                 from utils.decimal_utils import to_decimal

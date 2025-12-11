@@ -978,6 +978,7 @@ class AtomicPositionManager:
 
                 sl_placed = False
                 max_retries = 3
+                sl_created_in_operation = None  # NEW: Track SL from this operation
 
                 for attempt in range(max_retries):
                     try:
@@ -986,12 +987,20 @@ class AtomicPositionManager:
                             symbol=symbol,
                             side='sell' if side.lower() == 'buy' else 'buy',
                             amount=quantity,
-                            stop_price=stop_loss_price
+                            stop_price=stop_loss_price,
+                            operation_id=operation_id,  # NEW: Pass operation ID
+                            created_in_operation=sl_created_in_operation  # NEW: Pass created SL
                         )
 
                         if sl_result and sl_result.get('status') in ['created', 'already_exists']:
                             sl_placed = True
                             sl_order = sl_result
+                            
+                            # NEW: Track SL created in this operation
+                            if sl_result.get('status') == 'created':
+                                sl_created_in_operation = sl_result.get('algoId')
+                                logger.info(f"📝 Tracked SL for operation: {sl_created_in_operation}")
+                            
                             logger.info(f"✅ Stop-loss placed successfully")
 
                             # Log SL order to database (but not trade - only when executed)
