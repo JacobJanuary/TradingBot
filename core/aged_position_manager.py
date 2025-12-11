@@ -177,29 +177,12 @@ class AgedPositionManager:
             Order dict if successful, None otherwise
         """
         try:
-            # CRITICAL FIX: Ensure futures symbol format for Bybit
-            # Bot only trades futures, so always use futures format
-            if exchange.exchange.id == 'bybit' and ':' not in symbol:
-                if symbol.endswith('USDT'):
-                    base = symbol[:-4]
-                    symbol = f"{base}/USDT:USDT"
-                logger.info(f"🔄 Converted to futures format: {symbol}")
-
-            logger.info(f"📤 MARKET {reason}: {side} {amount} {symbol}")
-
-            params = {
-                'reduceOnly': True
-            }
-
-            if exchange.exchange.id == 'bybit':
-                params['positionIdx'] = 0
-
-            order = await exchange.exchange.create_order(
+            # Use ExchangeManager wrapper which handles symbol conversion and params
+            order = await exchange.create_market_order(
                 symbol=symbol,
-                type='market',
                 side=side,
                 amount=amount,
-                params=params
+                params={'reduceOnly': True}
             )
 
             if order:
@@ -638,18 +621,14 @@ class AgedPositionManager:
                         except Exception as e:
                             logger.warning(f"Could not cancel order: {e}")
 
-                # Create new order
+                # Create new order using wrapper
                 params = {
                     'reduceOnly': True,
                     'timeInForce': 'GTC'
                 }
-
-                if exchange.id == 'bybit':
-                    params['positionIdx'] = 0
-
-                order = await exchange.create_order(
+                
+                order = await exchange.create_limit_order(
                     symbol=position.symbol,
-                    type='limit',
                     side=order_side,
                     amount=abs(float(position.quantity)),
                     price=precise_price,

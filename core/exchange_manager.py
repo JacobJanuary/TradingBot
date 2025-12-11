@@ -58,6 +58,12 @@ class OrderResult:
     timestamp: datetime
     info: Dict
 
+    def __getitem__(self, key):
+        return getattr(self, key)
+    
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
 
 class ExchangeManager:
     """
@@ -515,7 +521,7 @@ class ExchangeManager:
             logger.error(f"Market order failed for {symbol}: {e}")
             raise
 
-    async def create_limit_order(self, symbol: str, side: str, amount: Decimal, price: Decimal) -> OrderResult:
+    async def create_limit_order(self, symbol: str, side: str, amount: Decimal, price: Decimal, params: Dict = None) -> OrderResult:
         """Create limit order"""
         try:
             # CRITICAL FIX: Convert symbol to exchange-specific format
@@ -528,7 +534,8 @@ class ExchangeManager:
                 symbol=exchange_symbol,  # ✅ Use exchange-specific format
                 side=side.lower(),
                 amount=float(amount),
-                price=float(price)
+                price=float(price),
+                params=params or {}
             )
 
             return self._parse_order(order)
@@ -1449,11 +1456,20 @@ class ExchangeManager:
             symbol: Symbol to filter (optional)
             params: Additional parameters (e.g., {'category': 'linear', 'orderFilter': 'StopOrder'} for Bybit)
         """
+        exchange_symbol = None
+        if symbol:
+            exchange_symbol = self.find_exchange_symbol(symbol)
+            if not exchange_symbol:
+                # If cannot resolve (e.g. invalid symbol), pass original 
+                # (some exchanges might support partial match or different format)
+                exchange_symbol = symbol 
+                
         # CRITICAL FIX: Support params for Bybit category='linear' and orderFilter
         if params:
-            orders = await self.exchange.fetch_open_orders(symbol, params)
+            orders = await self.exchange.fetch_open_orders(exchange_symbol, params)
         else:
-            orders = await self.exchange.fetch_open_orders(symbol)
+            orders = await self.exchange.fetch_open_orders(exchange_symbol)
+        
         return [self._parse_order(order) for order in orders]
 
     # ============== Position Management ==============
