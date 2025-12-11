@@ -553,13 +553,28 @@ class StopLossManager:
         final_stop_price = self.exchange.price_to_precision(symbol, final_stop_price)
         
         # Prepare Algo API parameters (NEW format for December 2025 migration)
+        # CRITICAL FIX (December 11, 2025): Precision Validation
+        # Prevent Binance error -1111: "Precision is over the maximum defined for this asset"
+        # Issue: Low-price symbols like JELLYJELLYUSDT can have excessive decimal places
+        # (e.g., 0.0461340000000000 instead of 0.04613400)
+        # Solution: Validate precision before API call
+        from core.precision_validator import PrecisionValidator
+        
+        validated_stop_price = PrecisionValidator.validate_price(
+            final_stop_price, symbol, self.exchange_name
+        )
+        validated_amount = PrecisionValidator.validate_amount(
+            amount, symbol, self.exchange_name
+        )
+        
+        # Build params with validated values
         params = {
             'algoType': 'CONDITIONAL',  # Required for conditional orders
             'symbol': binance_symbol,
-            'side': side.upper(),
+            'side': side.upper(),  # BUY or SELL
             'type': 'STOP_MARKET',  # Order type within algo
-            'triggerPrice': str(final_stop_price),  # Note: triggerPrice, not stopPrice!
-            'quantity': str(float(amount)),
+            'triggerPrice': str(validated_stop_price),  # ← VALIDATED
+            'quantity': str(float(validated_amount)),  # ← VALIDATED
             'reduceOnly': 'true',  # String, not boolean
             'workingType': 'CONTRACT_PRICE',  # Trigger based on contract price
             'priceProtect': 'FALSE',  # String, not boolean
@@ -568,8 +583,8 @@ class StopLossManager:
         }
         
         self.logger.info(
-            f"📊 Creating Algo SL (NEW API) for {symbol}: trigger={final_stop_price}, "
-            f"side={side}, qty={amount}"
+            f"📊 Creating Algo SL (NEW API) for {symbol}: trigger={validated_stop_price}, "
+            f"side={side}, qty={validated_amount}"
         )
         
         try:

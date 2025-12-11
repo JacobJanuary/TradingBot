@@ -1313,8 +1313,13 @@ class AtomicPositionManager:
                         logger.critical(f"❌ FAILED to close unprotected position: {close_error}")
                         # TODO: Send alert to administrator
 
-            # Обновляем статус в БД
-            if position_id:
+            # CRITICAL FIX (December 11, 2025): Type Safety for position_id
+            # Prevent TypeError: 'pending' ('str' object cannot be interpreted as an integer)
+            # Issue: Pre-registered positions have position_id='pending' (string)
+            # When rollback occurs before DB commit, we try to update with string ID
+            # Solution: Check if position_id is a real integer before DB update
+            if position_id and position_id != 'pending' and isinstance(position_id, int):
+                logger.info(f"Updating database for position #{position_id} (rollback)")
                 # FIX: update_position expects **kwargs, not dict as second argument
                 # FIX: Truncate error to fit varchar(500) limit
                 await self.repository.update_position(position_id, **{
@@ -1322,6 +1327,21 @@ class AtomicPositionManager:
                     'closed_at': datetime.utcnow(),  # FIX: Use offset-naive datetime for database compatibility
                     'exit_reason': truncate_exit_reason(f'rollback: {error}')
                 })
+            elif position_id == 'pending':
+                logger.warning(
+                    f"{symbol}: Skipping database update - position not yet committed "
+                    f"(position_id='pending'). Pre-registration will be cleaned up."
+                )
+                # Clean up pre-registration from memory
+                if self.position_manager and symbol in self.position_manager.positions:
+                    del self.position_manager.positions[symbol]
+                    logger.info(f"Removed pre-registered position from memory: {symbol}")
+            else:
+                logger.warning(
+                    f"{symbol}: No position_id available for database update "
+                    f"(position_id={position_id})"
+                )
+
 
         except Exception as rollback_error:
             logger.critical(f"❌ Rollback failed: {rollback_error}")
