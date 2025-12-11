@@ -1056,7 +1056,7 @@ class ExchangeManager:
                 # Fetch (no rate limiter wrapper needed for direct call typically, but safer)
                 algo_res = await self.exchange.fapiPrivateGetOpenAlgoOrders({
                     'symbol': algo_symbol,
-                    'algoType': 'STOP_MARKET'
+                    'algo_type': 'STOP_MARKET'
                 })
 
                 algo_orders = []

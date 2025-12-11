@@ -1641,7 +1641,7 @@ class SmartTrailingStopManager:
                             # Fetch open Algo orders
                             algo_res = await self.exchange.exchange.fapiPrivateGetOpenAlgoOrders({
                                 'symbol': binance_symbol,
-                                'algoType': 'STOP_MARKET'
+                                'algo_type': 'STOP_MARKET'
                             })
                             
                             # Handle response (list or dict with 'orders')
