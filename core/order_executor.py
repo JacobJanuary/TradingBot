@@ -352,33 +352,15 @@ class OrderExecutor:
     ) -> Dict:
         """Execute market order"""
 
-        # CRITICAL FIX: Convert DB symbol to exchange-specific format
-        exchange_symbol = exchange.find_exchange_symbol(symbol)
-        if not exchange_symbol:
-            raise ValueError(f"Symbol {symbol} not available on {exchange.name}")
-
-        # Validate market type (futures only)
-        market = exchange.markets.get(exchange_symbol)
-        if market and market.get('spot'):
-            raise ValueError(
-                f"CRITICAL: Attempting SPOT order for {exchange_symbol}! "
-                f"Bot trades ONLY futures. Symbol conversion failed."
-            )
-
+        # ExchangeManager handles symbol conversion and params
         params = {'reduceOnly': True}
-
-        # Exchange-specific parameters
-        if exchange.exchange.id == 'binance':
-            params['type'] = 'MARKET'
-
+        
         logger.info(
-            f"Creating market order: DB={symbol}, Exchange={exchange_symbol}, "
-            f"Market={market.get('type') if market else 'unknown'}"
+            f"Creating market order (Wrapper): {symbol} {side} {amount}"
         )
 
-        return await exchange.exchange.create_order(
-            symbol=exchange_symbol,
-            type='market',
+        return await exchange.create_market_order(
+            symbol=symbol,
             side=side,
             amount=amount,
             params=params
@@ -393,54 +375,43 @@ class OrderExecutor:
     ) -> Dict:
         """Execute limit order with aggressive pricing for quick fill"""
 
-        # CRITICAL FIX: Convert symbol format
-        exchange_symbol = exchange.find_exchange_symbol(symbol)
-        if not exchange_symbol:
-            raise ValueError(f"Symbol {symbol} not available on {exchange.name}")
-
-        # Validate market type
-        market = exchange.markets.get(exchange_symbol)
-        if market and market.get('spot'):
-            raise ValueError(f"CRITICAL: SPOT order attempt blocked for {exchange_symbol}")
-
-        # Get current market price
-        ticker = await exchange.exchange.fetch_ticker(exchange_symbol)
+        # Get current market price (Wrapper)
+        ticker = await exchange.fetch_ticker(symbol)
         current_price = Decimal(str(ticker['last']))
 
         # Validate ticker price
         if current_price <= 0:
             raise Exception(f"Invalid ticker price for {symbol}: {current_price}")
 
-        # Calculate aggressive price (with slippage to ensure execution)
-        # IMPORTANT: When closing positions:
-        # - side='buy' means closing a SHORT position (need to buy back)
-        # - side='sell' means closing a LONG position (need to sell)
+        # Calculate aggressive price (with slippage)
+        # FIX: Aggressive means crossing spread to ensure IOC fill
+        # Buy: Price > Market
+        # Sell: Price < Market
         if side == 'buy':
-            # For buy (closing SHORT), use lower price for aggressive fill
-            limit_price = current_price * (Decimal('1') - self.slippage_percent / Decimal('100'))
-        else:
-            # For sell (closing LONG), use higher price to cover fees
+            # For buy (closing SHORT), buy higher to fill immediately
             limit_price = current_price * (Decimal('1') + self.slippage_percent / Decimal('100'))
+        else:
+            # For sell (closing LONG), sell lower to fill immediately
+            limit_price = current_price * (Decimal('1') - self.slippage_percent / Decimal('100'))
 
-        # Round to exchange precision
-        limit_price = self._round_price(limit_price, symbol)
-
+        # ExchangeManager handles precision in create_limit_order
+        limit_price_float = float(limit_price)
+        
         params = {
             'reduceOnly': True,
             'timeInForce': 'IOC'  # Immediate or Cancel
         }
 
         logger.debug(
-            f"Limit aggressive: {side} {amount} @ {limit_price} "
+            f"Limit aggressive: {side} {amount} @ {limit_price_float} "
             f"(market: {current_price})"
         )
 
-        return await exchange.exchange.create_order(
-            symbol=exchange_symbol,
-            type='limit',
+        return await exchange.create_limit_order(
+            symbol=symbol,
             side=side,
             amount=amount,
-            price=float(limit_price),
+            price=limit_price_float,
             params=params
         )
 
@@ -453,99 +424,49 @@ class OrderExecutor:
     ) -> Dict:
         """Execute limit order as maker (post-only)"""
 
-        # CRITICAL FIX: Convert symbol format
-        exchange_symbol = exchange.find_exchange_symbol(symbol)
-        if not exchange_symbol:
-            raise ValueError(f"Symbol {symbol} not available on {exchange.name}")
-
-        # Validate market type
-        market = exchange.markets.get(exchange_symbol)
-        if market and market.get('spot'):
-            raise ValueError(f"CRITICAL: SPOT order attempt blocked for {exchange_symbol}")
-
-        # Get order book for best price
+        # Verification (symbol format handled by wrapper, but needed here for book)
+        exchange_symbol = exchange.find_exchange_symbol(symbol) or symbol
+        
+        # Get order book (Safe to use raw call for specific data, or add wrapper?)
+        # We'll use raw fetch_order_book for now as it's read-only
         order_book = await exchange.exchange.fetch_order_book(exchange_symbol, limit=5)
 
         # Check if order book is valid
         if not order_book:
             raise Exception("Order book is empty")
 
-        # Use best bid/ask for maker order
-        # IMPORTANT: When closing positions as maker:
-        # - side='buy' means closing a SHORT position (need to buy back)
-        # - side='sell' means closing a LONG position (need to sell)
-        # We place at the best bid/ask to be a maker and get maker fees
         if side == 'buy':
-            # For buy (closing SHORT), place at top of bid to be best buyer
-            # Check bids exist and are valid
-            if not order_book.get('bids') or len(order_book['bids']) == 0:
-                raise Exception("No bids in order book")
-            if len(order_book['bids'][0]) < 1:
-                raise Exception("Invalid bid format")
-            # Place at top of bid
+            # Maker Buy: Place at top of Bid
+            if not order_book.get('bids'):
+                raise Exception("No bids")
             limit_price = Decimal(str(order_book['bids'][0][0]))
         else:
-            # For sell (closing LONG), place at top of ask to be best seller
-            # Check asks exist and are valid
-            if not order_book.get('asks') or len(order_book['asks']) == 0:
-                raise Exception("No asks in order book")
-            if len(order_book['asks'][0]) < 1:
-                raise Exception("Invalid ask format")
-            # Place at top of ask
+            # Maker Sell: Place at top of Ask
+            if not order_book.get('asks'):
+                raise Exception("No asks")
             limit_price = Decimal(str(order_book['asks'][0][0]))
-
-        # Validate price is positive
-        if limit_price <= 0:
-            raise Exception(f"Invalid price from order book: {limit_price}")
 
         params = {
             'reduceOnly': True,
-            'postOnly': True  # Maker only
+            'postOnly': True
         }
 
-        if exchange.exchange.id == 'bybit':
+        if exchange.name == 'bybit':
             params['timeInForce'] = 'PostOnly'
-        elif exchange.exchange.id == 'binance':
-            params['timeInForce'] = 'GTX'  # Good Till Crossing (Post-Only)
+        elif exchange.name == 'binance':
+            params['timeInForce'] = 'GTX'
 
         logger.debug(
             f"Limit maker: {side} {amount} @ {limit_price}"
         )
 
-        return await exchange.exchange.create_order(
-            symbol=exchange_symbol,
-            type='limit',
+        return await exchange.create_limit_order(
+            symbol=symbol,
             side=side,
             amount=amount,
             price=float(limit_price),
             params=params
         )
-
-    def _round_price(self, price: Decimal, symbol: str) -> Decimal:
-        """Round price to appropriate precision for symbol"""
-
-        # Determine precision based on price magnitude
-        if price >= Decimal('1000'):
-            # For prices > 1000 - 2 decimal places
-            return price.quantize(Decimal('0.01'))
-        elif price >= Decimal('100'):
-            # For prices 100-1000 - 3 decimal places
-            return price.quantize(Decimal('0.001'))
-        elif price >= Decimal('10'):
-            # For prices 10-100 - 4 decimal places
-            return price.quantize(Decimal('0.0001'))
-        elif price >= Decimal('1'):
-            # For prices 1-10 - 5 decimal places
-            return price.quantize(Decimal('0.00001'))
-        elif price >= Decimal('0.1'):
-            # For prices 0.1-1 - 6 decimal places
-            return price.quantize(Decimal('0.000001'))
-        elif price >= Decimal('0.01'):
-            # For prices 0.01-0.1 - 7 decimal places
-            return price.quantize(Decimal('0.0000001'))
-        else:
-            # For prices < 0.01 - 8 decimal places (max precision)
-            return price.quantize(Decimal('0.00000001'))
 
     async def _log_order_execution(
         self,
@@ -578,17 +499,15 @@ class OrderExecutor:
 
     async def cancel_open_orders(self, symbol: str, exchange_name: str) -> int:
         """
-        Cancel all open orders for symbol
-        Used for cleanup before placing new orders
+        Cancel all open orders for symbol using Wrappers
         """
-
         exchange = self.exchanges.get(exchange_name)
         if not exchange:
             return 0
 
         try:
-            # Fetch open orders
-            open_orders = await exchange.exchange.fetch_open_orders(symbol)
+            # Use Wrapper (handles symbol conversion)
+            open_orders = await exchange.fetch_open_orders(symbol)
 
             if not open_orders:
                 return 0
@@ -596,11 +515,13 @@ class OrderExecutor:
             cancelled_count = 0
             for order in open_orders:
                 try:
-                    await exchange.exchange.cancel_order(order['id'], symbol)
+                    # Use Wrapper (handles params/algo fallback if needed)
+                    # Use dictionary access (OrderResult supports __getitem__)
+                    await exchange.cancel_order(order['id'], symbol)
                     cancelled_count += 1
                     logger.info(f"Cancelled order {order['id']} for {symbol}")
                 except Exception as e:
-                    logger.warning(f"Failed to cancel order {order['id']}: {e}")
+                    logger.warning(f"Failed to cancel order {order.get('id')}: {e}")
 
             return cancelled_count
 
