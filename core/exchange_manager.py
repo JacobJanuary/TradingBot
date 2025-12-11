@@ -1245,15 +1245,21 @@ class ExchangeManager:
 
             # DECEMBER 2025 MIGRATION: Use NEW Algo Order API
             # Old create_order with type='STOP_MARKET' returns error -4120
+            # Format symbol for Binance (remove / and :USDT)
             binance_symbol = symbol.replace('/', '').replace(':USDT', '')
+
+            # FIX (Dec 11, 2025): Format price and quantity to precision
+            # This fixes error -1111 for assets with high precision (e.g. RSRUSDT)
+            sl_price_formatted = self.price_to_precision(symbol, new_sl_price)
+            amount_formatted = self.amount_to_precision(symbol, amount)
             
             params = {
                 'algoType': 'CONDITIONAL',
                 'symbol': binance_symbol,
                 'side': close_side,
                 'type': 'STOP_MARKET',
-                'triggerPrice': str(new_sl_price),
-                'quantity': str(amount),
+                'triggerPrice': str(sl_price_formatted),
+                'quantity': str(amount_formatted),
                 'reduceOnly': 'true',
                 'workingType': 'CONTRACT_PRICE',
                 'priceProtect': 'FALSE',
