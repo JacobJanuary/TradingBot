@@ -552,32 +552,29 @@ class StopLossManager:
         final_stop_price = float(stop_price)
         final_stop_price = self.exchange.price_to_precision(symbol, final_stop_price)
         
+        # CRITICAL: CCXT price_to_precision() uses symbol-specific precision from market data
+        # - For JELLYJELLYUSDT: tickSize might be 0.00000001 (8 decimals)
+        # - For BTCUSDT: tickSize might be 0.1 (1 decimal)
+        # - Precision is NOT fixed - it varies by symbol!
+        # 
+        # CCXT reads this from exchangeInfo endpoint:
+        # - PRICE_FILTER.tickSize for price precision
+        # - LOT_SIZE.stepSize for amount precision
+        #
+        # DO NOT override with fixed decimal limit - trust CCXT!
+        
         # Prepare Algo API parameters (NEW format for December 2025 migration)
-        # CRITICAL FIX (December 11, 2025): Precision Validation
-        # Prevent Binance error -1111: "Precision is over the maximum defined for this asset"
-        # Issue: Low-price symbols like JELLYJELLYUSDT can have excessive decimal places
-        # (e.g., 0.0461340000000000 instead of 0.04613400)
-        # Solution: Validate precision before API call
-        from core.precision_validator import PrecisionValidator
-        
-        validated_stop_price = PrecisionValidator.validate_price(
-            final_stop_price, symbol, self.exchange_name
-        )
-        validated_amount = PrecisionValidator.validate_amount(
-            amount, symbol, self.exchange_name
-        )
-        
-        # Build params with validated values
         params = {
             'algoType': 'CONDITIONAL',  # Required for conditional orders
             'symbol': binance_symbol,
             'side': side.upper(),  # BUY or SELL
             'type': 'STOP_MARKET',  # Order type within algo
-            'triggerPrice': str(validated_stop_price),  # ← VALIDATED
-            'quantity': str(float(validated_amount)),  # ← VALIDATED
+            'triggerPrice': str(final_stop_price),  # ← CCXT precision applied
+            'quantity': str(float(amount)),  # ← Will be validated by exchange
             'reduceOnly': 'true',  # String, not boolean
             'workingType': 'CONTRACT_PRICE',  # Trigger based on contract price
             'priceProtect': 'FALSE',  # String, not boolean
+
             'timeInForce': 'GTC',  # Good Till Cancel
             'timestamp': self.exchange.milliseconds()  # Required
         }
