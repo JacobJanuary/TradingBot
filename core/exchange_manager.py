@@ -1047,6 +1047,47 @@ class ExchangeManager:
                     f"🗑️  Cancelled {len(sl_orders)} SL order(s) in {total_cancel_time:.2f}ms total"
                 )
 
+            # Step 1.1: CANCEL open ALGO orders (Fix -4045 Error)
+            # Since we now use Algo API for creation, we MUST cancel them via Algo API
+            try:
+                # Format symbol for Binance
+                algo_symbol = symbol.replace('/', '').replace(':USDT', '')
+
+                # Fetch (no rate limiter wrapper needed for direct call typically, but safer)
+                algo_res = await self.exchange.fapiPrivateGetOpenAlgoOrders({
+                    'symbol': algo_symbol,
+                    'algoType': 'STOP_MARKET'
+                })
+
+                algo_orders = []
+                if isinstance(algo_res, dict) and 'orders' in algo_res:
+                    algo_orders = algo_res['orders']
+                elif isinstance(algo_res, list):
+                    algo_orders = algo_res
+
+                if algo_orders:
+                    logger.info(f"🔍 Found {len(algo_orders)} existing Algo SL orders to cancel")
+                    
+                    for ao in algo_orders:
+                        try:
+                            cancel_start = now_utc()
+                            await self.exchange.fapiPrivateDeleteAlgoOrder({
+                                'symbol': algo_symbol,
+                                'algoId': ao['algoId']
+                            })
+                            cancel_duration = (now_utc() - cancel_start).total_seconds() * 1000
+                            logger.info(f"🗑️  Cancelled Algo Order {ao['algoId']} in {cancel_duration:.2f}ms")
+                            result['cancel_time_ms'] += int(cancel_duration)
+                            result['orders_cancelled'] += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel Algo Order {ao.get('algoId')}: {e}")
+
+            except Exception as e:
+                # Don't fail the whole update if algo fetch fails (e.g. permission or network)
+                # But log warning as this is critical for preventing -4045
+                logger.warning(f"⚠️ Failed to check/cancel Algo Orders: {e}") 
+
+
             # Step 2: Create new SL IMMEDIATELY (NO SLEEP!)
             create_start = now_utc()
 
