@@ -1334,13 +1334,56 @@ class ExchangeManager:
     async def cancel_order(self, order_id: str, symbol: str) -> bool:
         """Cancel order"""
         try:
-            result = await self.exchange.cancel_order(order_id, symbol)
+            # CRITICAL FIX: Convert symbol to exchange format
+            exchange_symbol = self.find_exchange_symbol(symbol)
+            if not exchange_symbol:
+                logger.warning(f"Symbol {symbol} not found for cancellation")
+                return False
+
+            result = await self.exchange.cancel_order(order_id, exchange_symbol)
             return result.get('status') == 'canceled'
-        except ccxt.OrderNotFound:
-            # Order not found is expected (already filled/cancelled/expired) - not an error
+            
+        except (ccxt.OrderNotFound, ccxt.OrderNotCached) as e:
+            # Maybe it's an Algo Order? (Binance December 2025 Migration)
+            if self.name == 'binance':
+                try:
+                    # Try to cancel as Algo Order
+                    # Remove slash for Algo API
+                    algo_symbol = exchange_symbol.replace('/', '').replace(':USDT', '')
+                    
+                    logger.info(f"Order {order_id} not found as standard, trying Algo cancellation...")
+                    await self.exchange.fapiPrivateDeleteAlgoOrder({
+                        'symbol': algo_symbol,
+                        'algoId': order_id
+                    })
+                    logger.info(f"✅ Successfully cancelled Algo Order {order_id}")
+                    return True
+                except Exception as algo_e:
+                    logger.warning(f"Failed to cancel as Algo Order {order_id}: {algo_e}")
+                    # Original error was OrderNotFound, so return False (already gone)
+                    return False
+            
             logger.info(f"Order {order_id} not found (likely filled/cancelled)")
             return False
+            
         except ccxt.BaseError as e:
+            # Handle "Unknown order sent" (-2011) which CCXT might raise as ExchangeError
+            if self.name == 'binance' and '-2011' in str(e):
+                try:
+                    # Try to cancel as Algo Order
+                    algo_symbol = exchange_symbol.replace('/', '').replace(':USDT', '')
+                    
+                    logger.info(f"Order {order_id} unknown (-2011), trying Algo cancellation...")
+                    await self.exchange.fapiPrivateDeleteAlgoOrder({
+                        'symbol': algo_symbol,
+                        'algoId': order_id
+                    })
+                    logger.info(f"✅ Successfully cancelled Algo Order {order_id}")
+                    return True
+                except Exception as algo_e:
+                    logger.error(f"Failed to cancel as Algo Order {order_id} (after -2011): {algo_e}")
+                    return False
+
             logger.error(f"Failed to cancel order {order_id}: {e}")
             raise
 
