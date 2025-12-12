@@ -54,7 +54,7 @@ class StopLossManager:
                           If None, accepts any side (backward compatibility)
 
         Returns:
-            Tuple[bool, Optional[str]]: (has_sl, sl_price)
+            Tuple[bool, Optional[str], Optional[str]]: (has_sl, sl_price, algo_id)
 
         Проверяет в следующем порядке:
         1. Binance: Algo orders ONLY (December 2025 migration)
@@ -102,20 +102,20 @@ class StopLossManager:
                             
                             # Found matching Algo SL
                             trigger_price = algo_order.get('triggerPrice')
-                            algo_id = algo_order.get('algoId')
+                            algo_id = str(algo_order.get('algoId'))
                             
                             self.logger.info(
                                 f"✅ {symbol} has Algo SL: algoId={algo_id} at {trigger_price}"
                             )
-                            return True, trigger_price
+                            return True, trigger_price, algo_id
                     
                     # No Algo SL found
                     self.logger.debug(f"No Algo SL found for {symbol}")
-                    return False, None
+                    return False, None, None
                     
                 except Exception as e:
                     self.logger.error(f"Error checking Algo orders for {symbol}: {e}")
-                    return False, None
+                    return False, None, None
 
             # ============================================================
             # ПРИОРИТЕТ 1: Position-attached Stop Loss (для Bybit)
@@ -149,7 +149,7 @@ class StopLossManager:
                                 self.logger.info(
                                     f"✅ Position {symbol} has Stop Loss: {stop_loss}"
                                 )
-                                return True, stop_loss
+                                return True, stop_loss, None
                             else:
                                 self.logger.debug(
                                     f"No position-attached SL for {symbol} "
@@ -192,23 +192,24 @@ class StopLossManager:
                                 continue  # Skip this order - wrong side
 
                         sl_price = self._extract_stop_price(order)
+                        order_id = str(order.get('id'))
                         self.logger.info(
-                            f"✅ Position {symbol} has Stop Loss order: {order.get('id')} "
+                            f"✅ Position {symbol} has Stop Loss order: {order_id} "
                             f"at {sl_price}"
                         )
-                        return True, str(sl_price) if sl_price else None
+                        return True, str(sl_price) if sl_price else None, order_id
 
             except Exception as e:
                 self.logger.debug(f"Could not check stop orders for {symbol}: {e}")
 
             # Нет Stop Loss
             self.logger.debug(f"No Stop Loss found for {symbol}")
-            return False, None
+            return False, None, None
 
         except Exception as e:
             self.logger.error(f"Error checking Stop Loss for {symbol}: {e}")
             # В случае ошибки безопаснее вернуть False
-            return False, None
+            return False, None, None
 
     async def set_stop_loss(
         self,
@@ -237,7 +238,7 @@ class StopLossManager:
 
         try:
             # ШАГ 1: Проверить что SL еще не установлен
-            has_sl, existing_sl = await self.has_stop_loss(symbol)
+            has_sl, existing_sl, existing_algo_id = await self.has_stop_loss(symbol)
 
             # ✅ FIX #1.3: Check if TS is active before validating/cancelling
             ts_active = await self._is_trailing_stop_active(symbol)
@@ -254,7 +255,7 @@ class StopLossManager:
             if has_sl:
             # NEW FIX (Dec 11, 2025): Check if this SL was created in CURRENT operation
             # This prevents retry loop from detecting own SL as "existing from previous position"
-                if created_in_operation and str(existing_sl) == str(created_in_operation):
+                if created_in_operation and existing_algo_id and str(existing_algo_id) == str(created_in_operation):
                     self.logger.info(
                         f"✅ {symbol}: SL already created in THIS operation "
                         f"(algoId={created_in_operation}), reusing"
