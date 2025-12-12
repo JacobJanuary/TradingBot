@@ -372,7 +372,8 @@ class StopLossManager:
 
         try:
             # STEP 1: Check if Stop Loss exists
-            has_sl, existing_sl = await self.has_stop_loss(symbol)
+            # CRITICAL FIX (Dec 12, 2025): Unpack 3 values (has_sl, existing_sl, algo_id)
+            has_sl, existing_sl, _ = await self.has_stop_loss(symbol)
 
             if has_sl:
                 self.logger.debug(f"✅ SL verified for {symbol}: {existing_sl}")
