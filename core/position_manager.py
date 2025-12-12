@@ -3561,7 +3561,7 @@ class PositionManager:
                 try:
                     # ✅ FIX #1.4a: Pass position_manager for TS-awareness
                     sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
-                    has_sl_on_exchange, sl_price = await sl_manager.has_stop_loss(symbol)
+                    has_sl_on_exchange, sl_price, _ = await sl_manager.has_stop_loss(symbol)
 
                     logger.info(f"Checking position {symbol}: has_sl={has_sl_on_exchange}, price={sl_price}")
                     
