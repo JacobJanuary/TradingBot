@@ -44,7 +44,12 @@ class StopLossManager:
         self.position_manager = position_manager  # NEW
         self.logger = logger
 
-    async def has_stop_loss(self, symbol: str, position_side: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+    async def has_stop_loss(
+        self, 
+        symbol: str, 
+        position_side: Optional[str] = None,
+        target_algo_id: Optional[str] = None
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         ЕДИНСТВЕННАЯ функция проверки наличия Stop Loss.
 
@@ -52,6 +57,7 @@ class StopLossManager:
             symbol: CCXT unified symbol (e.g., 'BTC/USDT:USDT')
             position_side: Optional position side ('long' or 'short') for validation
                           If None, accepts any side (backward compatibility)
+            target_algo_id: Optional specific Algo ID to look for (for idempotency checks)
 
         Returns:
             Tuple[bool, Optional[str], Optional[str]]: (has_sl, sl_price, algo_id)
@@ -85,6 +91,15 @@ class StopLossManager:
                     for algo_order in algo_orders:
                         algo_type = algo_order.get('algoType')
                         algo_status = algo_order.get('algoStatus')
+                        current_algo_id = str(algo_order.get('algoId'))
+
+                        # NEW: If target_algo_id is specified, look for IT specifically
+                        if target_algo_id and current_algo_id == str(target_algo_id):
+                             trigger_price = algo_order.get('triggerPrice')
+                             self.logger.info(
+                                f"✅Found TARGET Algo SL for {symbol}: algoId={current_algo_id} at {trigger_price}"
+                             )
+                             return True, trigger_price, current_algo_id
                         
                         # Only check active CONDITIONAL orders
                         if algo_type == 'CONDITIONAL' and algo_status in ['NEW', 'WORKING']:
@@ -102,12 +117,11 @@ class StopLossManager:
                             
                             # Found matching Algo SL
                             trigger_price = algo_order.get('triggerPrice')
-                            algo_id = str(algo_order.get('algoId'))
                             
                             self.logger.info(
-                                f"✅ {symbol} has Algo SL: algoId={algo_id} at {trigger_price}"
+                                f"✅ {symbol} has Algo SL: algoId={current_algo_id} at {trigger_price}"
                             )
-                            return True, trigger_price, algo_id
+                            return True, trigger_price, current_algo_id
                     
                     # No Algo SL found
                     self.logger.debug(f"No Algo SL found for {symbol}")
@@ -238,7 +252,12 @@ class StopLossManager:
 
         try:
             # ШАГ 1: Проверить что SL еще не установлен
-            has_sl, existing_sl, existing_algo_id = await self.has_stop_loss(symbol)
+            # NEW FIX (Dec 12, 2025): Pass created_in_operation as target_algo_id
+            # This ensures we catch the exact SL we just created, even if others exist
+            has_sl, existing_sl, existing_algo_id = await self.has_stop_loss(
+                symbol, 
+                target_algo_id=created_in_operation
+            )
 
             # ✅ FIX #1.3: Check if TS is active before validating/cancelling
             ts_active = await self._is_trailing_stop_active(symbol)
