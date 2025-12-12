@@ -250,6 +250,13 @@ class StopLossManager:
         """
         self.logger.info(f"Setting Stop Loss for {symbol} at {stop_price}")
 
+        # CRITICAL FIX (Dec 12, 2025): Ensure types are Decimal
+        # This prevents "unsupported operand type(s) for -: 'decimal.Decimal' and 'float'"
+        # in _validate_existing_sl if caller passes float (e.g. from trailing_stop.py)
+        from utils.decimal_utils import to_decimal
+        stop_price = to_decimal(stop_price)
+        amount = to_decimal(amount)
+
         try:
             # ШАГ 1: Проверить что SL еще не установлен
             # NEW FIX (Dec 12, 2025): Pass created_in_operation as target_algo_id
