@@ -59,7 +59,7 @@ class TestPlaceholderProtectionCheck:
         # Mock StopLossManager.has_stop_loss to track if it's called
         with patch('core.stop_loss_manager.StopLossManager') as mock_sl_manager_class:
             mock_sl_manager = AsyncMock()
-            mock_sl_manager.has_stop_loss = AsyncMock(return_value=(False, None))
+            mock_sl_manager.has_stop_loss = AsyncMock(return_value=(False, None, None))
             mock_sl_manager_class.return_value = mock_sl_manager
 
             # Run protection check
@@ -95,7 +95,7 @@ class TestPlaceholderProtectionCheck:
         # Mock StopLossManager.has_stop_loss
         with patch('core.stop_loss_manager.StopLossManager') as mock_sl_manager_class:
             mock_sl_manager = AsyncMock()
-            mock_sl_manager.has_stop_loss = AsyncMock(return_value=(False, None))
+            mock_sl_manager.has_stop_loss = AsyncMock(return_value=(False, None, None))
             mock_sl_manager_class.return_value = mock_sl_manager
 
             # Run protection check
@@ -168,7 +168,7 @@ class TestPlaceholderProtectionCheck:
         # Mock StopLossManager
         with patch('core.stop_loss_manager.StopLossManager') as mock_sl_manager_class:
             mock_sl_manager = AsyncMock()
-            mock_sl_manager.has_stop_loss = AsyncMock(return_value=(False, None))
+            mock_sl_manager.has_stop_loss = AsyncMock(return_value=(False, None, None))
             mock_sl_manager_class.return_value = mock_sl_manager
 
             # Run protection check

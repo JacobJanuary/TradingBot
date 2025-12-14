@@ -6,9 +6,9 @@ from typing import List, Dict
 import ccxt.async_support as ccxt
 from dotenv import load_dotenv
 
-# Add project root to path to allow importing if needed, 
-# though we try to keep this standalone.
+# Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 async def main():
     # Load environment variables
@@ -42,11 +42,10 @@ async def main():
     try:
         # Verify connection
         await exchange.load_markets()
-        print("Connected to Binance.")
+        print("Connected to Binance.\n")
 
         # Fetch positions
         print("Fetching open positions...")
-        # We fetch all positions and filter locally
         positions = await exchange.fetch_positions()
         
         open_positions = []
@@ -60,28 +59,72 @@ async def main():
             await exchange.close()
             return
 
-        print(f"\nFound {len(open_positions)} open positions:")
-        print(f"{'Symbol':<15} {'Side':<10} {'Size':<15} {'PnL (USDT)':<15}")
-        print("-" * 60)
+        # Display positions with numbers
+        print(f"\n{'#':<4} {'Symbol':<15} {'Side':<8} {'Size':<15} {'Entry':<12} {'Mark':<12} {'PnL (USDT)':<12} {'PnL %':<10}")
+        print("-" * 100)
         
-        for pos in open_positions:
+        for i, pos in enumerate(open_positions, 1):
             symbol = pos['symbol']
-            side = pos['side']
+            side = pos['side'].upper()
             size = pos['contracts']
-            pnl = pos['unrealizedPnl']
-            print(f"{symbol:<15} {side:<10} {size:<15} {pnl:<15}")
+            entry_price = float(pos.get('entryPrice', 0))
+            mark_price = float(pos.get('markPrice', 0))
+            pnl = float(pos.get('unrealizedPnl', 0))
+            pnl_pct = float(pos.get('percentage', 0))
+            
+            # Color coding for PnL
+            pnl_str = f"${pnl:+.2f}"
+            pnl_pct_str = f"{pnl_pct:+.2f}%"
+            
+            print(f"{i:<4} {symbol:<15} {side:<8} {size:<15} {entry_price:<12.6f} {mark_price:<12.6f} {pnl_str:<12} {pnl_pct_str:<10}")
 
-        print("-" * 60)
-        confirm = input(f"\nAre you sure you want to CLOSE ALL {len(open_positions)} positions at MARKET price? (yes/no): ")
+        print("-" * 100)
+        print(f"\nTotal positions: {len(open_positions)}")
+        print("\nOptions:")
+        print("  Enter position number (1-{}) to close specific position".format(len(open_positions)))
+        print("  Enter 'all' to close ALL positions")
+        print("  Enter 'q' or press Enter to quit")
         
-        if confirm.lower() != 'yes':
+        choice = input("\nEnter your choice: ").strip().lower()
+        
+        if not choice or choice == 'q':
             print("Operation cancelled.")
             await exchange.close()
             return
+        
+        positions_to_close = []
+        
+        if choice == 'all':
+            confirm = input(f"\n⚠️  Are you sure you want to CLOSE ALL {len(open_positions)} positions? (yes/no): ")
+            if confirm.lower() != 'yes':
+                print("Operation cancelled.")
+                await exchange.close()
+                return
+            positions_to_close = open_positions
+        else:
+            try:
+                pos_num = int(choice)
+                if 1 <= pos_num <= len(open_positions):
+                    selected_pos = open_positions[pos_num - 1]
+                    confirm = input(f"\nClose {selected_pos['symbol']} ({selected_pos['side']} {selected_pos['contracts']})? (yes/no): ")
+                    if confirm.lower() != 'yes':
+                        print("Operation cancelled.")
+                        await exchange.close()
+                        return
+                    positions_to_close = [selected_pos]
+                else:
+                    print(f"Invalid number. Must be between 1 and {len(open_positions)}")
+                    await exchange.close()
+                    return
+            except ValueError:
+                print("Invalid input. Enter a number, 'all', or 'q'.")
+                await exchange.close()
+                return
 
+        # Close selected positions
         print("\nClosing positions...")
         
-        for pos in open_positions:
+        for pos in positions_to_close:
             symbol = pos['symbol']
             side = pos['side']
             amount = pos['contracts']
@@ -108,8 +151,10 @@ async def main():
     finally:
         await exchange.close()
 
+
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nScript interrupted by user.")
+

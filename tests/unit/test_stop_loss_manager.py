@@ -26,6 +26,13 @@ class TestStopLossManagerTSAwareness:
         exchange.fetch_open_orders = AsyncMock(return_value=[])
         exchange.create_order = AsyncMock(return_value={'id': '12345'})
         exchange.cancel_order = AsyncMock()
+        exchange.fapiPrivatePostAlgoOrder = AsyncMock(return_value={'algoId': '12345', 'code': 200, 'msg': 'success'})
+        exchange.fapiPrivateGetOpenAlgoOrders = AsyncMock(return_value=[])
+        
+        # Mock precision helpers
+        exchange.price_to_precision = Mock(side_effect=lambda s, p: str(float(p)))
+        exchange.amount_to_precision = Mock(side_effect=lambda s, a: str(float(a)))
+        
         return exchange
 
     @pytest.fixture
@@ -127,9 +134,9 @@ class TestStopLossManagerTSAwareness:
     @pytest.mark.asyncio
     async def test_is_trailing_stop_active_ts_not_active(self, mock_exchange, mock_position_manager):
         """Test #1.2: _is_trailing_stop_active returns False when TS exists but not active."""
-        # TS exists but state is MONITORING (not ACTIVE)
+        # TS exists but state is WAITING (not ACTIVE)
         mock_ts_instance = Mock()
-        mock_ts_instance.state = TrailingStopState.MONITORING  # Not ACTIVE
+        mock_ts_instance.state = TrailingStopState.WAITING  # Not ACTIVE
 
         mock_trailing_manager = Mock()
         mock_trailing_manager.trailing_stops = {
@@ -173,13 +180,14 @@ class TestStopLossManagerTSAwareness:
         )
 
         # Mock has_stop_loss to return True (SL exists)
-        sl_manager.has_stop_loss = AsyncMock(return_value=(True, '50000'))
+        sl_manager.has_stop_loss = AsyncMock(return_value=(True, '50000', '123456789'))
 
         # Call set_stop_loss
         result = await sl_manager.set_stop_loss(
             symbol='BTCUSDT',
             stop_price=Decimal('49000'),
-            side='BUY'
+            side='BUY',
+            amount=Decimal('0.1')
         )
 
         # Should return early with ts_active status
@@ -203,7 +211,7 @@ class TestStopLossManagerTSAwareness:
         )
 
         # Mock has_stop_loss to return False (no SL)
-        sl_manager.has_stop_loss = AsyncMock(return_value=(False, None))
+        sl_manager.has_stop_loss = AsyncMock(return_value=(False, None, None))
 
         # Mock create_stop_loss_order to succeed
         mock_exchange.create_order.return_value = {
@@ -216,14 +224,16 @@ class TestStopLossManagerTSAwareness:
         result = await sl_manager.set_stop_loss(
             symbol='BTCUSDT',
             stop_price=Decimal('49000'),
-            side='BUY'
+            side='BUY',
+            amount=Decimal('0.1')
         )
 
-        # Should proceed to create SL order
+        # Should proceed to create SL order (using ALGO API)
         assert result['status'] == 'success'
 
-        # Should have called create_order
-        mock_exchange.create_order.assert_called_once()
+        # Should have called fapiPrivatePostAlgoOrder (Algo API) NOT create_order
+        mock_exchange.fapiPrivatePostAlgoOrder.assert_called_once()
+        mock_exchange.create_order.assert_not_called()
 
 
 if __name__ == '__main__':
