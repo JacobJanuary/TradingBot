@@ -3,7 +3,7 @@
 Binance Futures 24h Trading Report
 
 Uses Income API for accurate realized PnL data.
-Shows: closed trades, commissions, funding fees, and summary.
+Fetches entry trades (even if opened before 24h) for complete round-trip details.
 """
 
 import os
@@ -16,7 +16,6 @@ import ccxt.async_support as ccxt
 from dotenv import load_dotenv
 import logging
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -56,13 +55,13 @@ class BinanceReporter:
             'enableRateLimit': True,
             'options': {'defaultType': 'future'}
         })
-        self.income_data = []
-        self.trades_data = []
+        self.income_data = {}
+        self.round_trips = []  # Complete round trips with entry/exit
         self.start_ts = 0
         self.end_ts = 0
 
     async def fetch_income_history(self):
-        """Fetch all income records for the period."""
+        """Fetch all income records for the 24h period."""
         all_income = []
         params = {"startTime": self.start_ts, "endTime": self.end_ts, "limit": 1000}
         
@@ -73,24 +72,157 @@ class BinanceReporter:
             all_income.extend(income)
             if len(income) < 1000:
                 break
-            last_time = int(income[-1].get('time', 0))
-            params['startTime'] = last_time + 1
+            params['startTime'] = int(income[-1].get('time', 0)) + 1
         
         return all_income
 
-    async def fetch_trades_for_symbol(self, symbol_raw: str):
-        """Fetch trades for a symbol using direct API."""
+    async def fetch_all_trades_for_symbol(self, symbol_raw: str, max_days_back: int = 30):
+        """Fetch ALL trades for a symbol going back up to max_days_back days.
+        Uses 7-day chunks due to Binance API limit.
+        """
+        all_trades = []
+        
+        now_ts = self.end_ts
+        # Go back in 7-day chunks
+        chunk_days = 7
+        chunk_ms = chunk_days * 24 * 60 * 60 * 1000
+        
+        search_end = now_ts
+        oldest_ts = int((datetime.now() - timedelta(days=max_days_back)).timestamp() * 1000)
+        
         try:
-            params = {
-                'symbol': symbol_raw,
-                'startTime': self.start_ts,
-                'endTime': self.end_ts,
-                'limit': 500
-            }
-            return await self.exchange.fapiPrivateGetUserTrades(params)
+            while search_end > oldest_ts:
+                search_start = max(search_end - chunk_ms, oldest_ts)
+                
+                params = {
+                    'symbol': symbol_raw,
+                    'startTime': search_start,
+                    'endTime': search_end,
+                    'limit': 1000
+                }
+                
+                trades = await self.exchange.fapiPrivateGetUserTrades(params)
+                if trades:
+                    all_trades.extend(trades)
+                
+                # Move to previous chunk
+                search_end = search_start - 1
+                
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.1)
+                
         except Exception as e:
             logger.warning(f"Failed to fetch trades for {symbol_raw}: {e}")
+        
+        return all_trades
+
+
+    def build_round_trips(self, trades: list, symbol: str):
+        """Build complete round trips from trade history using FIFO."""
+        if not trades:
             return []
+        
+        # Sort by time
+        trades = sorted(trades, key=lambda x: int(x.get('time', 0)))
+        
+        open_queue = []  # [{'qty', 'price', 'time', 'side', 'commission'}]
+        round_trips = []
+        
+        for trade in trades:
+            side = trade.get('side', '').upper()
+            price = Decimal(str(trade.get('price', 0)))
+            qty = Decimal(str(trade.get('qty', 0)))
+            time_ms = int(trade.get('time', 0))
+            dt = datetime.fromtimestamp(time_ms / 1000)
+            commission = Decimal(str(trade.get('commission', 0)))
+            realized_pnl = Decimal(str(trade.get('realizedPnl', 0)))
+            
+            # Is this closing an existing position?
+            is_closing = False
+            if open_queue and open_queue[0]['side'] != side:
+                is_closing = True
+            
+            if not is_closing:
+                # Opening or adding to position
+                open_queue.append({
+                    'qty': qty, 
+                    'price': price, 
+                    'time': time_ms, 
+                    'dt': dt,
+                    'side': side,
+                    'commission': commission
+                })
+            else:
+                # Closing position (FIFO)
+                qty_to_close = qty
+                
+                while qty_to_close > Decimal('1e-9') and open_queue:
+                    pos = open_queue[0]
+                    matched = min(qty_to_close, pos['qty'])
+                    
+                    # Direction
+                    direction = 'LONG' if pos['side'] == 'BUY' else 'SHORT'
+                    
+                    # Calculate PnL
+                    if pos['side'] == 'BUY':
+                        pnl = (price - pos['price']) * matched
+                    else:
+                        pnl = (pos['price'] - price) * matched
+                    
+                    # Duration
+                    duration_sec = (time_ms - pos['time']) / 1000
+                    duration = self._format_duration(duration_sec)
+                    
+                    # Only add if closed within our 24h window
+                    if time_ms >= self.start_ts:
+                        round_trips.append({
+                            'symbol': symbol,
+                            'direction': direction,
+                            'entry_price': pos['price'],
+                            'entry_time': pos['dt'],
+                            'exit_price': price,
+                            'exit_time': dt,
+                            'qty': matched,
+                            'gross_pnl': pnl,
+                            'realized_pnl': realized_pnl * (matched / qty) if qty > 0 else Decimal(0),
+                            'commission': pos['commission'] + commission * (matched / qty),
+                            'duration': duration,
+                            'duration_sec': duration_sec
+                        })
+                    
+                    pos['qty'] -= matched
+                    qty_to_close -= matched
+                    
+                    if pos['qty'] <= Decimal('1e-9'):
+                        open_queue.pop(0)
+                
+                # Remainder = position reversal
+                if qty_to_close > Decimal('1e-9'):
+                    open_queue.append({
+                        'qty': qty_to_close, 
+                        'price': price, 
+                        'time': time_ms,
+                        'dt': dt,
+                        'side': side,
+                        'commission': commission * (qty_to_close / qty)
+                    })
+        
+        return round_trips
+
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration in human readable format."""
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            return f"{int(seconds/60)}m"
+        elif seconds < 86400:
+            hours = int(seconds / 3600)
+            mins = int((seconds % 3600) / 60)
+            return f"{hours}h {mins}m"
+        else:
+            days = int(seconds / 86400)
+            hours = int((seconds % 86400) / 3600)
+            return f"{days}d {hours}h"
 
     async def run_analysis(self):
         try:
@@ -101,6 +233,7 @@ class BinanceReporter:
             print(f"⏱  Период: {(now - timedelta(hours=24)).strftime('%d.%m %H:%M')} - {now.strftime('%d.%m %H:%M')}")
             print()
 
+            # 1. Fetch Income History to find symbols with activity
             print(f"{Fore.CYAN}📊 Загрузка Income History...{Style.RESET_ALL}")
             income_records = await self.fetch_income_history()
             
@@ -108,8 +241,8 @@ class BinanceReporter:
                 print(f"{Fore.YELLOW}⚠️ Нет данных за период{Style.RESET_ALL}")
                 return
             
+            # Group by type
             realized_pnl = []
-            commissions = []
             funding_fees = []
             symbols = set()
             
@@ -118,129 +251,140 @@ class BinanceReporter:
                 symbol = record.get('symbol', '')
                 amount = Decimal(str(record.get('income', 0)))
                 time = int(record.get('time', 0))
-                dt = datetime.fromtimestamp(time / 1000)
                 
                 if income_type == 'REALIZED_PNL':
-                    realized_pnl.append({'symbol': symbol, 'pnl': amount, 'time': time, 'dt': dt})
+                    realized_pnl.append({'symbol': symbol, 'pnl': amount, 'time': time})
                     symbols.add(symbol)
-                elif income_type == 'COMMISSION':
-                    commissions.append({'symbol': symbol, 'amount': amount, 'time': time})
                 elif income_type == 'FUNDING_FEE':
                     funding_fees.append({'symbol': symbol, 'amount': amount, 'time': time})
             
-            print(f"   Записей: {len(income_records)} | PnL: {len(realized_pnl)} | Comm: {len(commissions)} | Fund: {len(funding_fees)}")
+            print(f"   Закрытых позиций: {len(realized_pnl)} | Funding: {len(funding_fees)}")
             print()
 
-            print(f"{Fore.CYAN}📊 Загрузка деталей сделок...{Style.RESET_ALL}")
+            # 2. For each symbol with closed trades, fetch FULL trade history
+            print(f"{Fore.CYAN}📊 Загрузка полной истории сделок (до 30 дней)...{Style.RESET_ALL}")
             
             for symbol_raw in symbols:
-                trades = await self.fetch_trades_for_symbol(symbol_raw)
+                print(f"   {symbol_raw}...", end=" ")
+                trades = await self.fetch_all_trades_for_symbol(symbol_raw, max_days_back=30)
+                
                 if trades:
-                    for trade in trades:
-                        self.trades_data.append({
-                            'symbol': symbol_raw,
-                            'side': trade.get('side'),
-                            'price': Decimal(str(trade.get('price', 0))),
-                            'qty': Decimal(str(trade.get('qty', 0))),
-                            'realized_pnl': Decimal(str(trade.get('realizedPnl', 0))),
-                            'commission': Decimal(str(trade.get('commission', 0))),
-                            'time': int(trade.get('time', 0)),
-                            'dt': datetime.fromtimestamp(int(trade.get('time', 0)) / 1000)
-                        })
-                    print(f"   {symbol_raw}: {len(trades)} trades")
+                    print(f"{len(trades)} trades")
+                    round_trips = self.build_round_trips(trades, symbol_raw)
+                    self.round_trips.extend(round_trips)
+                else:
+                    print("0")
             
+            # Store funding fees
             self.income_data = {
-                'realized_pnl': realized_pnl,
-                'commissions': commissions,
-                'funding_fees': funding_fees,
-                'symbols': symbols
+                'funding_fees': funding_fees
             }
+            
             print()
 
         finally:
             await self.exchange.close()
 
     def generate_report(self):
-        if not self.income_data:
-            print("Нет данных.")
+        if not self.round_trips:
+            print("Нет закрытых сделок за период.")
             return
 
-        data = self.income_data
+        # Sort by exit time
+        self.round_trips.sort(key=lambda x: x['exit_time'])
         
-        total_pnl = sum(r['pnl'] for r in data['realized_pnl'])
-        total_commission = sum(abs(c['amount']) for c in data['commissions'])
-        total_funding = sum(f['amount'] for f in data['funding_fees'])
+        # Calculate totals
+        total_pnl = sum(rt['gross_pnl'] for rt in self.round_trips)
+        total_commission = sum(abs(rt['commission']) for rt in self.round_trips)
+        total_funding = sum(f['amount'] for f in self.income_data.get('funding_fees', []))
         net_total = total_pnl - total_commission + total_funding
         
-        wins = sum(1 for r in data['realized_pnl'] if r['pnl'] > 0)
-        losses = sum(1 for r in data['realized_pnl'] if r['pnl'] < 0)
-        total_trades = len(data['realized_pnl'])
+        wins = sum(1 for rt in self.round_trips if rt['gross_pnl'] > 0)
+        losses = sum(1 for rt in self.round_trips if rt['gross_pnl'] < 0)
+        total_trades = len(self.round_trips)
         win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 
-        if self.trades_data:
-            self.trades_data.sort(key=lambda x: x['time'])
-            
-            table_rows = []
-            for trade in self.trades_data:
-                pnl = trade['realized_pnl']
-                if pnl == 0:
-                    continue
-                color = Fore.GREEN if pnl > 0 else Fore.RED
-                
-                table_rows.append([
-                    trade['dt'].strftime('%d.%m %H:%M'),
-                    trade['symbol'].replace('USDT', ''),
-                    trade['side'],
-                    f"{float(trade['price']):.4f}",
-                    f"{float(trade['qty']):.4f}",
-                    f"{float(trade['commission']):.4f}",
-                    f"{color}{float(pnl):+.2f}{Style.RESET_ALL}"
-                ])
-            
-            if table_rows:
-                print("=" * 90)
-                print("📊 ЗАКРЫТЫЕ СДЕЛКИ (24ч)")
-                print("=" * 90)
-                
-                headers = ["Время", "Symbol", "Side", "Price", "Qty", "Comm", "PnL"]
-                if HAS_TABULATE:
-                    print(tabulate(table_rows, headers=headers, tablefmt="simple_grid"))
-                else:
-                    print(" | ".join(headers))
-                    print("-" * 90)
-                    for row in table_rows:
-                        print(" | ".join(str(x) for x in row))
+        # Print detailed trades table
+        print("=" * 120)
+        print("📊 ЗАКРЫТЫЕ СДЕЛКИ (24ч) - ПОЛНАЯ ИСТОРИЯ")
+        print("=" * 120)
         
-        if data['funding_fees']:
+        table_rows = []
+        for rt in self.round_trips:
+            pnl = float(rt['gross_pnl'])
+            color = Fore.GREEN if pnl > 0 else Fore.RED
+            
+            table_rows.append([
+                rt['entry_time'].strftime('%d.%m %H:%M'),
+                rt['symbol'].replace('USDT', ''),
+                rt['direction'],
+                f"{float(rt['entry_price']):.5f}",
+                rt['exit_time'].strftime('%d.%m %H:%M'),
+                f"{float(rt['exit_price']):.5f}",
+                f"{float(rt['qty']):.2f}",
+                rt['duration'],
+                f"{color}{pnl:+.2f}{Style.RESET_ALL}"
+            ])
+        
+        headers = ["Entry", "Symbol", "Dir", "Entry $", "Exit", "Exit $", "Qty", "Duration", "PnL"]
+        
+        if HAS_TABULATE:
+            print(tabulate(table_rows, headers=headers, tablefmt="simple_grid"))
+        else:
+            print(" | ".join(headers))
+            print("-" * 120)
+            for row in table_rows:
+                print(" | ".join(str(x) for x in row))
+        
+        # Funding fees
+        funding_fees = self.income_data.get('funding_fees', [])
+        if funding_fees:
             print()
             print("💰 FUNDING FEES:")
-            for fee in data['funding_fees'][:5]:
+            for fee in funding_fees[:5]:
                 dt = datetime.fromtimestamp(fee['time'] / 1000)
                 color = Fore.GREEN if fee['amount'] > 0 else Fore.RED
-                print(f"   {dt.strftime('%H:%M')} | {fee['symbol'].replace('USDT', '')}: {color}{float(fee['amount']):+.4f}{Style.RESET_ALL}")
-            if len(data['funding_fees']) > 5:
-                print(f"   ... и еще {len(data['funding_fees']) - 5}")
+                print(f"   {dt.strftime('%d.%m %H:%M')} | {fee['symbol'].replace('USDT', '')}: {color}{float(fee['amount']):+.4f}{Style.RESET_ALL}")
+            if len(funding_fees) > 5:
+                print(f"   ... и еще {len(funding_fees) - 5}")
 
+        # Summary
         print()
-        print("=" * 50)
+        print("=" * 60)
         print("📈 ИТОГО (24ч)")
-        print("=" * 50)
-        color_pnl = Fore.GREEN if total_pnl > 0 else Fore.RED
+        print("=" * 60)
+        
         color_net = Fore.GREEN if net_total > 0 else Fore.RED
         
-        print(f"Realized PnL:    {color_pnl}{float(total_pnl):+.2f} USDT{Style.RESET_ALL}")
+        print(f"Gross PnL:       {Fore.GREEN if total_pnl > 0 else Fore.RED}{float(total_pnl):+.2f} USDT{Style.RESET_ALL}")
         print(f"Комиссии:        {Fore.RED}-{float(total_commission):.2f} USDT{Style.RESET_ALL}")
         print(f"Funding:         {float(total_funding):+.4f} USDT")
-        print("-" * 50)
+        print("-" * 60)
         print(f"NET TOTAL:       {color_net}{float(net_total):+.2f} USDT{Style.RESET_ALL}")
-        print("-" * 50)
+        print("-" * 60)
         print(f"Сделок:          {total_trades} (Win: {Fore.GREEN}{wins}{Style.RESET_ALL} / Loss: {Fore.RED}{losses}{Style.RESET_ALL})")
         print(f"Win Rate:        {win_rate:.1f}%")
-        print("=" * 50)
         
-        self._save_markdown(data, total_pnl, total_commission, total_funding, net_total, wins, losses, win_rate)
+        # Avg duration
+        if self.round_trips:
+            avg_duration = sum(rt['duration_sec'] for rt in self.round_trips) / len(self.round_trips)
+            print(f"Avg Duration:    {self._format_duration(avg_duration)}")
+        
+        print("=" * 60)
+        
+        self._save_markdown(total_pnl, total_commission, total_funding, net_total, wins, losses, win_rate)
 
-    def _save_markdown(self, data, total_pnl, total_commission, total_funding, net_total, wins, losses, win_rate):
+    def _format_duration(self, seconds: float) -> str:
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            return f"{int(seconds/60)}m"
+        elif seconds < 86400:
+            return f"{int(seconds/3600)}h {int((seconds%3600)/60)}m"
+        else:
+            return f"{int(seconds/86400)}d {int((seconds%86400)/3600)}h"
+
+    def _save_markdown(self, total_pnl, total_commission, total_funding, net_total, wins, losses, win_rate):
         reports_dir = project_root / "reports"
         reports_dir.mkdir(exist_ok=True)
         filename = reports_dir / f"binance_24h_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.md"
@@ -251,31 +395,32 @@ class BinanceReporter:
             
             f.write("## Итого\n| Параметр | Значение |\n|---|---:|\n")
             f.write(f"| **Net Total** | **{float(net_total):+.2f} USDT** |\n")
-            f.write(f"| Realized PnL | {float(total_pnl):+.2f} USDT |\n")
+            f.write(f"| Gross PnL | {float(total_pnl):+.2f} USDT |\n")
             f.write(f"| Комиссии | -{float(total_commission):.2f} USDT |\n")
             f.write(f"| Funding | {float(total_funding):+.4f} USDT |\n")
             f.write(f"| Win/Loss | {wins}/{losses} |\n")
             f.write(f"| Win Rate | {win_rate:.1f}% |\n\n")
             
-            if self.trades_data:
-                f.write("## Сделки\n| Время | Symbol | Side | Price | Qty | PnL |\n|---|---|---|---:|---:|---:|\n")
-                for trade in sorted(self.trades_data, key=lambda x: x['time']):
-                    pnl = trade['realized_pnl']
-                    if pnl == 0:
-                        continue
-                    icon = "🟢" if pnl > 0 else "🔴"
-                    f.write(f"| {trade['dt'].strftime('%d.%m %H:%M')} | {trade['symbol'].replace('USDT', '')} | "
-                            f"{trade['side']} | {float(trade['price']):.4f} | {float(trade['qty']):.4f} | "
-                            f"{icon} {float(pnl):+.2f} |\n")
+            f.write("## Сделки\n")
+            f.write("| Entry | Symbol | Dir | Entry $ | Exit | Exit $ | Qty | Duration | PnL |\n")
+            f.write("|---|---|---|---:|---|---:|---:|---|---:|\n")
+            
+            for rt in self.round_trips:
+                pnl = rt['gross_pnl']
+                icon = "🟢" if pnl > 0 else "🔴"
+                f.write(f"| {rt['entry_time'].strftime('%d.%m %H:%M')} | {rt['symbol'].replace('USDT', '')} | "
+                        f"{rt['direction']} | {float(rt['entry_price']):.5f} | {rt['exit_time'].strftime('%d.%m %H:%M')} | "
+                        f"{float(rt['exit_price']):.5f} | {float(rt['qty']):.2f} | {rt['duration']} | "
+                        f"{icon} {float(pnl):+.2f} |\n")
         
         print(f"\n📄 Отчет: {Fore.CYAN}{filename}{Style.RESET_ALL}")
 
 
 async def main():
     print()
-    print(f"{Fore.CYAN}{'='*50}")
-    print("   BINANCE FUTURES - ОТЧЕТ 24Ч")
-    print(f"{'='*50}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'='*60}")
+    print("   BINANCE FUTURES - ОТЧЕТ 24Ч (С ПОЛНОЙ ИСТОРИЕЙ)")
+    print(f"{'='*60}{Style.RESET_ALL}")
     print()
     
     reporter = BinanceReporter()
