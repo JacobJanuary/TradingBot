@@ -992,7 +992,7 @@ class AtomicPositionManager:
                             created_in_operation=sl_created_in_operation  # NEW: Pass created SL
                         )
 
-                        if sl_result and sl_result.get('status') in ['created', 'already_exists']:
+                        if sl_result and sl_result.get('status') in ['created', 'already_exists', 'success']:
                             sl_placed = True
                             sl_order = sl_result
                             
@@ -1423,7 +1423,7 @@ class AtomicPositionManager:
                           self._calculate_default_sl(position['entry_price'], position['side']))
             )
 
-            if sl_result and sl_result.get('status') in ['created', 'already_exists']:
+            if sl_result and sl_result.get('status') in ['created', 'already_exists', 'success']:
                 # FIX: Use only columns that exist in database schema
                 await self.repository.update_position(position['id'], **{
                     'stop_loss_price': sl_result.get('stopPrice'),  # Setting this indicates SL is active

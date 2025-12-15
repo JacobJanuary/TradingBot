@@ -667,7 +667,7 @@ class StopLossManager:
                 )
             
             return {
-                'status': 'success',
+                'status': 'created',  # CRITICAL FIX: Was 'success' but atomic_position_manager expects 'created'
                 'triggerPrice': float(final_stop_price),
                 'algoId': algo_id,
                 'method': 'algo_conditional',

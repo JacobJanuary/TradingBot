@@ -2358,7 +2358,7 @@ class PositionManager:
                     stop_price=to_decimal(stop_price)
                 )
 
-                if result['status'] in ['created', 'already_exists']:
+                if result['status'] in ['created', 'already_exists', 'success']:
                     # CRITICAL FIX: Update both memory and database
                     position.has_stop_loss = True
                     position.stop_loss_price = result['stopPrice']
