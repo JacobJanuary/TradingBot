@@ -764,8 +764,12 @@ class AgedPositionMonitorV2:
             phase = 'progressive'
             hours_in_progressive = hours_over_limit - self.grace_period_hours
 
-            # Calculate loss tolerance (convert float to Decimal)
-            loss_tolerance = Decimal(str(hours_in_progressive)) * self.loss_step_percent
+            # ✅ FIX: Calculate loss tolerance by WHOLE HOURS (floor)
+            # User logic: 22-23h=grace, 23-24h=1%, 24-25h=2%, etc.
+            # Use floor() so partial hours don't count (e.g., 0.76h → 0)
+            import math
+            full_hours_in_progressive = math.floor(hours_in_progressive)
+            loss_tolerance = Decimal(str(full_hours_in_progressive)) * self.loss_step_percent
 
             # Cap at max loss
             loss_tolerance = min(loss_tolerance, self.max_loss_percent)
