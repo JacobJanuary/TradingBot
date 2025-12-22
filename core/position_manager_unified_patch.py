@@ -72,7 +72,8 @@ def init_unified_protection(position_manager) -> Optional[Dict]:
         aged_monitor = AgedPositionMonitorV2(
             exchange_managers=position_manager.exchanges,
             repository=position_manager.repository,
-            position_manager=position_manager
+            position_manager=position_manager,
+            price_monitor=price_monitor  # ✅ CRITICAL FIX: Pass price_monitor for subscriptions
         )
 
         # Create adapters for each exchange's trailing stop

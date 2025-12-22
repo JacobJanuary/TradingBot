@@ -113,6 +113,10 @@ class UnifiedPriceMonitor:
 
         # Notify subscribers
         if symbol in self.subscribers:
+            # DEBUG: Log when notifying aged_position subscribers
+            if symbol == 'SUPERUSDT' and any(s['module'] == 'aged_position' for s in self.subscribers[symbol]):
+                logger.info(f"🔔 [UNIFIED] Notifying {len(self.subscribers[symbol])} subscribers for SUPERUSDT")
+            
             for subscriber in self.subscribers[symbol]:
                 try:
                     # Call with error isolation
@@ -122,6 +126,10 @@ class UnifiedPriceMonitor:
                         f"Error in {subscriber['module']} callback for {symbol}: {e}"
                     )
                     self.error_count += 1
+        else:
+            # DEBUG: Log if no subscribers for SUPERUSDT
+            if symbol == 'SUPERUSDT':
+                logger.warning(f"⚠️ [UNIFIED] No subscribers for SUPERUSDT! Registered symbols: {list(self.subscribers.keys())}")
 
     async def check_staleness(
         self,

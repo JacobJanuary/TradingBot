@@ -57,10 +57,11 @@ class AgedPositionMonitorV2:
     Integrates with UnifiedPriceMonitor
     """
 
-    def __init__(self, exchange_managers, repository, position_manager=None, config=None):
+    def __init__(self, exchange_managers, repository, position_manager=None, config=None, price_monitor=None):
         self.exchanges = exchange_managers
         self.repository = repository
         self.position_manager = position_manager
+        self.price_monitor = price_monitor  # ✅ FIX: Add price monitor for subscriptions
 
         # Configuration from env/config
         # Phase 2: Use config instead of os.getenv() with defaults
@@ -95,7 +96,8 @@ class AgedPositionMonitorV2:
 
         logger.info(
             f"AgedPositionMonitorV2 initialized: "
-            f"max_age={self.max_age_hours}h, grace={self.grace_period_hours}h"
+            f"max_age={self.max_age_hours}h, grace={self.grace_period_hours}h, "
+            f"price_monitor={'yes' if price_monitor else 'NO'}"
         )
 
         # Phase 4: Initialize metrics (optional, does not affect existing code)
@@ -345,6 +347,21 @@ class AgedPositionMonitorV2:
             f"(age={age_hours:.1f}h, phase={phase}, target=${target_price:.4f})"
         )
 
+        # ✅ CRITICAL FIX: Subscribe to price updates via UnifiedPriceMonitor
+        if self.price_monitor:
+            try:
+                await self.price_monitor.subscribe(
+                    symbol=symbol,
+                    callback=self.check_price_target,
+                    module='aged_position',
+                    priority=40  # Lower priority than TrailingStop
+                )
+                logger.info(f"✅ {symbol}: Subscribed to price updates for aged monitoring")
+            except Exception as sub_error:
+                logger.error(f"❌ {symbol}: Failed to subscribe to price updates: {sub_error}")
+        else:
+            logger.warning(f"⚠️ {symbol}: No price_monitor - aged position will NOT receive price updates!")
+
     def is_position_tracked(self, symbol: str) -> bool:
         """Check if position is already being tracked
 
@@ -438,6 +455,10 @@ class AgedPositionMonitorV2:
                 # ✅ DEBUG RONIN
                 if symbol == 'RONINUSDT':
                      logger.info(f"🔍 [RONIN-CALC] Price={current_price}, Target={target.target_price}, Phase={target.phase}, Side={position.side}, PnL={pnl_percent}, Age={target.hours_aged:.2f}, Grace={self.grace_period_hours}, Step={self.loss_step_percent}, ShouldClose={should_close}")
+
+                # ✅ DEBUG SUPERUSDT
+                if symbol == 'SUPERUSDT':
+                     logger.info(f"🔍 [SUPER-CALC] Price={current_price}, Target={target.target_price}, Phase={target.phase}, Side={position.side}, PnL={pnl_percent:.2f}%, LossTol={target.loss_tolerance}%, Age={target.hours_aged:.2f}h, ShouldClose={should_close}")
 
             else:
                 # SHORT: close if price <= target
