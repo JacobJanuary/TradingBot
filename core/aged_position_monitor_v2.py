@@ -1143,22 +1143,23 @@ class AgedPositionMonitorV2:
                 has_ts = getattr(position, 'has_trailing_stop', False)
                 already_tracked = symbol in self.aged_targets
 
-                logger.debug(
-                    f"🔍 [DEBUG-ЭТАП1] {symbol}: "
+                # TEMPORARY: Changed to INFO for debugging SUPERUSDT issue
+                logger.info(
+                    f"🔍 [AGED-SCAN] {symbol}: "
                     f"age={age_hours:.1f}h, "
+                    f"max_age={self.max_age_hours}h, "
                     f"trailing_activated={ts_activated}, "
-                    f"has_trailing_stop={has_ts}, "
                     f"already_tracked={already_tracked}"
                 )
 
                 # Skip if already tracked
                 if already_tracked:
-                    logger.debug(f"⏭️ [DEBUG-ЭТАП1] {symbol}: Skipping - already tracked in aged_targets")
+                    logger.info(f"⏭️ [AGED-SCAN] {symbol}: SKIP - already tracked in aged_targets")
                     continue
 
                 # Skip if trailing stop is active
                 if ts_activated:
-                    logger.debug(f"⏭️ [DEBUG-ЭТАП1] {symbol}: Skipping - trailing stop ACTIVE")
+                    logger.info(f"⏭️ [AGED-SCAN] {symbol}: SKIP - trailing stop active")
                     continue
 
                 # Check age - already calculated above
