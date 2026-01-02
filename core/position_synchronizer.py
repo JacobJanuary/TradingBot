@@ -271,19 +271,13 @@ class PositionSynchronizer:
 
         Args:
             exchange: Exchange instance
-            exchange_name: Name of exchange ('bybit', 'binance', etc.)
+            exchange_name: Name of exchange ('binance', etc.)
 
         Returns:
             List of active positions (validated and non-zero)
         """
         try:
-            # CRITICAL FIX: For Bybit, must pass category='linear'
-            if exchange_name == 'bybit':
-                positions = await exchange.fetch_positions(
-                    params={'category': 'linear'}
-                )
-            else:
-                positions = await exchange.fetch_positions()
+            positions = await exchange.fetch_positions()
 
             # ✅ PHASE 1: STRICTER FILTERING - Check raw exchange data
             active_positions = []
@@ -310,16 +304,7 @@ class PositionSynchronizer:
                         )
                         continue
 
-                # Bybit: Check size in raw response
-                elif exchange_name == 'bybit':
-                    size = float(info.get('size', 0))
-                    if abs(size) <= 0:
-                        filtered_count += 1
-                        logger.debug(
-                            f"    Filtered {pos.get('symbol')}: "
-                            f"contracts={contracts} but size={size}"
-                        )
-                        continue
+
 
                 # ✅ Position passed all filters
                 active_positions.append(pos)
@@ -401,13 +386,9 @@ class PositionSynchronizer:
             if exchange_name == 'binance':
                 # Binance uses 'positionId' in info
                 exchange_order_id = info.get('positionId') or info.get('orderId')
-            elif exchange_name == 'bybit':
-                # Bybit uses 'positionIdx' or other identifiers
-                exchange_order_id = (
-                    info.get('positionId') or
-                    info.get('orderId') or
-                    f"{symbol}_{info.get('positionIdx', 0)}"
-                )
+            else:
+                # Generic fallback
+                exchange_order_id = info.get('positionId') or info.get('orderId')
 
             # ✅ PHASE 3: VALIDATION - Generate synthetic ID if no exchange_order_id
             if not exchange_order_id:
@@ -562,13 +543,8 @@ class PositionSynchronizer:
                 logger.error(f"Exchange {exchange_name} not found")
                 return False
 
-            # CRITICAL FIX: Use fetch_positions() without [symbol] and add category for Bybit
-            if exchange_name == 'bybit':
-                positions = await exchange.fetch_positions(
-                    params={'category': 'linear'}
-                )
-            else:
-                positions = await exchange.fetch_positions()
+            # Fetch positions
+            positions = await exchange.fetch_positions()
 
             # Check if position exists with non-zero contracts
             # Use normalized symbol comparison

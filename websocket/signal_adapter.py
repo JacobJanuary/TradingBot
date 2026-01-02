@@ -137,15 +137,13 @@ class SignalAdapter:
         Определяет exchange по exchange_id из WebSocket сигнала
         
         Args:
-            exchange_id: ID биржи (1=Binance, 2=Bybit)
+            exchange_id: ID биржи (1=Binance)
             
         Returns:
-            Имя биржи ('binance' или 'bybit')
+            Имя биржи ('binance')
         """
         if exchange_id == 1:
             return 'binance'
-        elif exchange_id == 2:
-            return 'bybit'
         else:
             logger.warning(f"Unknown exchange_id={exchange_id}, defaulting to binance")
             return 'binance'

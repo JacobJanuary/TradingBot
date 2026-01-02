@@ -1045,6 +1045,9 @@ class BinanceHybridStream:
 
     async def _request_mark_subscription(self, symbol: str, subscribe: bool = True):
         """Queue mark price subscription request"""
+        # Normalize symbol to ensure consistency (handle unified symbols)
+        symbol = self._normalize_symbol(symbol)
+        
         # NOTE: pending_subscriptions управляется в _subscription_manager()
         # Здесь только добавляем в queue для обработки
         await self.subscription_queue.put((symbol, subscribe))
@@ -1076,6 +1079,19 @@ class BinanceHybridStream:
 
         except Exception as e:
             logger.error(f"[MARK] Subscription error for {symbol}: {e}")
+
+    def _normalize_symbol(self, symbol: str) -> str:
+        """
+        Normalize symbol to Binance raw format
+        e.g. 'BTC/USDT:USDT' -> 'BTCUSDT'
+        """
+        if not symbol:
+            return ""
+        # Remove settlement part if present
+        if ':' in symbol:
+            symbol = symbol.split(':')[0]
+        # Remove slash
+        return symbol.replace('/', '').upper()
 
     async def _restore_subscriptions(self):
         """

@@ -122,6 +122,11 @@ class SmartTrailingStopManager:
         self.exchange_name = exchange_name or getattr(exchange_manager, 'name', 'unknown')
         self.config = config or TrailingStopConfig()
         self.repository = repository  # NEW: For database persistence
+        
+        # Delta filter for intelligent exits
+        self.delta_stream = None  # Set via set_delta_stream()
+        self.delta_window_sec = 20  # Rolling window for delta calculation
+        self.delta_threshold_mult = 1.5  # Exit blocked if delta > avg * threshold
 
         # Active trailing stops
         self.trailing_stops: Dict[str, TrailingStopInstance] = {}
@@ -142,6 +147,112 @@ class SmartTrailingStopManager:
         }
 
         logger.info(f"SmartTrailingStopManager initialized with config: {self.config}")
+
+    def set_delta_stream(self, delta_stream, window_sec: int = 20, threshold_mult: float = 1.5):
+        """
+        Set delta stream reference for intelligent exit filtering
+        
+        Args:
+            delta_stream: BinanceAggTradesStream instance
+            window_sec: Rolling window for delta calculation (default: 20s)
+            threshold_mult: Threshold multiplier vs average delta (default: 1.5)
+        """
+        self.delta_stream = delta_stream
+        self.delta_window_sec = window_sec
+        self.delta_threshold_mult = threshold_mult
+        logger.info(
+            f"✅ Delta filter configured: window={window_sec}s, threshold={threshold_mult}x"
+        )
+
+    def _check_delta_filter(self, ts: TrailingStopInstance) -> tuple[bool, str]:
+        """
+        Check if delta filter allows exit (trailing stop trigger)
+        
+        Delta Reversal strategy logic:
+        - For LONG: block exit if delta > 0 (buyers still active) 
+        - For LONG: block exit if delta > avg * threshold (strong momentum)
+        - For SHORT: inverse logic
+        
+        Args:
+            ts: TrailingStopInstance
+            
+        Returns:
+            tuple[bool, str]: (should_allow_exit, reason)
+        """
+        if not self.delta_stream:
+            # No delta stream configured - allow exit
+            return (True, "no_delta_stream")
+        
+        symbol = ts.symbol
+        
+        # Get rolling delta
+        rolling_delta = self.delta_stream.get_rolling_delta(
+            symbol, 
+            self.delta_window_sec
+        )
+        
+        # Get average delta for threshold comparison
+        avg_delta = self.delta_stream.get_avg_delta(symbol, 100)
+        
+        # Get large trade counts
+        large_buys, large_sells = self.delta_stream.get_large_trade_counts(symbol, 60)
+        
+        # Calculate threshold
+        threshold = avg_delta * Decimal(str(self.delta_threshold_mult))
+        
+        # Long position: block if strong buying momentum
+        if ts.side == 'long':
+            # Block if delta is positive (buyers still active)
+            if rolling_delta >= 0:
+                logger.info(
+                    f"🛡️ {symbol}: Delta filter BLOCKED exit - "
+                    f"delta={float(rolling_delta):.0f} >= 0 (buyers active)"
+                )
+                return (False, f"delta_positive:{float(rolling_delta):.0f}")
+            
+            # Block if delta > avg * threshold (even if negative, momentum still strong)
+            if abs(rolling_delta) < threshold and rolling_delta < 0:
+                # Weak selling - allow exit
+                pass
+            elif rolling_delta > -threshold:
+                logger.info(
+                    f"🛡️ {symbol}: Delta filter BLOCKED exit - "
+                    f"delta={float(rolling_delta):.0f} > -{float(threshold):.0f} (momentum still strong)"
+                )
+                return (False, f"delta_above_threshold:{float(rolling_delta):.0f}")
+            
+            # Block if large_buy > large_sell (whales buying)
+            if large_buys > large_sells:
+                logger.info(
+                    f"🛡️ {symbol}: Delta filter BLOCKED exit - "
+                    f"large_buys={large_buys} > large_sells={large_sells} (whale accumulation)"
+                )
+                return (False, f"whale_accumulation:{large_buys}>{large_sells}")
+        
+        # Short position: block if strong selling momentum
+        else:
+            # Block if delta is negative (sellers still active)
+            if rolling_delta <= 0:
+                logger.info(
+                    f"🛡️ {symbol}: Delta filter BLOCKED exit - "
+                    f"delta={float(rolling_delta):.0f} <= 0 (sellers active)"
+                )
+                return (False, f"delta_negative:{float(rolling_delta):.0f}")
+            
+            # Block if large_sell > large_buy (whales selling)
+            if large_sells > large_buys:
+                logger.info(
+                    f"🛡️ {symbol}: Delta filter BLOCKED exit - "
+                    f"large_sells={large_sells} > large_buys={large_buys} (whale distribution)"
+                )
+                return (False, f"whale_distribution:{large_sells}>{large_buys}")
+        
+        # Allow exit
+        logger.debug(
+            f"✅ {symbol}: Delta filter ALLOWED exit - "
+            f"delta={float(rolling_delta):.0f}, threshold={float(threshold):.0f}"
+        )
+        return (True, "delta_filter_passed")
 
     # ============== DATABASE PERSISTENCE ==============
 
@@ -947,6 +1058,10 @@ class SmartTrailingStopManager:
 
     async def _update_trailing_stop(self, ts: TrailingStopInstance) -> Optional[Dict]:
         """Update trailing stop if price moved favorably"""
+
+        # NOTE: Delta filter logic moved to ReentryManager.register_exit()
+        # SL updates are no longer blocked - instead we use Instant Reentry
+        # when SL triggers during strong momentum
 
         distance = self._get_trailing_distance(ts)
         new_stop_price = None

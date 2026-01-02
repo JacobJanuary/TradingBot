@@ -283,6 +283,23 @@ class PositionManager:
 
         logger.info("PositionManager initialized")
 
+    def set_aggtrades_stream(self, aggtrades_stream, window_sec: int = 20, threshold_mult: float = 1.5):
+        """
+        Set AggTrades stream for delta-based exit filtering
+        
+        Connects the aggtrades stream to all trailing stop managers.
+        This enables intelligent exit filtering based on momentum.
+        
+        Args:
+            aggtrades_stream: BinanceAggTradesStream instance
+            window_sec: Delta rolling window (default: 20s)  
+            threshold_mult: Delta threshold multiplier (default: 1.5)
+        """
+        for name, ts_manager in self.trailing_managers.items():
+            ts_manager.set_delta_stream(aggtrades_stream, window_sec, threshold_mult)
+            logger.info(f"✅ {name}: Delta filter connected to TS manager")
+
+
     async def synchronize_with_exchanges(self):
         """Synchronize database positions with exchange reality"""
         try:
@@ -526,25 +543,11 @@ class PositionManager:
                             current_price = ticker.get('last') if ticker else position.current_price
 
                             # Calculate stop loss price
-                            # Get params from DB
-                            try:
-                                exchange_params = await self.repository.get_params_by_exchange_name(position.exchange)
-
-                                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
-                                    stop_loss_percent = to_decimal(exchange_params['stop_loss_filter'])
-                                    logger.debug(
-                                        f"📊 {position.symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
-                                    )
-                                else:
-                                    # Fallback
-                                    logger.warning(
-                                        f"⚠️  {position.symbol}: stop_loss_filter not in DB, using .env fallback"
-                                    )
-                                    stop_loss_percent = to_decimal(self.config.stop_loss_percent)
-
-                            except Exception as e:
-                                logger.error(f"❌ {position.symbol}: Error loading params from DB: {e}. Using .env")
-                                stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            # FIXED: ALWAYS use ENV config, not DB values
+                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            logger.info(
+                                f"📊 {position.symbol}: Using stop_loss from ENV: {stop_loss_percent}%"
+                            )
 
                             stop_loss_price = calculate_stop_loss(
                                 to_decimal(position.entry_price), position.side, stop_loss_percent
@@ -669,17 +672,10 @@ class PositionManager:
                                 logger.info(f"✅ {symbol}: TS state restored from DB")
                             else:
                                 # No state in DB - create new trailing stop
-                                # FIX: Use per-position params or fallback to config
-                                
-                                # Get params from position object (loaded from DB)
-                                pos_activation = getattr(position, 'trailing_activation_percent', None)
-                                pos_callback = getattr(position, 'trailing_callback_percent', None)
-                                
-                                # Fallback to config if not in position
-                                if pos_activation is None:
-                                    pos_activation = float(self.config.trailing_activation_percent)
-                                if pos_callback is None:
-                                    pos_callback = float(self.config.trailing_callback_percent)
+                                # FIXED: ALWAYS use ENV config, not DB values
+                                # This ensures consistency after restart
+                                pos_activation = float(self.config.trailing_activation_percent)
+                                pos_callback = float(self.config.trailing_callback_percent)
 
                                 await asyncio.wait_for(
                                     trailing_manager.create_trailing_stop(
@@ -2950,6 +2946,21 @@ class PositionManager:
                         severity='INFO'
                     )
 
+                # Register exit with ReentryManager for potential re-entry
+                if hasattr(self, 'reentry_manager') and self.reentry_manager:
+                    try:
+                        await self.reentry_manager.register_exit(
+                            signal_id=position.id,  # Use position ID if no signal_id
+                            symbol=symbol,
+                            exchange=position.exchange,
+                            side=position.side,
+                            original_entry_price=position.entry_price,
+                            original_entry_time=position.opened_at or datetime.now(timezone.utc),
+                            exit_price=exit_price,
+                            exit_reason=reason
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to register exit for reentry: {e}")
                 # PREVENTIVE FIX: Cancel any remaining SL orders for this symbol
                 # This prevents old SL orders from being reused by future positions
                 try:

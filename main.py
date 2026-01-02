@@ -57,6 +57,8 @@ class TradingBot:
         self.position_manager: Optional[PositionManager] = None
         self.aged_position_manager: Optional[AgedPositionManager] = None
         self.signal_processor: Optional[WebSocketSignalProcessor] = None
+        self.aggtrades_stream = None  # For delta calculation
+        self.reentry_manager = None  # For trailing re-entry strategy
 
         # Monitoring - will be initialized after repository is ready
         self.health_monitor = None
@@ -215,6 +217,14 @@ class TradingBot:
                                 logger.info(f"✅ {name.capitalize()} Hybrid WebSocket ready (mainnet)")
                                 logger.info(f"   → User WS: Position lifecycle (ACCOUNT_UPDATE)")
                                 logger.info(f"   → Mark WS: Price updates (1-3s)")
+                                
+                                # Initialize AggTrades stream for delta calculation
+                                from websocket.binance_aggtrades_stream import BinanceAggTradesStream
+                                aggtrades_stream = BinanceAggTradesStream(testnet=False)
+                                await aggtrades_stream.start()
+                                self.websockets[f'{name}_aggtrades'] = aggtrades_stream
+                                self.aggtrades_stream = aggtrades_stream  # Store reference
+                                logger.info(f"✅ {name.capitalize()} AggTrades WebSocket ready (delta calculation)")
                             except Exception as e:
                                 logger.error(f"Failed to start Binance hybrid stream: {e}")
                                 raise
@@ -222,64 +232,6 @@ class TradingBot:
                             logger.error(f"❌ Binance mainnet requires API credentials")
                             raise ValueError("Binance API credentials required for mainnet")
 
-                elif name == 'bybit':
-                    # Check if we're on testnet
-                    is_testnet = config.testnet
-
-                    if is_testnet:
-                        # Use adaptive stream for testnet (REST polling like Binance)
-                        logger.info("🔧 Using AdaptiveStream for Bybit testnet")
-                        from websocket.adaptive_stream import AdaptiveBybitStream
-
-                        # Get exchange client
-                        exchange = self.exchanges.get(name)
-                        if exchange:
-                            stream = AdaptiveBybitStream(exchange, is_testnet=True)
-
-                            # Set up callbacks to integrate with existing event system
-                            async def on_position_update(positions):
-                                # CRITICAL FIX: Event name must match subscription in position_manager (position.update)
-                                # positions is dict {symbol: position_data}, emit event for each position
-                                if positions:
-                                    logger.info(f"📊 REST polling (Bybit): received {len(positions)} position updates with mark prices")
-                                for symbol, pos_data in positions.items():
-                                    await self._handle_stream_event('position.update', pos_data)
-
-                            stream.set_callback('position_update', on_position_update)
-
-                            # Start in background
-                            asyncio.create_task(stream.start())
-                            self.websockets[name] = stream
-                            logger.info(f"✅ {name.capitalize()} AdaptiveStream ready (testnet)")
-                    else:
-                        # Use Hybrid WebSocket for mainnet
-                        # Combines private (position) + public (tickers) streams
-                        logger.info("🚀 Using Hybrid WebSocket for Bybit mainnet")
-                        from websocket.bybit_hybrid_stream import BybitHybridStream
-
-                        # Get API credentials
-                        api_key = os.getenv('BYBIT_API_KEY')
-                        api_secret = os.getenv('BYBIT_API_SECRET')
-
-                        if api_key and api_secret:
-                            try:
-                                hybrid_stream = BybitHybridStream(
-                                    api_key=api_key,
-                                    api_secret=api_secret,
-                                    event_handler=self._handle_stream_event,
-                                    testnet=False
-                                )
-                                await hybrid_stream.start()
-                                self.websockets[f'{name}_hybrid'] = hybrid_stream
-                                logger.info(f"✅ {name.capitalize()} Hybrid WebSocket ready (mainnet)")
-                                logger.info(f"   → Private WS: Position lifecycle")
-                                logger.info(f"   → Public WS: Mark price updates (100ms)")
-                            except Exception as e:
-                                logger.error(f"Failed to start Bybit hybrid stream: {e}")
-                                raise
-                        else:
-                            logger.error(f"❌ Bybit mainnet requires API credentials")
-                            raise ValueError("Bybit API credentials required for mainnet")
 
             # Initialize position manager (Phase 2)
             logger.info("Initializing position manager...")
@@ -354,38 +306,65 @@ class TradingBot:
                 else:
                     logger.info("No active Binance positions to sync")
 
-            # CRITICAL FIX: Sync positions with Bybit Hybrid WebSocket
-            # Private WS may not send position snapshot on startup,
-            # so we need to explicitly subscribe to tickers for existing positions
-            bybit_ws = self.websockets.get('bybit_hybrid')
-            if bybit_ws:
-                # Get active Bybit positions (PositionState objects)
-                bybit_position_states = [
-                    p for p in self.position_manager.positions.values()
-                    if p.exchange == 'bybit'
-                ]
+            # Connect AggTrades stream to position manager for delta filtering
+            if self.aggtrades_stream and self.position_manager:
+                # Get delta filter params from env or use defaults
+                delta_window = int(os.getenv('DELTA_WINDOW_SEC', '20'))
+                delta_threshold = float(os.getenv('DELTA_THRESHOLD_MULT', '1.5'))
+                self.position_manager.set_aggtrades_stream(
+                    self.aggtrades_stream, 
+                    window_sec=delta_window,
+                    threshold_mult=delta_threshold
+                )
+                logger.info(f"✅ Delta filter connected (window={delta_window}s, threshold={delta_threshold}x)")
 
-                if bybit_position_states:
-                    # Convert PositionState objects to dicts for sync_positions()
-                    bybit_positions = [
-                        {
-                            'symbol': p.symbol,
-                            'side': p.side,
-                            'quantity': p.quantity,
-                            'entry_price': p.entry_price,
-                            'current_price': p.current_price
-                        }
-                        for p in bybit_position_states
-                    ]
+            # Initialize ReentryManager for trailing re-entry strategy
+            if self.aggtrades_stream and self.position_manager:
+                from core.reentry_manager import ReentryManager
+                
+                # Get reentry params from env
+                reentry_cooldown = int(os.getenv('REENTRY_COOLDOWN_SEC', '300'))
+                reentry_drop = float(os.getenv('REENTRY_DROP_PERCENT', '5.0'))
+                max_reentries = int(os.getenv('MAX_REENTRIES', '5'))
+                
+                # Instant Reentry params
+                instant_enabled = os.getenv('INSTANT_REENTRY_ENABLED', 'true').lower() == 'true'
+                instant_delta_mult = float(os.getenv('INSTANT_REENTRY_DELTA_MULT', '1.5'))
+                instant_max_per_hour = int(os.getenv('INSTANT_REENTRY_MAX_PER_HOUR', '2'))
+                instant_min_profit = float(os.getenv('INSTANT_REENTRY_MIN_PROFIT_PCT', '5.0'))
+                
+                self.reentry_manager = ReentryManager(
+                    position_manager=self.position_manager,
+                    aggtrades_stream=self.aggtrades_stream,
+                    cooldown_sec=reentry_cooldown,
+                    drop_percent=reentry_drop,
+                    max_reentries=max_reentries,
+                    instant_reentry_enabled=instant_enabled,
+                    instant_reentry_delta_mult=instant_delta_mult,
+                    instant_reentry_max_per_hour=instant_max_per_hour,
+                    instant_reentry_min_profit_pct=instant_min_profit,
+                    repository=self.repository
+                )
+                await self.reentry_manager.start()
+                
+                # Connect reentry manager to position manager
+                self.position_manager.reentry_manager = self.reentry_manager
+                
+                logger.info(
+                    f"✅ ReentryManager started "
+                    f"(cooldown={reentry_cooldown}s, drop={reentry_drop}%, max={max_reentries}, "
+                    f"instant={'ON' if instant_enabled else 'OFF'})"
+                )
 
-                    logger.info(f"🔄 Syncing {len(bybit_positions)} Bybit positions with WebSocket...")
-                    try:
-                        await bybit_ws.sync_positions(bybit_positions)
-                        logger.info(f"✅ Bybit WebSocket synced with {len(bybit_positions)} positions")
-                    except Exception as e:
-                        logger.error(f"Failed to sync Bybit positions: {e}")
-                else:
-                    logger.info("No active Bybit positions to sync")
+                # Subscribe to aggTrades for all active positions
+                # This ensures we have delta data for Instant Reentry at the moment of exit
+                active_count = 0
+                for symbol in self.position_manager.positions:
+                   await self.aggtrades_stream.subscribe(symbol)
+                   active_count += 1
+                
+                if active_count > 0:
+                   logger.info(f"📡 [AGGTRADES] Subscribed {active_count} active positions to trade stream")
 
             # Initialize aged position manager (only if unified protection is disabled)
             use_unified_protection = os.getenv('USE_UNIFIED_PROTECTION', 'false').lower() == 'true'
@@ -508,21 +487,26 @@ class TradingBot:
     async def _handle_stream_event(self, event: str, data: Dict):
         """Handle WebSocket stream events"""
         await self.event_router.emit(event, data, source='websocket')
+        
+        # Forward mark prices to ReentryManager for re-entry monitoring
+        if self.reentry_manager and event in ('position.update', 'price_update'):
+            try:
+                symbol = data.get('symbol')
+                # Get price from position update or price update
+                price = data.get('markPrice') or data.get('price') or data.get('current_price')
+                
+                if symbol and price:
+                    from decimal import Decimal
+                    await self.reentry_manager.update_price(symbol, Decimal(str(price)))
+            except Exception as e:
+                # Don't fail main flow for reentry monitoring errors
+                pass
 
     async def _log_initial_state(self):
         """Log initial system state"""
         for name, exchange in self.exchanges.items():
             balance = await exchange.fetch_balance()
-            # Для Bybit unified account баланс может быть в info
-            if name == 'bybit' and 'info' in balance:
-                # Попробуем получить баланс из info для unified account
-                try:
-                    info = balance['info'].get('result', {}).get('list', [{}])[0]
-                    usdt_balance = float(info.get('totalAvailableBalance', 0))
-                except:
-                    usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
-            else:
-                usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
+            usdt_balance = balance.get('USDT', {}).get('free', 0) or 0
             logger.info(f"{name.capitalize()} balance: ${usdt_balance:.2f} USDT")
 
             positions = await exchange.fetch_positions()
@@ -799,15 +783,7 @@ class TradingBot:
         for name, exchange in self.exchanges.items():
             try:
                 balance = await exchange.fetch_balance()
-                # Для Bybit unified account баланс может быть в info
-                if name == 'bybit' and 'info' in balance:
-                    try:
-                        info = balance['info'].get('result', {}).get('list', [{}])[0]
-                        balances[name] = float(info.get('totalAvailableBalance', 0))
-                    except:
-                        balances[name] = balance.get('USDT', {}).get('free', 0)
-                else:
-                    balances[name] = balance.get('USDT', {}).get('free', 0)
+                balances[name] = balance.get('USDT', {}).get('free', 0) or 0
             except Exception as e:
                 logger.warning(f"Failed to fetch balance for {name}: {e}")
                 balances[name] = 0

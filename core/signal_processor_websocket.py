@@ -577,7 +577,7 @@ class WebSocketSignalProcessor:
             Dict with max_trades and buffer_size
             Example: {'max_trades': 6, 'buffer_size': 9, 'source': 'database'}
         """
-        exchange_name = 'Binance' if exchange_id == 1 else 'Bybit' if exchange_id == 2 else f'Unknown({exchange_id})'
+        exchange_name = 'Binance' if exchange_id == 1 else f'Unknown({exchange_id})'
 
         try:
             # Query database
@@ -638,35 +638,25 @@ class WebSocketSignalProcessor:
 
     async def _get_params_for_all_exchanges(self) -> Dict[int, Dict[str, Any]]:
         """
-        Get parameters for all exchanges (Binance and Bybit)
+        Get parameters for Binance exchange
 
         Returns:
             Dict mapping exchange_id to params
             Example: {
-                1: {'max_trades': 6, 'buffer_size': 9, 'source': 'database'},
-                2: {'max_trades': 4, 'buffer_size': 7, 'source': 'database'}
+                1: {'max_trades': 6, 'buffer_size': 9, 'source': 'database'}
             }
         """
         config_fallback = self.wave_processor.max_trades_per_wave  # Use config default
 
-        logger.debug(f"Querying params for all exchanges (fallback={config_fallback})")
+        logger.debug(f"Querying params for Binance (fallback={config_fallback})")
 
-        # Query both exchanges in parallel
-        binance_params_task = self._get_params_for_exchange(exchange_id=1, config_fallback=config_fallback)
-        bybit_params_task = self._get_params_for_exchange(exchange_id=2, config_fallback=config_fallback)
+        # Query Binance only
+        binance_params = await self._get_params_for_exchange(exchange_id=1, config_fallback=config_fallback)
 
-        binance_params, bybit_params = await asyncio.gather(
-            binance_params_task,
-            bybit_params_task,
-            return_exceptions=True
-        )
-
-        # Handle exceptions
         params_by_exchange = {}
 
         if isinstance(binance_params, Exception):
             logger.error(f"Failed to get Binance params: {binance_params}")
-            # Create fallback
             params_by_exchange[1] = {
                 'max_trades': config_fallback,
                 'buffer_size': config_fallback + self.config.signal_buffer_fixed,
@@ -677,24 +667,9 @@ class WebSocketSignalProcessor:
         else:
             params_by_exchange[1] = binance_params
 
-        if isinstance(bybit_params, Exception):
-            logger.error(f"Failed to get Bybit params: {bybit_params}")
-            # Create fallback
-            params_by_exchange[2] = {
-                'max_trades': config_fallback,
-                'buffer_size': config_fallback + self.config.signal_buffer_fixed,
-                'source': 'exception_fallback',
-                'exchange_id': 2,
-                'exchange_name': 'Bybit'
-            }
-        else:
-            params_by_exchange[2] = bybit_params
-
         logger.info(
             f"📊 Params loaded: Binance max_trades={params_by_exchange[1]['max_trades']} "
-            f"(source: {params_by_exchange[1]['source']}), "
-            f"Bybit max_trades={params_by_exchange[2]['max_trades']} "
-            f"(source: {params_by_exchange[2]['source']})"
+            f"(source: {params_by_exchange[1]['source']})"
         )
 
         return params_by_exchange
@@ -858,8 +833,12 @@ class WebSocketSignalProcessor:
         total_validated = 0
 
         for exchange_id, exchange_signals in signals_by_exchange.items():
-            exchange_name = 'binance' if exchange_id == 1 else 'bybit'
-            exchange_name_cap = 'Binance' if exchange_id == 1 else 'Bybit'
+            if exchange_id != 1:  # Skip non-Binance exchanges
+                logger.debug(f"Skipping exchange_id={exchange_id} (only Binance supported)")
+                continue
+            
+            exchange_name = 'binance'
+            exchange_name_cap = 'Binance'
             params = params_by_exchange.get(exchange_id, {})
 
             # Get target and buffer

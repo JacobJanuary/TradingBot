@@ -51,19 +51,9 @@ class ImprovedStream(ABC):
         self.reconnect_count = 0
         self.last_reconnect_attempt = None
         
-        # Heartbeat settings - CRITICAL FIX: Bybit requires ping every 20s!
-        # Check if this is for Bybit
-        is_bybit = 'bybit' in name.lower()
-
-        if is_bybit:
-            # CRITICAL: Bybit REQUIRES ping every 20 seconds, ignore config
-            self.heartbeat_interval = 20  # HARDCODED for Bybit
-            self.heartbeat_timeout = 90   # Extended for testnet latency
-            logger.info(f"🔧 Bybit detected: forcing heartbeat_interval=20s")
-        else:
-            # Other exchanges can use config
-            self.heartbeat_interval = config.get('ws_heartbeat_interval', 30)
-            self.heartbeat_timeout = config.get('ws_heartbeat_timeout', 60)
+        # Heartbeat settings
+        self.heartbeat_interval = config.get('ws_heartbeat_interval', 30)
+        self.heartbeat_timeout = config.get('ws_heartbeat_timeout', 60)
         self.last_heartbeat = datetime.now()
         self.last_pong = datetime.now()
         self.last_ping_time = datetime.now()  # Track ping time for RTT calculation
@@ -352,20 +342,19 @@ class ImprovedStream(ABC):
                 self.connected = False  # CRITICAL FIX: Sync connected attribute with state
     
     async def _heartbeat_loop(self):
-        """Send periodic heartbeat/ping - FIXED for Bybit custom ping"""
+        """Send periodic heartbeat/ping"""
         while not self.should_stop and self.state == ConnectionState.CONNECTED:
             try:
-                # Send custom ping for Bybit (text message, not frame ping)
+                # Send custom ping as JSON text message
                 if self.ws and not self.ws.closed:
                     ping_time = datetime.now()
 
-                    # CRITICAL FIX: Send custom ping as JSON text message for Bybit
                     custom_ping = {"op": "ping"}
                     await self.ws.send_str(json.dumps(custom_ping))
 
-                    self.last_ping_time = ping_time  # Track ping time for RTT calculation
+                    self.last_ping_time = ping_time
                     self.stats['messages_sent'] += 1
-                    logger.info(f"📤 [{self.name}] Custom ping sent at {ping_time.strftime('%H:%M:%S')}: {custom_ping}")
+                    logger.debug(f"📤 [{self.name}] ping sent at {ping_time.strftime('%H:%M:%S')}")
 
                 await asyncio.sleep(self.heartbeat_interval)
 
@@ -405,18 +394,15 @@ class ImprovedStream(ABC):
         return True
     
     def _is_custom_pong(self, message: Dict) -> bool:
-        """Check if message is a custom pong from Bybit - COMPREHENSIVE CHECK"""
+        """Check if message is a custom pong"""
         if not isinstance(message, dict):
             return False
 
-        # Check various pong formats used by Bybit
         return (
             message.get("op") == "pong" or
             message.get("ret_msg") == "pong" or
             message.get("type") == "pong" or
-            message.get("e") == "pong" or
-            (message.get("success") == True and message.get("op") in ["ping", "pong"]) or
-            (message.get("op") == "ping" and message.get("success") == True)  # Bybit sometimes returns success for ping
+            message.get("e") == "pong"
         )
 
     def _get_reconnect_delay(self) -> int:
