@@ -469,8 +469,9 @@ class PositionManager:
                     stop_loss_price=pos['stop_loss'],
                     has_trailing_stop=pos['has_trailing_stop'] or False,
                     trailing_activated=pos['trailing_activated'] or False,
-                    trailing_activation_percent=pos.get('trailing_activation_percent'),
-                    trailing_callback_percent=pos.get('trailing_callback_percent'),
+                    # ALWAYS use current ENV params, even for restored positions
+                    trailing_activation_percent=float(self.config.trailing_activation_percent),
+                    trailing_callback_percent=float(self.config.trailing_callback_percent),
                     # signal_stop_loss_percent removed 2026-01-03
                     opened_at=opened_at,
                     age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
