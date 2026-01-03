@@ -144,11 +144,9 @@ class PositionRequest:
 
     # Optional overrides
     position_size_usd: Optional[float] = None
-    stop_loss_percent: Optional[float] = None
-    trailing_activation_percent: Optional[float] = None    # NEW: Per-signal override
-    trailing_callback_percent: Optional[float] = None
-    signal_stop_loss_percent: Optional[float] = None # NEW: Per-signal SL percent
-    # take_profit_percent: Optional[float] = None  # DEPRECATED - Using Smart Trailing Stop
+    # stop_loss_percent removed 2026-01-03 (All from .env)
+    # trailing_* overrides removed 2026-01-03 (All from .env)
+    # signal_stop_loss_percent removed 2026-01-03
 
 
 @dataclass
@@ -170,12 +168,12 @@ class PositionState:
     has_trailing_stop: bool = False
     trailing_activated: bool = False
     
-    # NEW: Persisted TS params
+    # NEW: Persisted TS params (Load locally from DB purely for info/display, NOT for logic override)
     trailing_activation_percent: Optional[float] = None
     trailing_callback_percent: Optional[float] = None
     
-    # Signal-specific SL parameter (Option 2)
-    signal_stop_loss_percent: Optional[float] = None
+    # signal_stop_loss_percent removed 2026-01-03
+
 
     # NEW: SL ownership tracking
     sl_managed_by: Optional[str] = None  # 'protection' | 'trailing_stop' | None
