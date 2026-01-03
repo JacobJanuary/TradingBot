@@ -125,13 +125,7 @@ class EnhancedExchangeManager:
             }
 
             # Exchange-specific parameters
-            if self.exchange_id == 'bybit':
-                # Bybit V5 specific
-                params['positionIdx'] = 0  # One-way mode
-                params['orderType'] = 'Limit'
-                params['closeOnTrigger'] = False
-
-            elif self.exchange_id in ['binance', 'binanceusdm']:
+            if self.exchange_id in ['binance', 'binanceusdm']:
                 # Binance specific
                 params['postOnly'] = True  # Maker order only
 
@@ -327,10 +321,7 @@ class EnhancedExchangeManager:
         # Get raw info from exchange
         info = order.get('info', {})
 
-        # Priority 1: stopOrderType (Bybit V5)
-        stop_order_type = info.get('stopOrderType', '')
-        if stop_order_type in ['StopLoss', 'PartialStopLoss', 'TrailingStop', 'tpslOrder']:
-            return True
+
 
         # Priority 2: CCXT unified type
         order_type = order.get('type', '')

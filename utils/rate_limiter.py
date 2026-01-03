@@ -294,14 +294,7 @@ class ExchangeRateLimiter:
             max_retry_delay=60.0,
             max_retries=5
         ),
-        'bybit': RateLimitConfig(
-            requests_per_second=int(os.getenv('BYBIT_RATE_LIMIT_PER_SEC', 8)),
-            requests_per_minute=int(os.getenv('BYBIT_RATE_LIMIT_PER_MIN', 96)),
-            burst_size=20,
-            min_retry_delay=2.0,
-            max_retry_delay=120.0,
-            max_retries=3
-        ),
+
         'default': RateLimitConfig(
             requests_per_second=int(os.getenv('DEFAULT_RATE_LIMIT_PER_SEC', 5)),
             requests_per_minute=int(os.getenv('DEFAULT_RATE_LIMIT_PER_MIN', 60)),

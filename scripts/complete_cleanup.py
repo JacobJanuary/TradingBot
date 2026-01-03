@@ -89,7 +89,7 @@ class CompleteCleanup:
             print("\nThis will:")
             print("  • Delete ALL data from monitoring schema")
             print("  • Close ALL positions on Binance")
-            print("  • Close ALL positions on Bybit")
+
             print("  • Cancel ALL orders on both exchanges")
             print("  • Delete ALL log files")
             print("  • Clear Python cache (__pycache__, .pyc files)")
@@ -185,30 +185,7 @@ class CompleteCleanup:
             print_error(f"  Failed to connect to Binance: {e}")
             self.stats['errors'].append(f"Binance connection: {e}")
 
-        # Bybit
-        try:
-            bybit_testnet = os.getenv('BYBIT_TESTNET', '').lower() == 'true'
-            exchange = ccxt.bybit({
-                'apiKey': os.getenv('BYBIT_API_KEY'),
-                'secret': os.getenv('BYBIT_API_SECRET'),
-                'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'linear',
-                }
-            })
-            if bybit_testnet:
-                exchange.urls['api'] = {
-                    'public': 'https://api-testnet.bybit.com',
-                    'private': 'https://api-testnet.bybit.com'
-                }
-                exchange.hostname = 'api-testnet.bybit.com'
 
-            await exchange.load_markets()
-            self.exchanges['bybit'] = exchange
-            print_info(f"  Bybit: {'TESTNET' if bybit_testnet else 'PRODUCTION'}")
-        except Exception as e:
-            print_error(f"  Failed to connect to Bybit: {e}")
-            self.stats['errors'].append(f"Bybit connection: {e}")
 
     async def close_all_positions(self):
         """Close all positions on all exchanges"""

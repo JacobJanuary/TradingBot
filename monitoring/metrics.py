@@ -408,7 +408,7 @@ class MetricsCollector:
             # Get active positions
             positions = await self.repository.get_active_positions()
             
-            for exchange in ['binance', 'bybit']:
+            for exchange in ['binance']:
                 exchange_positions = [p for p in positions if p.exchange == exchange]
                 self.active_positions.labels(exchange=exchange).set(len(exchange_positions))
                 
@@ -419,7 +419,7 @@ class MetricsCollector:
             # Get daily PnL
             daily_stats = await self.repository.get_daily_stats(datetime.now(timezone.utc).date())
             if daily_stats:
-                for exchange in ['binance', 'bybit']:
+                for exchange in ['binance']:
                     daily_pnl = daily_stats.get(exchange, {}).get('pnl', 0)
                     self.daily_pnl.labels(exchange=exchange).set(float(daily_pnl))
             
@@ -460,7 +460,7 @@ class MetricsCollector:
         try:
             positions = await self.repository.get_active_positions()
             
-            for exchange in ['binance', 'bybit']:
+            for exchange in ['binance']:
                 exchange_positions = [p for p in positions if p.exchange == exchange]
                 
                 # Calculate total exposure
@@ -495,7 +495,7 @@ class MetricsCollector:
             closed = await self.repository.get_closed_positions_since(since)
             
             win_rates = {}
-            for exchange in ['binance', 'bybit']:
+            for exchange in ['binance']:
                 exchange_positions = [p for p in closed if p.exchange == exchange]
                 if exchange_positions:
                     wins = sum(1 for p in exchange_positions if p.realized_pnl > 0)

@@ -132,7 +132,7 @@ class LogAnalyzer:
         )
 
         self.exchange_pattern = re.compile(
-            r'(binance|bybit)',
+            r'(binance)',
             re.IGNORECASE
         )
 

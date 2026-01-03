@@ -123,8 +123,7 @@ class CryptoManager:
             'DB_PASSWORD',
             'BINANCE_API_KEY', 
             'BINANCE_API_SECRET',
-            'BYBIT_API_KEY',
-            'BYBIT_API_SECRET',
+
             'DISCORD_WEBHOOK_URL',
             'TELEGRAM_BOT_TOKEN',
             'AWS_ACCESS_KEY_ID',

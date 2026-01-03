@@ -1,17 +1,17 @@
 # Crypto Futures Trading Bot
 
-A professional-grade automated trading bot for cryptocurrency futures trading on **Binance** and **Bybit** exchanges. Built with Python, asyncio, and CCXT for high-performance, low-latency execution.
+A professional-grade automated trading bot for cryptocurrency futures trading on **Binance** exchange. Built with Python, asyncio, and CCXT for high-performance, low-latency execution.
 
 ## Features
 
 ### Core Trading
-- **Multi-Exchange Support**: Simultaneous trading on Binance Futures and Bybit Linear
+- **Exchange Support**: Trading on Binance Futures
 - **WebSocket Signal Processing**: Real-time signal ingestion from external signal server
 - **Atomic Position Management**: Database-backed position tracking with crash recovery
 - **Smart Order Execution**: Automatic leverage setting, position sizing, and lot validation
 
 ### Risk Management
-- **Automatic Stop Loss**: Every position protected via Binance Algo API or Bybit position-attached SL
+- **Automatic Stop Loss**: Every position protected via Binance Algo API
 - **Smart Trailing Stop**: Dynamic trailing stop with configurable activation threshold and callback rate
 - **Aged Position Manager**: Auto-close positions held too long (breakeven or gradual liquidation)
 - **Position Guard**: Emergency protection system with margin call handling
@@ -36,8 +36,8 @@ A professional-grade automated trading bot for cryptocurrency futures trading on
 ├─────────────┴─────────────┴─────────────┴───────────────────────┤
 │                        WebSocket Layer                           │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────┐ │
-│  │ BinanceHybridWS  │  │   BybitHybridWS  │  │  SignalClient  │ │
-│  └──────────────────┘  └──────────────────┘  └────────────────┘ │
+│  │ BinanceHybridWS  │                        │  │  SignalClient  │ │
+│  └──────────────────┘                        └────────────────┘ │
 ├──────────────────────────────────────────────────────────────────┤
 │                       Database Layer                             │
 │              PostgreSQL (positions, events, signals)             │
@@ -66,7 +66,6 @@ TradingBot/
 │   └── stop_loss_manager.py   # Protection-level SL logic
 ├── websocket/                 # WebSocket connections
 │   ├── binance_hybrid_stream.py  # Binance User + Mark streams
-│   ├── bybit_hybrid_stream.py    # Bybit Private + Public streams
 │   └── signal_client.py          # Signal server connection
 ├── database/                  # PostgreSQL access layer
 │   ├── repository.py          # Main data access
@@ -91,7 +90,7 @@ TradingBot/
 - Python 3.10+
 - PostgreSQL 14+
 - Binance Futures API keys
-- Bybit Linear API keys (optional)
+
 
 ### Setup
 
@@ -132,8 +131,6 @@ All configuration is done via `.env` file:
 ```env
 BINANCE_API_KEY=your_binance_api_key
 BINANCE_API_SECRET=your_binance_secret
-BYBIT_API_KEY=your_bybit_api_key
-BYBIT_API_SECRET=your_bybit_secret
 ```
 
 ### Database

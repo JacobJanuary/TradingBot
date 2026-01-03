@@ -324,8 +324,7 @@ class HealthChecker:
             last_check=datetime.now(timezone.utc),
             response_time_ms=50,
             metadata={
-                'binance_status': 'connected',
-                'bybit_status': 'connected'
+                'binance_status': 'connected'
             }
         )
     
@@ -342,7 +341,6 @@ class HealthChecker:
             response_time_ms=10,
             metadata={
                 'binance_ws': 'connected',
-                'bybit_ws': 'connected',
                 'message_rate': 100  # messages per second
             }
         )

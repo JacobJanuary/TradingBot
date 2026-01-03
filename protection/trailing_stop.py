@@ -405,7 +405,6 @@ class SmartTrailingStopManager:
                     return None
 
                 # Determine position side from exchange data
-                # Bybit: pos['side'] = 'Buy' or 'Sell'
                 # Binance: pos['side'] = 'long' or 'short'
                 exchange_side_raw = current_position.get('side', '').lower()
 
@@ -1531,7 +1530,6 @@ class SmartTrailingStopManager:
         Update stop order using atomic method when available
 
         NEW IMPLEMENTATION:
-        - Bybit: Uses trading-stop endpoint (ATOMIC - no race condition)
         - Binance: Uses optimized cancel+create (minimal race window)
         """
         try:

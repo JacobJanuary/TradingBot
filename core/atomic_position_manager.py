@@ -271,10 +271,7 @@ class AtomicPositionManager:
             # САМЫЙ НАДЕЖНЫЙ - ордер УЖЕ ИСПОЛНЕН в exchange
             # SKIP for Bybit: UUID order IDs cannot be queried via fetch_order (API v5 limitation)
             # ============================================================
-            if exchange == 'bybit':
-                logger.info(f"ℹ️  [SOURCE 1] SKIPPED for Bybit (UUID order IDs cannot be queried, API v5 limitation)")
-                sources_tried['order_status'] = True
-            elif not sources_tried['order_status']:
+            if not sources_tried['order_status']:
                 try:
                     # DIAGNOSTIC PATCH 2025-10-29: Changed to WARNING for visibility
                     logger.warning(f"🔍 [SOURCE 1/3] Checking order status for {entry_order.id}")
@@ -404,23 +401,11 @@ class AtomicPositionManager:
                     logger.debug(f"🔍 [SOURCE 3/3] Checking REST API positions for {symbol}")
 
                     # Fetch positions from REST API
-                    if exchange == 'bybit':
-                        positions = await exchange_instance.fetch_positions(
-                            symbols=[symbol],
-                            params={'category': 'linear'}
-                        )
-                    else:
-                        positions = await exchange_instance.fetch_positions([symbol])
+                    positions = await exchange_instance.fetch_positions([symbol])
 
                     # Find our position
                     for pos in positions:
-                        # CRITICAL FIX 2025-10-29: Use raw symbol format for Bybit (same as Entry block)
-                        # Bybit: pos['symbol'] = "ZBCN/USDT:USDT" (unified), need pos['info']['symbol'] = "ZBCNUSDT" (raw)
-                        # Binance: pos['symbol'] = unified format works
-                        if exchange == 'bybit':
-                            pos_symbol = pos.get('info', {}).get('symbol', '')  # Raw format
-                        else:
-                            pos_symbol = pos.get('symbol', '')  # Unified format
+                        pos_symbol = pos.get('symbol', '')  # Unified format
 
                         contracts = float(pos.get('contracts', 0))
 
@@ -537,9 +522,7 @@ class AtomicPositionManager:
 
                 # Prepare params for exchange-specific requirements
                 params = {}
-                if exchange == 'bybit':
-                    params['positionIdx'] = 0  # One-way mode (required by Bybit V5 API)
-                elif exchange == 'binance':
+                if exchange == 'binance':
                     # CRITICAL FIX: Request FULL response to get avgPrice and fills
                     # Default newOrderRespType=ACK returns avgPrice="0.00000"
                     # NOTE: FULL returns immediately with status='NEW', executedQty='0'
@@ -561,23 +544,7 @@ class AtomicPositionManager:
                 if raw_order is None:
                     raise AtomicPositionError(f"Failed to create order for {symbol}: order returned None")
 
-                # FIX: Check Bybit retCode IMMEDIATELY to catch errors before SL attempt
-                # Bybit returns retCode != 0 for all errors (e.g., 10001 = minimum size)
-                if exchange == 'bybit' and raw_order:
-                    order_info = raw_order.info
-                    ret_code = order_info.get('retCode', 0)
 
-                    if ret_code != 0:
-                        ret_msg = order_info.get('retMsg', 'Unknown error')
-
-                        # Minimum size error (retCode 10001)
-                        if ret_code == 10001 or 'minimum limit' in ret_msg.lower():
-                            logger.warning(f"⚠️ Order size for {symbol} doesn't meet exchange requirements: {ret_msg}")
-                            raise MinimumOrderLimitError(f"Order size for {symbol} below minimum limit on {exchange}: {ret_msg}")
-
-                        # Other Bybit errors
-                        logger.error(f"❌ Bybit order failed for {symbol}: retCode={ret_code}, {ret_msg}")
-                        raise AtomicPositionError(f"Bybit order creation failed: {ret_msg}")
 
                 # CRITICAL FIX: Market orders need fetch for full data
                 # - Binance: Returns status='NEW', need fetch for status='FILLED'
@@ -591,166 +558,45 @@ class AtomicPositionManager:
                     max_retries = 5
                     fetched_order = None
 
-                    if exchange == 'bybit':
-                        # BYBIT-SPECIFIC FIX 2025-10-29: Use fetch_positions instead of fetch_order
-                        # Reason: Bybit returns client order ID (UUID) which cannot be queried via fetch_order
-                        #         fetch_order fails with "500 order limit" error
-                        #         BUT fetch_positions works and has all needed data
-                        logger.info(f"ℹ️  Bybit: Using fetch_positions instead of fetch_order (API v5 limitation)")
-                        retry_delay = 0.5
+                    retry_delay = 0.1
 
-                        for attempt in range(1, max_retries + 1):
-                            try:
-                                await asyncio.sleep(retry_delay)
+                    for attempt in range(1, max_retries + 1):
+                        try:
+                            await asyncio.sleep(retry_delay)
+                            fetched_order = await exchange_instance.fetch_order(order_id, symbol)
 
-                                # DIAGNOSTIC 2025-10-29: Log EVERYTHING about fetch_positions call
+                            if fetched_order:
                                 logger.info(
-                                    f"🔍 [DIAGNOSTIC] Calling fetch_positions:\n"
-                                    f"  symbols=['{symbol}']\n"
-                                    f"  params={{'category': 'linear'}}"
+                                    f"✅ Fetched {exchange} order on attempt {attempt}/{max_retries}: "
+                                    f"id={order_id}, "
+                                    f"side={fetched_order.side}, "
+                                    f"status={fetched_order.status}, "
+                                    f"filled={fetched_order.filled}/{fetched_order.amount}, "
+                                    f"avgPrice={fetched_order.price}"
                                 )
-
-                                positions = await exchange_instance.fetch_positions(
-                                    symbols=[symbol],
-                                    params={'category': 'linear'}
-                                )
-
-                                # DIAGNOSTIC: Log what we got back
-                                logger.info(
-                                    f"🔍 [DIAGNOSTIC] fetch_positions returned {len(positions)} positions"
-                                )
-
-                                # DIAGNOSTIC: Try WITHOUT symbols filter to see if position exists at all
-                                if len(positions) == 0:
-                                    logger.info("🔍 [DIAGNOSTIC] Trying fetch_positions WITHOUT symbols filter...")
-                                    all_positions = await exchange_instance.fetch_positions(
-                                        params={'category': 'linear'}
-                                    )
-                                    logger.info(
-                                        f"🔍 [DIAGNOSTIC] fetch_positions (no filter) returned {len(all_positions)} positions"
-                                    )
-                                    for idx, pos in enumerate(all_positions):
-                                        pos_symbol = pos.get('info', {}).get('symbol', '')
-                                        logger.info(
-                                            f"🔍 [DIAGNOSTIC] All positions [{idx+1}]: {pos_symbol}, size={pos.get('contracts')}"
-                                        )
-
-                                if positions:
-                                    for idx, pos in enumerate(positions):
-                                        logger.info(
-                                            f"🔍 [DIAGNOSTIC] Position {idx+1}:\n"
-                                            f"  pos['symbol'] = {pos.get('symbol')}\n"
-                                            f"  pos['contracts'] = {pos.get('contracts')}\n"
-                                            f"  pos['side'] = {pos.get('side')}\n"
-                                            f"  pos['info']['symbol'] = {pos.get('info', {}).get('symbol')}"
-                                        )
-
-                                for pos in positions:
-                                    pos_size = float(pos.get('contracts', 0))
-                                    # CRITICAL: Use pos['info']['symbol'] (raw Bybit format "GIGAUSDT")
-                                    # NOT pos['symbol'] (CCXT format "GIGA/USDT:USDT")
-                                    pos_symbol_raw = pos.get('info', {}).get('symbol', '')
-
-                                    # DIAGNOSTIC: Log comparison
-                                    logger.info(
-                                        f"🔍 [DIAGNOSTIC] Checking position match:\n"
-                                        f"  Looking for: {symbol}\n"
-                                        f"  pos['info']['symbol']: {pos_symbol_raw}\n"
-                                        f"  pos_size: {pos_size}\n"
-                                        f"  Match: {pos_symbol_raw == symbol and pos_size > 0}"
-                                    )
-
-                                    if pos_symbol_raw == symbol and pos_size > 0:
-                                        logger.info(
-                                            f"✅ Fetched {exchange} position on attempt {attempt}/{max_retries}: "
-                                            f"symbol={symbol}, "
-                                            f"side={pos.get('side')}, "
-                                            f"size={pos_size}, "
-                                            f"entryPrice={pos.get('entryPrice', 0)}"
-                                        )
-
-                                        fetched_order = {
-                                            'id': order_id,
-                                            'symbol': symbol,
-                                            'side': pos.get('side', '').lower(),
-                                            'type': 'market',
-                                            'status': 'closed',
-                                            'filled': quantity,
-                                            'amount': quantity,
-                                            'price': float(pos.get('entryPrice', 0)),
-                                            'average': float(pos.get('entryPrice', 0)),
-                                            'info': getattr(raw_order, 'info', {}),
-                                            'timestamp': getattr(raw_order, 'timestamp', None),
-                                            'datetime': getattr(raw_order, 'datetime', None),
-                                        }
-                                        break
-
-                                if fetched_order:
-                                    raw_order = fetched_order
-                                    break
-                                else:
-                                    logger.warning(
-                                        f"⚠️ Attempt {attempt}/{max_retries}: Position not found yet in fetch_positions"
-                                    )
-                                    if attempt < max_retries:
-                                        retry_delay *= 1.5
-
-                            except Exception as e:
+                                raw_order = fetched_order
+                                break
+                            else:
                                 logger.warning(
-                                    f"⚠️ Attempt {attempt}/{max_retries}: fetch_positions failed with error: {e}"
+                                    f"⚠️ Attempt {attempt}/{max_retries}: fetch_order returned None for {order_id}"
                                 )
                                 if attempt < max_retries:
                                     retry_delay *= 1.5
 
-                        if not fetched_order:
-                            logger.error(
-                                f"❌ CRITICAL: Position not found in fetch_positions after {max_retries} attempts!\n"
-                                f"  Exchange: {exchange}\n"
-                                f"  Symbol: {symbol}\n"
-                                f"  This likely means order was rejected or position immediately closed."
+                        except Exception as e:
+                            logger.warning(
+                                f"⚠️ Attempt {attempt}/{max_retries}: fetch_order failed with error: {e}"
                             )
+                            if attempt < max_retries:
+                                retry_delay *= 1.5
 
-                    else:
-                        # BINANCE and OTHER EXCHANGES: Use fetch_order as before
-                        retry_delay = 0.1
-
-                        for attempt in range(1, max_retries + 1):
-                            try:
-                                await asyncio.sleep(retry_delay)
-                                fetched_order = await exchange_instance.fetch_order(order_id, symbol)
-
-                                if fetched_order:
-                                    logger.info(
-                                        f"✅ Fetched {exchange} order on attempt {attempt}/{max_retries}: "
-                                        f"id={order_id}, "
-                                        f"side={fetched_order.side}, "
-                                        f"status={fetched_order.status}, "
-                                        f"filled={fetched_order.filled}/{fetched_order.amount}, "
-                                        f"avgPrice={fetched_order.price}"
-                                    )
-                                    raw_order = fetched_order
-                                    break
-                                else:
-                                    logger.warning(
-                                        f"⚠️ Attempt {attempt}/{max_retries}: fetch_order returned None for {order_id}"
-                                    )
-                                    if attempt < max_retries:
-                                        retry_delay *= 1.5
-
-                            except Exception as e:
-                                logger.warning(
-                                    f"⚠️ Attempt {attempt}/{max_retries}: fetch_order failed with error: {e}"
-                                )
-                                if attempt < max_retries:
-                                    retry_delay *= 1.5
-
-                        if not fetched_order:
-                            logger.error(
-                                f"❌ CRITICAL: fetch_order returned None after {max_retries} attempts for {order_id}!\n"
-                                f"  Exchange: {exchange}\n"
-                                f"  Symbol: {symbol}\n"
-                                f"  Will attempt to use create_order response (may be incomplete)."
-                            )
+                    if not fetched_order:
+                        logger.error(
+                            f"❌ CRITICAL: fetch_order returned None after {max_retries} attempts for {order_id}!\n"
+                            f"  Exchange: {exchange}\n"
+                            f"  Symbol: {symbol}\n"
+                            f"  Will attempt to use create_order response (may be incomplete)."
+                        )
 
                 # Normalize order response
                 entry_order = ExchangeResponseAdapter.normalize_order(raw_order, exchange)
@@ -782,41 +628,8 @@ class AtomicPositionManager:
                         f"Execution: N/A (will use fallback)"
                     )
 
-                # FIX: Bybit API v5 does not return avgPrice in create_order response
-                # Use fetch_positions to get actual execution price (fetch_order has 500 limit)
-                if exchange == 'bybit' and (not exec_price or exec_price == 0):
-                    logger.info(f"📊 Fetching position for {symbol} to get execution price")
-                    try:
-                        # FIX: Bybit API needs time to populate entryPrice in position data
-                        # Wait 500ms for API to process order and update position
-                        await asyncio.sleep(0.5)
-
-                        # Use fetch_positions instead of fetch_order (Bybit V5 best practice)
-                        positions = await exchange_instance.fetch_positions(
-                            symbols=[symbol],
-                            params={'category': 'linear'}
-                        )
-
-                        # Find our position
-                        for pos in positions:
-                            if pos['symbol'] == symbol and float(pos.get('contracts', 0)) > 0:
-                                exec_price = float(pos.get('entryPrice', 0))
-                                if exec_price > 0:
-                                    logger.info(f"✅ Got execution price from position: {exec_price}")
-                                    break
-
-                        if not exec_price or exec_price == 0:
-                            # Fallback to signal entry price if position not found
-                            logger.warning(f"⚠️ Could not get execution price from position, using signal price")
-                            exec_price = entry_price
-
-                    except Exception as e:
-                        logger.error(f"❌ Failed to fetch position for execution price: {e}")
-                        # Fallback: use signal entry price
-                        exec_price = entry_price
-
                 # BINANCE FALLBACK: If avgPrice still 0, fetch position for execution price
-                elif exchange == 'binance' and (not exec_price or exec_price == 0):
+                if exchange == 'binance' and (not exec_price or exec_price == 0):
                     logger.info(f"📊 Binance: avgPrice not in response, fetching position for {symbol}")
                     try:
                         # Small delay to ensure position is updated on exchange
@@ -1246,14 +1059,8 @@ class AtomicPositionManager:
                                         except Exception as e:
                                             logger.debug(f"WebSocket check failed: {e}")
 
-                                    # Source 2: REST API
-                                    if exchange == 'bybit':
-                                        positions = await exchange_instance.fetch_positions(
-                                            symbols=[symbol],
-                                            params={'category': 'linear'}
-                                        )
-                                    else:
-                                        positions = await exchange_instance.fetch_positions([symbol])
+                                    # Default fetch_order logic
+                                    positions = await exchange_instance.fetch_positions([symbol])
 
                                     # Check if position still exists
                                     position_found = False

@@ -36,10 +36,7 @@ class OrderExecutor:
 
     # ==================== ERROR CLASSIFICATION ====================
     # Постоянные ошибки - не retry
-    PERMANENT_ERROR_PATTERNS = [
-        '170003',           # Bybit: brokerId error
-        '170193',           # Bybit: price cannot be
-        '170209',           # Bybit: symbol not available in region
+
         'insufficient',     # Insufficient funds/balance
         'not available',    # Symbol/market not available
         'delisted',         # Symbol delisted
@@ -244,7 +241,7 @@ class OrderExecutor:
                     )
 
                     # === NEW: Special handling for "Insufficient balance" error ===
-                    if '170131' in last_error or 'Insufficient balance' in last_error.lower():
+                    if 'Insufficient balance' in last_error.lower():
                         logger.warning(
                             f"⚠️ {symbol}: Received 'Insufficient balance' error (170131). "
                             f"This might indicate position doesn't exist on exchange."
@@ -451,9 +448,7 @@ class OrderExecutor:
             'postOnly': True
         }
 
-        if exchange.name == 'bybit':
-            params['timeInForce'] = 'PostOnly'
-        elif exchange.name == 'binance':
+        if exchange.name == 'binance':
             params['timeInForce'] = 'GTX'
 
         logger.debug(

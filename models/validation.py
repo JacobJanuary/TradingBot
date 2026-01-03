@@ -184,7 +184,7 @@ class TradingSignal(BaseModel):
     @field_validator('exchange')
     @classmethod
     def validate_exchange(cls, v):
-        valid_exchanges = ['binance', 'bybit', 'okx', 'bitget']
+        valid_exchanges = ['binance']
         if v.lower() not in valid_exchanges:
             raise ValueError(f"Invalid exchange. Must be one of: {valid_exchanges}")
         return v.lower()

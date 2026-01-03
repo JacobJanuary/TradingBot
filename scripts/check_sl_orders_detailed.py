@@ -70,50 +70,7 @@ async def check_binance_sl_orders():
     return sl_count, no_sl_count
 
 
-async def check_bybit_sl_orders():
-    """Проверка SL ордеров на Bybit (trading stop)"""
-    print("=" * 100)
-    print("BYBIT: STOP-LOSS (TRADING STOP)")
-    print("=" * 100)
 
-    bybit_config = config.get_exchange_config('bybit')
-    bybit = ExchangeManager('bybit', bybit_config.__dict__)
-    await bybit.initialize()
-
-    # Получить позиции
-    positions = await bybit.exchange.fetch_positions()
-    active_positions = [p for p in positions if abs(float(p.get('contracts', 0))) > 0]
-
-    print(f"\nПроверяю {len(active_positions)} активных позиций...\n")
-
-    sl_count = 0
-    no_sl_count = 0
-
-    for pos in active_positions:
-        symbol = pos.get('symbol')
-        norm_symbol = symbol.replace('/USDT:USDT', 'USDT')
-        contracts = float(pos.get('contracts', 0))
-        side = pos.get('side')
-
-        # Bybit использует stopLoss в позиции напрямую
-        stop_loss = pos.get('stopLoss')
-        take_profit = pos.get('takeProfit')
-
-        if stop_loss and float(stop_loss) > 0:
-            print(f"✅ {norm_symbol:15} | {side:5} | contracts={contracts:10.2f} | "
-                  f"SL={float(stop_loss):10.6f} | (trading_stop)")
-            sl_count += 1
-        else:
-            print(f"❌ {norm_symbol:15} | {side:5} | contracts={contracts:10.2f} | NO SL (trading_stop)")
-            no_sl_count += 1
-
-    await bybit.close()
-
-    print(f"\n{'=' * 100}")
-    print(f"Bybit: {sl_count} позиций с SL, {no_sl_count} БЕЗ SL")
-    print(f"{'=' * 100}\n")
-
-    return sl_count, no_sl_count
 
 
 async def compare_with_database():
@@ -191,24 +148,8 @@ async def main():
     try:
         # Проверить биржи
         binance_sl, binance_no_sl = await check_binance_sl_orders()
-        bybit_sl, bybit_no_sl = await check_bybit_sl_orders()
-
-        # Проверить базу
-        db_sl, db_no_sl = await compare_with_database()
-
-        # Итоговая сводка
-        print("\n" + "=" * 100)
-        print("ИТОГОВАЯ СВОДКА")
-        print("=" * 100)
-        print(f"Binance:  {binance_sl} с SL, {binance_no_sl} БЕЗ SL (всего {binance_sl + binance_no_sl})")
-        print(f"Bybit:    {bybit_sl} с SL, {bybit_no_sl} БЕЗ SL (всего {bybit_sl + bybit_no_sl})")
-        print(f"Биржи:    {binance_sl + bybit_sl} с SL, {binance_no_sl + bybit_no_sl} БЕЗ SL (всего {binance_sl + bybit_sl + binance_no_sl + bybit_no_sl})")
-        print(f"-" * 100)
-        print(f"База:     {db_sl} с SL, {db_no_sl} БЕЗ SL (всего {db_sl + db_no_sl})")
-        print("=" * 100)
-
-        if binance_no_sl + bybit_no_sl > 0:
-            print(f"\n⚠️  ВНИМАНИЕ: {binance_no_sl + bybit_no_sl} позиций БЕЗ SL на биржах!")
+        if binance_no_sl > 0:
+            print(f"\n⚠️  ВНИМАНИЕ: {binance_no_sl} позиций БЕЗ SL на биржах!")
         else:
             print(f"\n✅ ВСЕ ПОЗИЦИИ ЗАЩИЩЕНЫ SL")
 

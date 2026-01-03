@@ -35,7 +35,7 @@ class StopLossManager:
         """
         Args:
             exchange: CCXT exchange instance
-            exchange_name: Exchange name ('bybit', 'binance', etc.)
+            exchange_name: Exchange name ('binance', etc.)
             position_manager: Optional PositionManager instance for TS detection
                              Required for TS-awareness. If None, TS detection disabled.
         """
@@ -64,8 +64,7 @@ class StopLossManager:
 
         Проверяет в следующем порядке:
         1. Binance: Algo orders ONLY (December 2025 migration)
-        2. Bybit: Position-attached SL (через position.info.stopLoss)
-        3. Others: Conditional stop orders (через fetch_open_orders)
+        2. Others: Conditional stop orders (через fetch_open_orders)
         """
         try:
             self.logger.debug(f"Checking Stop Loss for {symbol} on {self.exchange_name}")
@@ -132,63 +131,11 @@ class StopLossManager:
                     return False, None, None
 
             # ============================================================
-            # ПРИОРИТЕТ 1: Position-attached Stop Loss (для Bybit)
-            # ============================================================
-            elif self.exchange_name == 'bybit':
-                try:
-                    # CRITICAL FIX: Import normalize_symbol for symbol comparison
-                    from core.position_manager import normalize_symbol
-
-                    # КРИТИЧНО: Fetch ALL positions since symbol format may not match
-                    positions = await self.exchange.fetch_positions(
-                        params={'category': 'linear'}
-                    )
-
-                    normalized_symbol = normalize_symbol(symbol)
-
-                    for pos in positions:
-                        if normalize_symbol(pos['symbol']) == normalized_symbol and float(pos.get('contracts', 0)) > 0:
-                            # КРИТИЧНО: Проверяем position.info.stopLoss
-                            # Источник: core/position_manager.py:1324
-                            stop_loss = pos.get('info', {}).get('stopLoss', '0')
-
-                            self.logger.debug(
-                                f"Bybit position {symbol}: stopLoss='{stop_loss}' "
-                                f"(type: {type(stop_loss)})"
-                            )
-
-                            # КРИТИЧНО: Проверяем все варианты "нет SL"
-                            # Bybit возвращает '0' если нет SL, или реальную цену если есть
-                            if stop_loss and stop_loss not in ['0', '0.00', '', None]:
-                                self.logger.info(
-                                    f"✅ Position {symbol} has Stop Loss: {stop_loss}"
-                                )
-                                return True, stop_loss, None
-                            else:
-                                self.logger.debug(
-                                    f"No position-attached SL for {symbol} "
-                                    f"(stopLoss='{stop_loss}')"
-                                )
-
-                except Exception as e:
-                    self.logger.debug(f"Could not check Bybit position SL: {e}")
-
-            # ============================================================
-            # ПРИОРИТЕТ 2: Conditional stop orders (для всех бирж)
+            # CHECK: Conditional stop orders (General CCXT)
             # ============================================================
             try:
                 # Получить stop orders
-                if self.exchange_name == 'bybit':
-                    # КРИТИЧНО: Для Bybit добавляем category='linear'
-                    orders = await self.exchange.fetch_open_orders(
-                        symbol,
-                        params={
-                            'category': 'linear',
-                            'orderFilter': 'StopOrder'
-                        }
-                    )
-                else:
-                    orders = await self.exchange.fetch_open_orders(symbol)
+                orders = await self.exchange.fetch_open_orders(symbol)
 
                 # Проверить есть ли stop loss orders
                 for order in orders:
@@ -328,13 +275,10 @@ class StopLossManager:
 
             # ШАГ 2: Установка через ExchangeManager
             # Используем проверенную логику из core/exchange_manager.py
-            if self.exchange_name == 'bybit':
-                return await self._set_bybit_stop_loss(symbol, stop_price)
-            else:
-                # DECEMBER 2025 MIGRATION: ALL Binance symbols now use Algo API
-                # Old standard API returns error -4120 for all conditional orders
-                # No need for fallback - directly use new Algo Order endpoint
-                return await self._set_binance_stop_loss_algo(symbol, side, amount, stop_price)
+            # DECEMBER 2025 MIGRATION: ALL Binance symbols now use Algo API
+            # Old standard API returns error -4120 for all conditional orders
+            # No need for fallback - directly use new Algo Order endpoint
+            return await self._set_binance_stop_loss_algo(symbol, side, amount, stop_price)
 
         except Exception as e:
             self.logger.error(f"Failed to set Stop Loss for {symbol}: {e}")
@@ -442,121 +386,7 @@ class StopLossManager:
             self.logger.error(f"Error in verify_and_fix_missing_sl for {symbol}: {e}")
             return False, None  # CRITICAL FIX: Return tuple
 
-    async def _set_bybit_stop_loss(self, symbol: str, stop_price: Decimal) -> Dict:
-        """
-        Установка Stop Loss для Bybit через position-attached method.
 
-        Источник: core/exchange_manager.py:create_stop_loss_order (Bybit секция)
-        """
-        try:
-            # CRITICAL FIX: Direct SL placement without fetch_positions
-            # Race condition fix: Bybit position may not be visible via fetch_positions
-            # immediately after order creation. Let Bybit API validate position existence.
-            # If position doesn't exist, Bybit returns retCode=10001
-
-            # Format for Bybit API (no fetch_positions needed)
-            bybit_symbol = symbol.replace('/', '').replace(':USDT', '')
-            sl_price_formatted = self.exchange.price_to_precision(symbol, stop_price)
-
-            # Set SL via trading_stop (position-attached)
-            params = {
-                'category': 'linear',
-                'symbol': bybit_symbol,
-                'stopLoss': str(sl_price_formatted),
-                'positionIdx': 0,  # One-way mode (default)
-                'slTriggerBy': 'LastPrice',
-                'tpslMode': 'Full'
-            }
-
-            self.logger.debug(f"Bybit set_trading_stop params: {params}")
-
-            result = await self.exchange.private_post_v5_position_trading_stop(params)
-
-            # Обработка результата
-            # CRITICAL FIX: Convert retCode to int (Bybit API returns string "0", not number 0)
-            ret_code = int(result.get('retCode', 1))
-            ret_msg = result.get('retMsg', 'Unknown error')
-
-            if ret_code == 0:
-                # Успех
-                self.logger.info(f"✅ Stop Loss set successfully at {sl_price_formatted}")
-
-                # Log SL placement
-                event_logger = get_event_logger()
-                if event_logger:
-                    await event_logger.log_event(
-                        EventType.STOP_LOSS_PLACED,
-                        {
-                            'symbol': symbol,
-                            'exchange': self.exchange_name,
-                            'stop_price': float(sl_price_formatted),
-                            'method': 'position_attached',
-                            'trigger_by': 'LastPrice'
-                        },
-                        symbol=symbol,
-                        exchange=self.exchange_name,
-                        severity='INFO'
-                    )
-
-                return {
-                    'status': 'created',
-                    'stopPrice': float(sl_price_formatted),
-                    'info': result
-                }
-            elif ret_code == 10001:
-                # Position not found (race condition - position not visible yet)
-                raise ValueError(f"No open position found for {symbol}")
-            elif ret_code == 34040 and 'not modified' in ret_msg:
-                # SL уже установлен на правильной цене
-                self.logger.info(f"✅ Stop Loss already set at {stop_price} (not modified)")
-                return {
-                    'status': 'already_exists',
-                    'stopPrice': float(sl_price_formatted),
-                    'info': result
-                }
-            else:
-                # Ошибка
-                error_message = f"Bybit API error {ret_code}: {ret_msg}"
-
-                # Log SL error
-                event_logger = get_event_logger()
-                if event_logger:
-                    await event_logger.log_event(
-                        EventType.STOP_LOSS_ERROR,
-                        {
-                            'symbol': symbol,
-                            'exchange': self.exchange_name,
-                            'stop_price': float(sl_price_formatted),
-                            'error': error_message,
-                            'ret_code': ret_code
-                        },
-                        symbol=symbol,
-                        exchange=self.exchange_name,
-                        severity='ERROR'
-                    )
-
-                raise Exception(error_message)
-
-        except Exception as e:
-            self.logger.error(f"Failed to set Bybit Stop Loss: {e}")
-
-            # Log SL error (if not already logged)
-            if 'Bybit API error' not in str(e):
-                event_logger = get_event_logger()
-                if event_logger:
-                    await event_logger.log_event(
-                        EventType.STOP_LOSS_ERROR,
-                        {
-                            'symbol': symbol,
-                            'exchange': self.exchange_name,
-                            'error': str(e)
-                        },
-                        symbol=symbol,
-                        exchange=self.exchange_name,
-                        severity='ERROR'
-                    )
-
-            raise
 
 
 
@@ -777,7 +607,7 @@ class StopLossManager:
                 }
 
                 # Log for audit
-                if self.exchange_name in ['binance', 'bybit']:
+                if self.exchange_name == 'binance':
                     self.logger.info(f"✅ reduceOnly validated: {params.get('reduceOnly')} for {symbol}")
 
                 order = await self.exchange.create_order(
@@ -916,13 +746,6 @@ class StopLossManager:
             info = order.get('info', {})
             order_type = order.get('type', '')
             reduce_only = order.get('reduceOnly', False)
-
-            # ПРИОРИТЕТ 1: stopOrderType (Bybit)
-            stop_order_type = info.get('stopOrderType', '')
-            if stop_order_type and stop_order_type not in ['', 'UNKNOWN']:
-                # Проверяем что это именно Stop Loss, а не Take Profit
-                if any(keyword in stop_order_type.lower() for keyword in ['stop', 'sl']):
-                    return True
 
             # ПРИОРИТЕТ 2: type содержит 'stop'
             if 'stop' in order_type.lower() and reduce_only:

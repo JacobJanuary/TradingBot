@@ -144,7 +144,7 @@ async def measure_save_trailing_stop(repo: Repository, runs: int = 5):
         await repo.save_trailing_stop_state(
             position_id=test_pos['id'],
             symbol=test_pos['symbol'],
-            exchange='bybit',  # Assuming exchange
+            exchange='binance',  # Assuming exchange
             side=test_pos['side'],
             state='WAITING',
             activation_price=test_pos['entry_price'] * Decimal('1.015'),
@@ -237,7 +237,7 @@ async def simulate_wave_ts_creation(repo: Repository, position_count: int = 5):
         step2_start = time.perf_counter()
         position_id = None
         for p in all_positions:
-            if p['symbol'] == pos['symbol'] and p['exchange'] == pos.get('exchange', 'bybit'):
+            if p['symbol'] == pos['symbol'] and p['exchange'] == pos.get('exchange', 'binance'):
                 position_id = p['id']
                 break
         step2_ms = (time.perf_counter() - step2_start) * 1000
@@ -248,7 +248,7 @@ async def simulate_wave_ts_creation(repo: Repository, position_count: int = 5):
             await repo.save_trailing_stop_state(
                 position_id=position_id,
                 symbol=pos['symbol'],
-                exchange=pos.get('exchange', 'bybit'),
+                exchange=pos.get('exchange', 'binance'),
                 side=pos['side'],
                 state='WAITING',
                 activation_price=pos['entry_price'] * Decimal('1.015'),
@@ -336,7 +336,7 @@ async def main():
 
         # Run all tests
         test1_result = await measure_get_open_positions(repo, runs=10)
-        test2_result = await measure_direct_lookup(repo, 'BTCUSDT', 'bybit', runs=10)
+        test2_result = await measure_direct_lookup(repo, 'BTCUSDT', 'binance', runs=10)
         test3_result = await measure_save_trailing_stop(repo, runs=5)
         test4_result = await check_db_pool_metrics(repo)
         test5_result = await simulate_wave_ts_creation(repo, position_count=5)

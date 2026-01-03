@@ -41,34 +41,7 @@ async def check_binance_positions():
     return active_positions
 
 
-async def check_bybit_positions():
-    """Проверка позиций на Bybit"""
-    print("\n" + "=" * 80)
-    print("ПРОВЕРКА ПОЗИЦИЙ НА BYBIT")
-    print("=" * 80)
 
-    bybit_config = config.get_exchange_config('bybit')
-    bybit = ExchangeManager('bybit', bybit_config.__dict__)
-    await bybit.initialize()
-
-    # Получить все активные позиции
-    positions = await bybit.exchange.fetch_positions()
-
-    active_positions = [p for p in positions if abs(float(p.get('contracts', 0))) > 0]
-
-    print(f"\nВсего активных позиций: {len(active_positions)}\n")
-
-    for pos in active_positions:
-        symbol = pos.get('symbol', '').replace('/USDT:USDT', 'USDT')
-        contracts = float(pos.get('contracts', 0))
-        side = pos.get('side')
-        entry_price = pos.get('entryPrice')
-        mark_price = pos.get('markPrice')
-
-        print(f"{symbol:15} | {side:5} | contracts={contracts:12.2f} | entry={entry_price:10.6f} | mark={mark_price:10.6f}")
-
-    await bybit.close()
-    return active_positions
 
 
 async def check_stop_loss_orders():
@@ -103,59 +76,15 @@ async def check_stop_loss_orders():
 
     await binance.close()
 
-    # Bybit
-    print("\n=== BYBIT ===")
-    bybit_config = config.get_exchange_config('bybit')
-    bybit = ExchangeManager('bybit', bybit_config.__dict__)
-    await bybit.initialize()
 
-    try:
-        # Для Bybit используем специальный метод для получения условных ордеров
-        positions = await bybit.exchange.fetch_positions()
-        active_symbols = [p.get('symbol') for p in positions if abs(float(p.get('contracts', 0))) > 0]
-
-        print(f"Проверяем позиции: {len(active_symbols)}\n")
-
-        sl_count = 0
-        for symbol in active_symbols:
-            try:
-                # Получаем trading stop для позиции
-                params = {'symbol': symbol, 'category': 'linear'}
-                response = await bybit.exchange.privateGetV5PositionList(params)
-
-                if response and 'result' in response and 'list' in response['result']:
-                    for pos_data in response['result']['list']:
-                        sl_price = pos_data.get('stopLoss')
-                        if sl_price and float(sl_price) > 0:
-                            norm_symbol = symbol.replace('/USDT:USDT', 'USDT')
-                            side = pos_data.get('side')
-                            sl_count += 1
-                            print(f"{norm_symbol:15} | trading_stop  | {side:4} | stop={float(sl_price):10.6f}")
-
-            except Exception as e:
-                pass
-
-        print(f"\nВсего SL (trading stop): {sl_count}")
-
-    except Exception as e:
-        print(f"Ошибка получения позиций Bybit: {e}")
-
-    await bybit.close()
 
 
 async def main():
     """Главная функция"""
     try:
         binance_positions = await check_binance_positions()
-        bybit_positions = await check_bybit_positions()
-        await check_stop_loss_orders()
-
-        print("\n" + "=" * 80)
-        print("ИТОГО")
-        print("=" * 80)
         print(f"Binance: {len(binance_positions)} позиций")
-        print(f"Bybit: {len(bybit_positions)} позиций")
-        print(f"ВСЕГО: {len(binance_positions) + len(bybit_positions)} позиций")
+        print(f"ВСЕГО: {len(binance_positions)} позиций")
 
     except Exception as e:
         print(f"\n❌ Ошибка: {e}")

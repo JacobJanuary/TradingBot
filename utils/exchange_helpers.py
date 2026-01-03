@@ -2,8 +2,8 @@
 Exchange ID mapping helpers
 
 Converts between:
-- exchange_name: str ('binance', 'bybit')
-- exchange_id: int (1, 2)
+- exchange_name: str ('binance')
+- exchange_id: int (1)
 
 Used for:
 - Reading params from monitoring.params (requires exchange_id)
@@ -33,12 +33,10 @@ def exchange_name_to_id(name: str) -> int:
 
     if name_lower == 'binance':
         return 1
-    elif name_lower == 'bybit':
-        return 2
     else:
         raise ValueError(
             f"Unknown exchange name: '{name}'. "
-            f"Expected 'binance' or 'bybit'"
+            f"Expected 'binance'"
         )
 
 
@@ -63,10 +61,8 @@ def exchange_id_to_name(exchange_id: int) -> str:
     """
     if exchange_id == 1:
         return 'binance'
-    elif exchange_id == 2:
-        return 'bybit'
     else:
         raise ValueError(
             f"Unknown exchange_id: {exchange_id}. "
-            f"Expected 1 (Binance) or 2 (Bybit)"
+            f"Expected 1 (Binance)"
         )

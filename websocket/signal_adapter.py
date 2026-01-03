@@ -22,7 +22,7 @@ class SignalAdapter:
         "timestamp": "2025-10-06T14:20:00",
         "created_at": "2025-10-06T14:20:05",
         "trading_pair_id": 1234,
-        "exchange_id": 1  # 1=Binance, 2=Bybit
+        "exchange_id": 1  # 1=Binance
     }
     
     Формат бота:
@@ -33,7 +33,7 @@ class SignalAdapter:
         "score_week": float,
         "score_month": float,
         "created_at": datetime,
-        "exchange": str,  # 'binance' или 'bybit'
+        "exchange": str,  # 'binance'
         "wave_timestamp": datetime
     }
     """

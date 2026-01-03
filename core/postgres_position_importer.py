@@ -55,23 +55,7 @@ class PostgresPositionImporter:
                 if use_testnet:
                     exchange.set_sandbox_mode(True)
 
-            elif name == 'bybit':
-                use_testnet = os.getenv('BYBIT_TESTNET', '').lower() == 'true'
-                exchange = ccxt.bybit({
-                    'apiKey': os.getenv('BYBIT_API_KEY'),
-                    'secret': os.getenv('BYBIT_API_SECRET'),
-                    'enableRateLimit': True,
-                    'options': {
-                        'defaultType': 'future',
-                        'accountType': 'UNIFIED',
-                    }
-                })
-                if use_testnet:
-                    exchange.urls['api'] = {
-                        'public': 'https://api-testnet.bybit.com',
-                        'private': 'https://api-testnet.bybit.com'
-                    }
-                    exchange.hostname = 'api-testnet.bybit.com'
+
             else:
                 return None
 
@@ -306,7 +290,7 @@ class PostgresPositionImporter:
         # Setup connections
         await self.connect_database()
         await self.setup_exchange('binance')
-        await self.setup_exchange('bybit')
+
 
         imported_count = 0
         updated_count = 0
@@ -315,7 +299,7 @@ class PostgresPositionImporter:
         # Start transaction
         async with self.conn.transaction():
             # Fetch and import positions from each exchange
-            for exchange_name in ['binance', 'bybit']:
+            for exchange_name in ['binance']:
                 if exchange_name in self.exchanges:
                     positions = await self.fetch_positions_from_exchange(exchange_name)
                     all_positions.extend(positions)
