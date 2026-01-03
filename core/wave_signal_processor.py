@@ -115,8 +115,6 @@ class WaveSignalProcessor:
             f"🌊 Starting wave processing: {len(signals)} signals at "
             f"timestamp {wave_id}"
         )
-        # DEBUG CONFIGURATION
-        logger.info(f"🔧 CONFIG CHECK: SMART_ENTRY={self.config.smart_entry_enabled} (Timeout={self.config.smart_entry_timeout_minutes}m)")
 
         # ✅ ГЛАВНОЕ ИЗМЕНЕНИЕ: используем try-except с continue
         # Based on: Freqtrade pattern for batch processing
@@ -599,10 +597,6 @@ class WaveSignalProcessor:
         """
         Обрабатывает один сигнал.
         
-        BEHAVIOR:
-        - If SMART_ENTRY=true → Launch Hunter (Fire & Forget)
-        - If SMART_ENTRY=false → Old logic (immediate processing)
-        
         Args:
             signal: Сигнал для обработки
             wave_timestamp: Timestamp волны
@@ -611,90 +605,30 @@ class WaveSignalProcessor:
             Dict с результатом обработки или None если не удалось
         """
         try:
-            # FIX: 2025-10-03 - CRITICAL: Modify original signal to ensure SignalProcessor gets correct action
-            # Используем ту же логику что в SignalProcessor (signal_type или recommended_action)
+            # Extract action from signal
             action = signal.get('signal_type') or signal.get('recommended_action') or signal.get('action')
             symbol = signal.get('symbol', signal.get('pair_symbol', ''))
 
-            # CRITICAL FIX: Modify the original signal so SignalProcessor gets the correct action
+            # Ensure action is set for downstream processing
             if action and not signal.get('action'):
                 signal['action'] = action
                 logger.debug(f"Signal #{signal.get('id', 'unknown')} action set to: {action}")
 
-            # Also ensure signal_type is set for SignalProcessor validation
+            # Ensure signal_type is set for validation
             if action and not signal.get('signal_type'):
                 signal['signal_type'] = action
             
-            # ═══════════════════════════════════════════════════
-            # SMART ENTRY INTEGRATION POINT
-            # ═══════════════════════════════════════════════════
-            
-            if self.config.smart_entry_enabled:
-                # NEW PATH: Smart Entry Hunter
-                try:
-                    from core.smart_entry_hunter import launch_hunter
-                    
-                    exchange = signal.get('exchange', signal.get('exchange_name', ''))
-                    exchange_manager = self.position_manager.exchanges.get(exchange)
-                    
-                    if not exchange_manager:
-                        logger.error(f"❌ Smart Entry: Exchange {exchange} not available for {symbol}")
-                        # Fallback to old logic if exchange not found
-                        logger.warning(f"⚠️  Falling back to immediate entry for {symbol}")
-                        return self._immediate_entry_fallback(signal, action, wave_timestamp)
-                    
-                    # Launch Hunter (Fire & Forget)
-                    hunter_task = launch_hunter(
-                        signal=signal,
-                        exchange_manager=exchange_manager,
-                        position_manager=self.position_manager
-                    )
-                    
-                    logger.info(
-                        f"🎯 Smart Entry Hunter launched for {symbol} "
-                        f"(timeout: {self.config.smart_entry_timeout_minutes}min)"
-                    )
-                    
-                    return {
-                        'symbol': symbol,
-                        'action': action,
-                        'processed_at': wave_timestamp,
-                        'status': 'hunter_launched',
-                        'hunter_task_id': id(hunter_task)
-                    }
-                    
-                except Exception as e:
-                    logger.error(f"❌ Smart Entry launch failed for {symbol}: {e}", exc_info=True)
-                    # Graceful fallback to old logic
-                    logger.warning(f"⚠️  Falling back to immediate entry for {symbol}")
-                    return self._immediate_entry_fallback(signal, action, wave_timestamp)
-            
-            else:
-                # OLD PATH: Immediate entry (original behavior)
-                logger.debug(f"📍 Immediate entry mode for {symbol} (SMART_ENTRY=false)")
-                return {
-                    'symbol': symbol,
-                    'action': action,
-                    'processed_at': wave_timestamp,
-                    'status': 'processed'
-                }
+            # Direct processing (SMART_ENTRY removed 2026-01-03)
+            return {
+                'symbol': symbol,
+                'action': action,
+                'processed_at': wave_timestamp,
+                'status': 'processed'
+            }
         
         except Exception as e:
             logger.error(f"Error processing single signal: {e}", exc_info=True)
             return None
-
-    def _immediate_entry_fallback(self, signal: Dict, action: str, wave_timestamp: str) -> Dict:
-        """
-        Fallback для immediate entry (если Smart Entry failed)
-        
-        Используется когда SmartEntry включен, но произошла ошибка запуска Hunter
-        """
-        return {
-            'symbol': signal.get('symbol', signal.get('pair_symbol', '')),
-            'action': action,
-            'processed_at': wave_timestamp,
-            'status': 'processed_fallback'
-        }
 
     async def _get_minimum_cost(
         self,

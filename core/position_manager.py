@@ -1520,8 +1520,32 @@ class PositionManager:
             if position.id is not None and hasattr(position, 'has_stop_loss') and position.has_stop_loss:
                 logger.info(f"✅ Stop loss already set atomically for {symbol}")
             else:
-                # Use stop loss from config (DB params removed 2026-01-03)
-                stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+                # Get per-exchange params from monitoring.params
+                try:
+                    exchange_params = await self.repository.get_params_by_exchange_name(request.exchange)
+
+                    if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                        # Use stop_loss_filter from DB
+                        db_stop_loss_percent = float(exchange_params['stop_loss_filter'])
+                        logger.debug(
+                            f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
+                        )
+                        stop_loss_percent_val: Decimal = to_decimal(request.stop_loss_percent or db_stop_loss_percent)
+                    else:
+                        # Fallback to .env if DB params not available
+                        logger.warning(
+                            f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
+                            f"using .env fallback: {self.config.stop_loss_percent}%"
+                        )
+                        stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+
+                except Exception as e:
+                    # Fallback to .env on error
+                    logger.error(
+                        f"❌ Failed to load params from DB for {request.exchange}: {e}. "
+                        f"Using .env fallback: {self.config.stop_loss_percent}%"
+                    )
+                    stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
 
                 stop_loss_price_val: Decimal = calculate_stop_loss(
                     to_decimal(position.entry_price), position.side, stop_loss_percent_val
@@ -3585,8 +3609,25 @@ class PositionManager:
                                 f"(preserving signal optimization)"
                             )
                         else:
-                            # Use config (DB params removed 2026-01-03)
-                            stop_loss_percent = self.config.stop_loss_percent
+                            # Priority 2: Database exchange params
+                            try:
+                                exchange_params = await self.repository.get_params_by_exchange_name(position.exchange)
+
+                                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
+                                    stop_loss_percent = float(exchange_params['stop_loss_filter'])
+                                    logger.debug(
+                                        f"📊 {position.symbol}: Using DATABASE SL: {stop_loss_percent}%"
+                                    )
+                                else:
+                                    # Priority 3: .env fallback (lowest priority)
+                                    stop_loss_percent = self.config.stop_loss_percent
+                                    logger.warning(
+                                        f"⚠️ {position.symbol}: Using .ENV SL: {stop_loss_percent}% (fallback)"
+                                    )
+
+                            except Exception as e:
+                                logger.error(f"❌ {position.symbol}: Error loading params from DB: {e}. Using .env")
+                                stop_loss_percent = self.config.stop_loss_percent
 
                         stop_loss_percent_decimal = float(stop_loss_percent) / 100  # Convert from percent to decimal (e.g. 2.0 -> 0.02)
 

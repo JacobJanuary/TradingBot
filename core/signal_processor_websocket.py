@@ -877,21 +877,10 @@ class WebSocketSignalProcessor:
             failed = 0
             execution_details = []  # Track execution results for reporting
 
+
             for idx, signal_result in enumerate(process_result.get('successful', [])):
                 # NOTE: No max_trades limit - execute ALL successful signals
 
-                # CRITICAL FIX: Check if signal was already handled by Smart Entry Hunter
-                result_info = signal_result.get('result', {})
-                if result_info.get('status') == 'hunter_launched':
-                    logger.info(f"🎯 Signal {idx+1} handled by Smart Entry Hunter, skipping immediate execution")
-                    executed += 1  # Count as executed since Hunter is working on it
-                    execution_details.append({
-                        'index': idx + 1,
-                        'symbol': signal_result.get('symbol', 'UNKNOWN'),
-                        'result': 'hunter_launched',
-                        'executed': True
-                    })
-                    continue
 
                 signal_data = signal_result.get('signal_data')
                 if signal_data:
@@ -1184,26 +1173,8 @@ class WebSocketSignalProcessor:
                 logger.error(f"Invalid signal action: {validated_signal.action}")
                 return False
             
-            # ═══════════════════════════════════════════════════
-            # SMART ENTRY INTEGRATION (Restored)
-            # ═══════════════════════════════════════════════════
-            if self.config.smart_entry_enabled:
-                try:
-                    from core.smart_entry_hunter import launch_hunter
-                    
-                    # Launch Hunter (Fire & Forget)
-                    launch_hunter(
-                        signal=signal,
-                        exchange_manager=exchange_manager,
-                        position_manager=self.position_manager
-                    )
-                    logger.info(f"🎯 Smart Entry Hunter launched for {symbol} (direct execution)")
-                    return True # Handled by Hunter
-                        
-                except Exception as e:
-                    logger.error(f"❌ Smart Entry launch failed for {symbol}: {e}")
-                    # Fallback to immediate execution
             
+
             # Create position request (dataclass from position_manager)
             from core.position_manager import PositionRequest
             
