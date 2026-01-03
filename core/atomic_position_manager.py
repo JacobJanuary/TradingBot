@@ -494,13 +494,14 @@ class AtomicPositionManager:
         exchange = request.exchange
         side = request.side
         entry_price = float(request.entry_price)
-        stop_loss_percent = request.stop_loss_percent
-
-        # Extract trailing params from request if not provided in args
-        if trailing_activation_percent is None:
-            trailing_activation_percent = request.trailing_activation_percent
-        if trailing_callback_percent is None:
-            trailing_callback_percent = request.trailing_callback_percent
+        
+        # ALL params from .env ONLY (2026-01-03: removed signal/request params)
+        if self.config:
+            stop_loss_percent = float(self.config.stop_loss_percent)
+            trailing_activation_percent = float(self.config.trailing_activation_percent)
+            trailing_callback_percent = float(self.config.trailing_callback_percent)
+        else:
+            raise AtomicPositionError("Config not available - cannot get SL/TS params")
 
         operation_id = f"pos_{symbol}_{now_utc().timestamp()}"
 
@@ -511,25 +512,6 @@ class AtomicPositionManager:
 
         async with self.atomic_operation(operation_id):
             try:
-                # Step 0.5: Use passed trailing params (MIGRATION: No longer querying monitoring.params)
-                # We use the values passed from PositionRequest (per-signal)
-
-                # Fallback to config if not provided in signal
-                if self.config:
-                    if trailing_activation_percent is None:
-                        trailing_activation_percent = float(self.config.trailing_activation_percent)
-                        logger.warning(
-                            f"⚠️  trailing_activation_percent not provided for {exchange}, "
-                            f"using .env fallback: {trailing_activation_percent}%"
-                        )
-
-                    if trailing_callback_percent is None:
-                        trailing_callback_percent = float(self.config.trailing_callback_percent)
-                        logger.warning(
-                            f"⚠️  trailing_callback_percent not provided for {exchange}, "
-                            f"using .env fallback: {trailing_callback_percent}%"
-                        )
-
                 # Step 1: Размещение entry ордера (MOVED UP - before position creation)
                 logger.info(f"📊 Placing entry order for {symbol}")
                 state = PositionState.ENTRY_PLACED
@@ -537,6 +519,8 @@ class AtomicPositionManager:
                 # FIX: exchange_manager is a dict, not an object with get_exchange method
                 exchange_instance = self.exchange_manager.get(exchange)
                 if not exchange_instance:
+                    raise AtomicPositionError(f"Exchange {exchange} not available")
+
                     raise AtomicPositionError(f"Exchange {exchange} not available")
 
                 # RESTORED 2025-10-25: Set leverage before opening position
@@ -876,7 +860,7 @@ class AtomicPositionManager:
                     'exchange_order_id': entry_order.id,
                     'trailing_activation_percent': trailing_activation_percent,
                     'trailing_callback_percent': trailing_callback_percent,
-                    'signal_stop_loss_percent': request.stop_loss_percent  # NEW: Option 2
+                    # signal_stop_loss_percent removed 2026-01-03 - all from .env
                 }
 
                 position_id = await self.repository.create_position(position_data)

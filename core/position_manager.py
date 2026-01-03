@@ -1211,24 +1211,18 @@ class PositionManager:
                 position_side = request.side.lower()
                 order_side = request.side.lower()
 
-            # Get params (Prioritize REQUEST -> ENV)
-            # DATABASE PARAMETERS (monitoring.params) DEPRECATED AND REMOVED 2026-01-02
+            # Get params from .env ONLY (2026-01-03: removed signal/DB params)
             
-            # 1. Stop Loss Percent
-            stop_loss_percent: Decimal = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+            # 1. Stop Loss Percent - ALWAYS from .env
+            stop_loss_percent: Decimal = to_decimal(self.config.stop_loss_percent)
             
             stop_loss_price = calculate_stop_loss(
                 to_decimal(request.entry_price), position_side, stop_loss_percent
             )
 
-            # 2. Trailing Stop Params
-            trailing_activation_percent = request.trailing_activation_percent
-            if trailing_activation_percent is None:
-                trailing_activation_percent = float(self.config.trailing_activation_percent)
-
-            trailing_callback_percent = request.trailing_callback_percent
-            if trailing_callback_percent is None:
-                trailing_callback_percent = float(self.config.trailing_callback_percent)
+            # 2. Trailing Stop Params - ALWAYS from .env
+            trailing_activation_percent = float(self.config.trailing_activation_percent)
+            trailing_callback_percent = float(self.config.trailing_callback_percent)
 
             logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity}")
             # COSMETIC FIX: Show scientific notation for small numbers instead of 0.0000
@@ -1242,12 +1236,11 @@ class PositionManager:
                 # Initialize atomic manager
                 from core.stop_loss_manager import StopLossManager
                 
-                # CRITICAL FIX: Update request with resolved SL percent/price
-                # If request.stop_loss_percent was None, we calculated fallback above but didn't update request
-                request.stop_loss_percent = float(stop_loss_percent)
+                # SL/TS params already loaded from .env above
                 
                 # ✅ FIX #1.5a: Pass position_manager for TS-awareness
                 sl_manager = StopLossManager(exchange.exchange, exchange_name, position_manager=self)
+
 
                 atomic_manager = AtomicPositionManager(
                     repository=self.repository,
@@ -1486,10 +1479,8 @@ class PositionManager:
                 position = await AtomicPositionManager(self.repository, self.config, self.exchanges).open_position_atomic(
         request=request,
         quantity=quantity,
-        exchange_manager=exchange_manager,
-        # NEW: Pass per-signal parameters from request
-        trailing_activation_percent=request.trailing_activation_percent,
-        trailing_callback_percent=request.trailing_callback_percent,
+        exchange_manager=exchange_manager
+        # SL/TS params from .env in atomic_position_manager
     )
                 logger.info(f"🔍 DEBUG: Position created with ID={position_id} for {symbol}")
 
@@ -1520,32 +1511,10 @@ class PositionManager:
             if position.id is not None and hasattr(position, 'has_stop_loss') and position.has_stop_loss:
                 logger.info(f"✅ Stop loss already set atomically for {symbol}")
             else:
-                # Get per-exchange params from monitoring.params
-                try:
-                    exchange_params = await self.repository.get_params_by_exchange_name(request.exchange)
-
-                    if exchange_params and exchange_params.get('stop_loss_filter') is not None:
-                        # Use stop_loss_filter from DB
-                        db_stop_loss_percent = float(exchange_params['stop_loss_filter'])
-                        logger.debug(
-                            f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
-                        )
-                        stop_loss_percent_val: Decimal = to_decimal(request.stop_loss_percent or db_stop_loss_percent)
-                    else:
-                        # Fallback to .env if DB params not available
-                        logger.warning(
-                            f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
-                            f"using .env fallback: {self.config.stop_loss_percent}%"
-                        )
-                        stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
-
-                except Exception as e:
-                    # Fallback to .env on error
-                    logger.error(
-                        f"❌ Failed to load params from DB for {request.exchange}: {e}. "
-                        f"Using .env fallback: {self.config.stop_loss_percent}%"
-                    )
-                    stop_loss_percent_val = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+                # Use stop loss from .env config ALWAYS (signal params ignored 2026-01-03)
+                # FIX: Signal params were overriding .env config incorrectly
+                stop_loss_percent_val = to_decimal(self.config.stop_loss_percent)
+                logger.info(f"📊 Using SL from .env: {stop_loss_percent_val}%")
 
                 stop_loss_price_val: Decimal = calculate_stop_loss(
                     to_decimal(position.entry_price), position.side, stop_loss_percent_val
@@ -3599,35 +3568,8 @@ class PositionManager:
                         # This prevents creating invalid SL that would be rejected by exchange
                         # STEP 3: Get SL percent with proper priority
                         # Priority: Signal > Database > .env
-                        stop_loss_percent = None
-
-                        # Priority 1: Signal-specific params (highest priority)
-                        if hasattr(position, 'signal_stop_loss_percent') and position.signal_stop_loss_percent is not None:
-                            stop_loss_percent = float(position.signal_stop_loss_percent)
-                            logger.info(
-                                f"📊 {position.symbol}: Using SIGNAL SL: {stop_loss_percent}% "
-                                f"(preserving signal optimization)"
-                            )
-                        else:
-                            # Priority 2: Database exchange params
-                            try:
-                                exchange_params = await self.repository.get_params_by_exchange_name(position.exchange)
-
-                                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
-                                    stop_loss_percent = float(exchange_params['stop_loss_filter'])
-                                    logger.debug(
-                                        f"📊 {position.symbol}: Using DATABASE SL: {stop_loss_percent}%"
-                                    )
-                                else:
-                                    # Priority 3: .env fallback (lowest priority)
-                                    stop_loss_percent = self.config.stop_loss_percent
-                                    logger.warning(
-                                        f"⚠️ {position.symbol}: Using .ENV SL: {stop_loss_percent}% (fallback)"
-                                    )
-
-                            except Exception as e:
-                                logger.error(f"❌ {position.symbol}: Error loading params from DB: {e}. Using .env")
-                                stop_loss_percent = self.config.stop_loss_percent
+                        # Use .env config ALWAYS (2026-01-03: removed signal/DB priority)
+                        stop_loss_percent = float(self.config.stop_loss_percent)
 
                         stop_loss_percent_decimal = float(stop_loss_percent) / 100  # Convert from percent to decimal (e.g. 2.0 -> 0.02)
 

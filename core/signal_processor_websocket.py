@@ -951,28 +951,14 @@ class WebSocketSignalProcessor:
                             failed += 1
                             continue
 
-                        # Extract filter params
-                        # CRITICAL FIX: Server sends params at root level, not inside filter_params
-                        # Extract filter params using robust helper
-                        stop_loss_pct, trailing_activation_pct, trailing_callback_pct = self._extract_signal_params(signal_data)
-
-                        # DEBUG LOGGING for verification
-                        logger.info(
-                            f"🔍 Signal #{signal_data.get('id')} params extraction: "
-                            f"SL={stop_loss_pct}, TS_Act={trailing_activation_pct}, TS_Call={trailing_callback_pct} "
-                            f"(Keys in signal: {list(signal_data.keys())})"
-                        )
-
+                        # All params from .env (2026-01-03: removed signal params logic)
                         position_request = PositionRequest(
                             signal_id=signal_data.get('id') or signal_data.get('signal_id'),
                             symbol=symbol,
                             exchange=exchange_name,
                             side=side,
-                            entry_price=entry_price,
-                            # Pass extracted parameters
-                            stop_loss_percent=float(stop_loss_pct) if stop_loss_pct is not None else None,
-                            trailing_activation_percent=float(trailing_activation_pct) if trailing_activation_pct is not None else None,
-                            trailing_callback_percent=float(trailing_callback_pct) if trailing_callback_pct is not None else None
+                            entry_price=entry_price
+                            # SL/TS params from .env in position_manager
                         )
 
                         # Open position
@@ -1178,22 +1164,14 @@ class WebSocketSignalProcessor:
             # Create position request (dataclass from position_manager)
             from core.position_manager import PositionRequest
             
-            # Extract filter params
-            # CRITICAL FIX: Server sends params at root level, not inside filter_params
-            # We check root first, then filter_params for backward compatibility
-            # Extract filter params using robust helper
-            stop_loss_pct, trailing_activation_pct, trailing_callback_pct = self._extract_signal_params(signal)
-            
+            # All params from .env (2026-01-03: removed signal params logic)
             request = PositionRequest(
                 signal_id=signal_id,
                 symbol=validated_signal.symbol,
                 exchange=validated_signal.exchange,
                 side=side,
-                entry_price=Decimal(str(current_price)),
-                # NEW: Pass per-signal parameters
-                stop_loss_percent=float(stop_loss_pct) if stop_loss_pct is not None else None,
-                trailing_activation_percent=float(trailing_activation_pct) if trailing_activation_pct is not None else None,
-                trailing_callback_percent=float(trailing_callback_pct) if trailing_callback_pct is not None else None
+                entry_price=Decimal(str(current_price))
+                # SL/TS params from .env in position_manager
             )
 
             # Execute position opening
@@ -1265,41 +1243,5 @@ class WebSocketSignalProcessor:
             'processed_waves_count': len(self.processed_waves)
         }
 
-    def _extract_signal_params(self, signal_data: Dict) -> tuple:
-        """
-        Robustly extract SL/TS parameters from signal data using multiple aliases.
-
-        Returns:
-            tuple: (stop_loss_pct, trailing_activation_pct, trailing_callback_pct)
-        """
-        # Aliases for Stop Loss
-        sl_keys = ['stop_loss_filter', 'stop_loss_percent', 'sl_percent', 'stop_loss']
-        # Aliases for Trailing Activation
-        ts_act_keys = ['trailing_activation_filter', 'trailing_activation_percent', 'activation_percent', 'ts_activation']
-        # Aliases for Trailing Callback/Distance
-        ts_call_keys = ['trailing_distance_filter', 'trailing_callback_percent', 'callback_percent', 'ts_callback', 'trailing_callback']
-
-        # Helper to find first valid value
-        def find_val(keys, source):
-            for k in keys:
-                val = source.get(k)
-                if val is not None:
-                     return val
-            return None
-
-        # 1. Search in root
-        sl = find_val(sl_keys, signal_data)
-        ts_act = find_val(ts_act_keys, signal_data)
-        ts_call = find_val(ts_call_keys, signal_data)
-
-        # 2. Search in filter_params (fallback)
-        if sl is None or ts_act is None or ts_call is None:
-            filter_params = signal_data.get('filter_params') or {}
-            if sl is None:
-                sl = find_val(sl_keys, filter_params)
-            if ts_act is None:
-                ts_act = find_val(ts_act_keys, filter_params)
-            if ts_call is None:
-                ts_call = find_val(ts_call_keys, filter_params)
-
-        return sl, ts_act, ts_call
+    # NOTE: _extract_signal_params method REMOVED 2026-01-03
+    # All params now from .env only
