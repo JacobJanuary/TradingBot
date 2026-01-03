@@ -471,7 +471,7 @@ class PositionManager:
                     trailing_activated=pos['trailing_activated'] or False,
                     trailing_activation_percent=pos.get('trailing_activation_percent'),
                     trailing_callback_percent=pos.get('trailing_callback_percent'),
-                    signal_stop_loss_percent=pos.get('signal_stop_loss_percent'),  # NEW: Option 2
+                    # signal_stop_loss_percent removed 2026-01-03
                     opened_at=opened_at,
                     age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
                 )
@@ -881,14 +881,10 @@ class PositionManager:
                         if not position_state.has_stop_loss:
                             # REMOVED DB PARAMS FETCH 2026-01-02
                             # Use .env config directly
-                            try:
-                                stop_loss_percent = to_decimal(self.config.stop_loss_percent)
-                                logger.debug(
-                                    f"📊 {symbol}: Using stop_loss_percent from .env: {stop_loss_percent}%"
-                                )
-                            except Exception as e:
-                                logger.error(f"❌ {symbol}: Error configuring SL: {e}. Using default")
-                                stop_loss_percent = Decimal('5.0')
+                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            logger.debug(
+                                f"📊 {symbol}: Using stop_loss_percent from .env: {stop_loss_percent}%"
+                            )
 
                             stop_loss_price = calculate_stop_loss(
                                 to_decimal(entry_price), side, stop_loss_percent
