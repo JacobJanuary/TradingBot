@@ -38,6 +38,7 @@ class BinanceHybridStream:
                  api_secret: str,
                  event_handler: Optional[Callable] = None,
                  position_fetch_callback: Optional[Callable] = None,
+                 reentry_price_callback: Optional[Callable] = None,  # NEW 2026-01-03
                  testnet: bool = False):
         """
         Initialize Binance Hybrid WebSocket
@@ -46,12 +47,14 @@ class BinanceHybridStream:
             api_key: Binance API key
             api_secret: Binance API secret
             event_handler: Callback for events (event_type, data)
+            reentry_price_callback: Callback for ALL mark price updates (for reentry signals)
             testnet: Use testnet endpoints
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.event_handler = event_handler
         self.position_fetch_callback = position_fetch_callback
+        self.reentry_price_callback = reentry_price_callback  # NEW 2026-01-03
         self.testnet = testnet
 
         # URLs
@@ -218,6 +221,11 @@ class BinanceHybridStream:
         """Set position manager reference for health check"""
         self.position_manager = position_manager
         logger.info("✅ Position manager reference set for WebSocket health check")
+
+    def set_reentry_callback(self, callback: Callable):
+        """Set callback for ALL mark price updates (for reentry signals)"""
+        self.reentry_price_callback = callback
+        logger.info("✅ Reentry price callback set for WebSocket mark updates")
 
     async def sync_positions(self, positions: list):
         """
@@ -956,6 +964,14 @@ class BinanceHybridStream:
         self.mark_prices[symbol] = mark_price
         # PHASE 1: Track timestamp for data freshness monitoring
         self.mark_prices[f"{symbol}_timestamp"] = asyncio.get_event_loop().time()
+        
+        # CRITICAL FIX 2026-01-03: Forward ALL mark prices to reentry monitoring
+        # This ensures closed positions (reentry signals) receive price updates
+        if self.reentry_price_callback:
+            try:
+                await self.reentry_price_callback(symbol, mark_price)
+            except Exception as e:
+                logger.warning(f"Reentry price callback error for {symbol}: {e}")
 
         # If we have position data, emit combined event
         if symbol in self.positions:

@@ -567,74 +567,36 @@ class WebSocketSignalProcessor:
         config_fallback: int = 5
     ) -> Dict[str, Any]:
         """
-        Get parameters for specific exchange from monitoring.params
+        Get parameters for specific exchange (Config ONLY)
+        
+        REMOVED 2026-01-02: DB monitoring.params usage removed.
+        Now strictly uses .env config via config_fallback.
 
         Args:
             exchange_id: Exchange ID (1=Binance, 2=Bybit)
-            config_fallback: Fallback value if DB returns NULL
+            config_fallback: Value from self.wave_processor.max_trades_per_wave
 
         Returns:
             Dict with max_trades and buffer_size
-            Example: {'max_trades': 6, 'buffer_size': 9, 'source': 'database'}
         """
         exchange_name = 'Binance' if exchange_id == 1 else f'Unknown({exchange_id})'
 
-        try:
-            # Query database
-            params = await self.repository.get_params(exchange_id=exchange_id)
+        # config_fallback comes from self.wave_processor.max_trades_per_wave (settings.py)
+        max_trades = config_fallback
+        buffer_size = max_trades + self.config.signal_buffer_fixed
 
-            if params and params.get('max_trades_filter') is not None:
-                max_trades = int(params['max_trades_filter'])
-                buffer_size = max_trades + self.config.signal_buffer_fixed
+        logger.debug(
+            f"📊 {exchange_name}: max_trades={max_trades} (from .env), buffer={buffer_size} "
+            f"(source: config)"
+        )
 
-                logger.debug(
-                    f"📊 {exchange_name}: max_trades={max_trades} (from DB), buffer={buffer_size} (+3)"
-                )
-
-                return {
-                    'max_trades': max_trades,
-                    'buffer_size': buffer_size,
-                    'source': 'database',
-                    'exchange_id': exchange_id,
-                    'exchange_name': exchange_name
-                }
-            else:
-                # NULL in database - fallback to config
-                logger.warning(
-                    f"⚠️ {exchange_name}: max_trades_filter is NULL in DB, "
-                    f"using config fallback={config_fallback}"
-                )
-
-                max_trades = config_fallback
-                buffer_size = max_trades + self.config.signal_buffer_fixed
-
-                return {
-                    'max_trades': max_trades,
-                    'buffer_size': buffer_size,
-                    'source': 'config_fallback',
-                    'exchange_id': exchange_id,
-                    'exchange_name': exchange_name
-                }
-
-        except Exception as e:
-            # Database error - fallback to config
-            logger.error(
-                f"❌ {exchange_name}: Failed to query params from DB: {e}",
-                exc_info=True
-            )
-            logger.warning(f"⚠️ Using config fallback={config_fallback}")
-
-            max_trades = config_fallback
-            buffer_size = max_trades + self.config.signal_buffer_fixed
-
-            return {
-                'max_trades': max_trades,
-                'buffer_size': buffer_size,
-                'source': 'config_error_fallback',
-                'exchange_id': exchange_id,
-                'exchange_name': exchange_name,
-                'error': str(e)
-            }
+        return {
+            'max_trades': max_trades,
+            'buffer_size': buffer_size,
+            'source': 'config',
+            'exchange_id': exchange_id,
+            'exchange_name': exchange_name
+        }
 
     async def _get_params_for_all_exchanges(self) -> Dict[int, Dict[str, Any]]:
         """
@@ -704,13 +666,7 @@ class WebSocketSignalProcessor:
         )
 
         for idx, signal_result in enumerate(validated_signals):
-            # CRITICAL: Stop when target reached
-            if executed_count >= max_trades:
-                logger.info(
-                    f"✅ {exchange_name}: Target reached {executed_count}/{max_trades} positions, "
-                    f"stopping execution ({len(validated_signals) - idx} signals unused from buffer)"
-                )
-                break
+            # NOTE: No max_trades limit - execute ALL validated signals
 
             # Extract signal
             signal = signal_result.get('signal_data')
@@ -728,7 +684,7 @@ class WebSocketSignalProcessor:
             symbol = signal.get('symbol', 'UNKNOWN')
             logger.info(
                 f"📈 {exchange_name}: Executing signal {idx+1}/{len(validated_signals)}: {symbol} "
-                f"(opened: {executed_count}/{max_trades})"
+                f"(opened: {executed_count})"
             )
 
             # Execute signal
@@ -739,7 +695,7 @@ class WebSocketSignalProcessor:
                     executed_count += 1
                     logger.info(
                         f"✅ {exchange_name}: Signal {idx+1} ({symbol}) executed "
-                        f"(total: {executed_count}/{max_trades})"
+                        f"(total: {executed_count})"
                     )
                     execution_details.append({
                         'index': idx + 1,
@@ -751,7 +707,7 @@ class WebSocketSignalProcessor:
                     failed_count += 1
                     logger.warning(
                         f"❌ {exchange_name}: Signal {idx+1} ({symbol}) failed "
-                        f"(total: {executed_count}/{max_trades})"
+                        f"(total: {executed_count})"
                     )
                     execution_details.append({
                         'index': idx + 1,
@@ -775,26 +731,18 @@ class WebSocketSignalProcessor:
                 })
 
             # Delay between signals (rate limiting)
-            if idx < len(validated_signals) - 1 and executed_count < max_trades:
+            if idx < len(validated_signals) - 1:
                 await asyncio.sleep(1)
 
-        # Buffer effectiveness
-        buffer_used = executed_count < len(validated_signals)
-        buffer_saved_us = buffer_used and executed_count == max_trades
 
         logger.info(
             f"🎯 {exchange_name}: Execution complete - "
-            f"{executed_count} positions opened, {failed_count} failed "
-            f"(buffer {'saved us' if buffer_saved_us else 'not needed' if not buffer_used else 'helped'})"
+            f"{executed_count} positions opened, {failed_count} failed"
         )
 
         return {
             'executed_count': executed_count,
             'failed_count': failed_count,
-            'target': max_trades,
-            'target_reached': executed_count >= max_trades,
-            'buffer_used': buffer_used,
-            'buffer_saved_us': buffer_saved_us,
             'execution_details': execution_details
         }
 
@@ -902,12 +850,6 @@ class WebSocketSignalProcessor:
                 }
                 continue
 
-            # Edge case: недостаточно сигналов после фильтрации
-            if len(filtered_signals) < max_trades:
-                logger.warning(
-                    f"⚠️ {exchange_name_cap}: Only {len(filtered_signals)} signals passed filters, "
-                    f"target was {max_trades}. Will open max possible positions."
-                )
 
             # 5. Сортируем ОТФИЛЬТРОВАННЫЕ по score
             sorted_filtered = sorted(
@@ -916,14 +858,11 @@ class WebSocketSignalProcessor:
                 reverse=True
             )
 
-            # 6. Выбираем топ N для исполнения
-            # Берём немного больше target для компенсации возможных ошибок исполнения
-            execution_buffer = min(3, len(sorted_filtered) - max_trades) if len(sorted_filtered) > max_trades else 0
-            signals_to_execute = sorted_filtered[:max_trades + execution_buffer]
+            # 6. Выбираем ВСЕ отфильтрованные сигналы для исполнения (no limit)
+            signals_to_execute = sorted_filtered
 
             logger.info(
-                f"{exchange_name_cap}: Selected top {len(signals_to_execute)} from {len(filtered_signals)} "
-                f"filtered signals (target: {max_trades})"
+                f"{exchange_name_cap}: Executing ALL {len(signals_to_execute)} filtered signals"
             )
 
             # 7. Полная обработка выбранных сигналов
@@ -939,9 +878,7 @@ class WebSocketSignalProcessor:
             execution_details = []  # Track execution results for reporting
 
             for idx, signal_result in enumerate(process_result.get('successful', [])):
-                if executed >= max_trades:
-                    logger.info(f"✅ {exchange_name_cap}: Target {max_trades} reached, stopping")
-                    break
+                # NOTE: No max_trades limit - execute ALL successful signals
 
                 # CRITICAL FIX: Check if signal was already handled by Smart Entry Hunter
                 result_info = signal_result.get('result', {})
@@ -1068,20 +1005,16 @@ class WebSocketSignalProcessor:
             results_by_exchange[exchange_id] = {
                 'exchange_name': exchange_name_cap,
                 'executed': executed,
-                'target': max_trades,
-                'buffer_size': buffer_size,
                 'total_signals': len(exchange_signals),
-                'after_filters': len(filtered_signals),  # NEW
-                'selected_for_execution': len(signals_to_execute),  # RENAMED
+                'after_filters': len(filtered_signals),
+                'selected_for_execution': len(signals_to_execute),
                 'validated_successful': len(process_result.get('successful', [])),
-                'duplicates': filter_reasons['duplicates'],  # FROM filter phase
+                'duplicates': filter_reasons['duplicates'],
                 'filtered': filter_stats['filtered'],
                 'filtered_oi': filter_reasons['low_oi'],
                 'filtered_volume': filter_reasons['low_volume'],
-                'filtered_price': filter_reasons['price_change'],  # NEW
+                'filtered_price': filter_reasons['price_change'],
                 'failed': failed + len(process_result.get('failed', [])),
-                'target_reached': executed >= max_trades,
-                'buffer_saved_us': executed == max_trades and len(process_result.get('successful', [])) > max_trades,
                 'params_source': params.get('source', 'unknown')
             }
 
@@ -1090,7 +1023,7 @@ class WebSocketSignalProcessor:
             total_validated += len(process_result.get('successful', []))
 
             logger.info(
-                f"{exchange_name_cap}: Executed {executed}/{max_trades}, "
+                f"{exchange_name_cap}: Executed {executed}, "
                 f"filtered: {filter_stats['filtered']} "
                 f"(OI: {filter_reasons['low_oi']}, Vol: {filter_reasons['low_volume']}, "
                 f"Dup: {filter_reasons['duplicates']}, Price: {filter_reasons['price_change']})"

@@ -899,25 +899,16 @@ class PositionManager:
 
                         # Check if stop loss needs to be set
                         if not position_state.has_stop_loss:
-                            # Get params from DB
+                            # REMOVED DB PARAMS FETCH 2026-01-02
+                            # Use .env config directly
                             try:
-                                exchange_params = await self.repository.get_params_by_exchange_name(exchange_name)
-
-                                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
-                                    stop_loss_percent = to_decimal(exchange_params['stop_loss_filter'])
-                                    logger.debug(
-                                        f"📊 {symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
-                                    )
-                                else:
-                                    # Fallback
-                                    logger.warning(
-                                        f"⚠️  {symbol}: stop_loss_filter not in DB, using .env fallback"
-                                    )
-                                    stop_loss_percent = to_decimal(self.config.stop_loss_percent)
-
-                            except Exception as e:
-                                logger.error(f"❌ {symbol}: Error loading params from DB: {e}. Using .env")
                                 stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                                logger.debug(
+                                    f"📊 {symbol}: Using stop_loss_percent from .env: {stop_loss_percent}%"
+                                )
+                            except Exception as e:
+                                logger.error(f"❌ {symbol}: Error configuring SL: {e}. Using default")
+                                stop_loss_percent = Decimal('5.0')
 
                             stop_loss_price = calculate_stop_loss(
                                 to_decimal(entry_price), side, stop_loss_percent
@@ -986,25 +977,9 @@ class PositionManager:
                                 # ВОПРОС: Закрыть позицию или оставить с Protection SL?
 
                         # Set stop loss for new position
-                        # Get params from DB
-                        try:
-                            exchange_params = await self.repository.get_params_by_exchange_name(exchange_name)
+                        # REMOVED DB PARAMS FETCH 2026-01-02
+                        stop_loss_percent = to_decimal(self.config.stop_loss_percent)
 
-                            if exchange_params and exchange_params.get('stop_loss_filter') is not None:
-                                stop_loss_percent = to_decimal(exchange_params['stop_loss_filter'])
-                                logger.debug(
-                                    f"📊 {symbol}: Using stop_loss_filter from DB: {stop_loss_percent}%"
-                                )
-                            else:
-                                # Fallback
-                                logger.warning(
-                                    f"⚠️  {symbol}: stop_loss_filter not in DB, using .env fallback"
-                                )
-                                stop_loss_percent = to_decimal(self.config.stop_loss_percent)
-
-                        except Exception as e:
-                            logger.error(f"❌ {symbol}: Error loading params from DB: {e}. Using .env")
-                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
 
                         stop_loss_price = calculate_stop_loss(
                             to_decimal(entry_price), side, stop_loss_percent
@@ -1014,6 +989,17 @@ class PositionManager:
                             position_state.has_stop_loss = True
                             position_state.stop_loss_price = stop_loss_price
                             logger.info(f"✅ Stop loss set for new position {symbol}")
+
+                    # CRITICAL FIX 2026-01-02: Emit websocket subscription for discovered position
+                    # This fixes the bug where externally added positions (e.g. NEARUSDT) 
+                    # were tracked but received no price updates.
+                    # Placed here to run for BOTH restored and new positions
+                    logger.info(f"🔌 [SYNC] Emitting stream.subscribe event for {symbol}")
+                    await self.event_router.emit('stream.subscribe', {
+                        'symbol': symbol,
+                        'exchange': exchange_name,
+                        'timestamp': datetime.now().timestamp()
+                    })
 
         except Exception as e:
             logger.error(f"Error syncing {exchange_name} positions: {e}")
@@ -1164,15 +1150,11 @@ class PositionManager:
                 return {'error': 'invalid_entry_price', 'message': f'Entry price must be > 0, got {request.entry_price}'}
 
             # 5. Calculate position size
-            # Priority: explicit request > config mode (dynamic or fixed)
+            # Priority: explicit request > fixed config value
             if request.position_size_usd:
                 # Explicitly provided - always use it (highest priority)
                 position_size_usd = request.position_size_usd
                 logger.info(f"📊 Using explicitly provided position size: ${position_size_usd}")
-            elif self.config.use_smart_limit:
-                # Dynamic sizing enabled - calculate based on balance
-                position_size_usd = await self._get_dynamic_position_size(exchange_name)
-                logger.info(f"💰 Using DYNAMIC position size: ${position_size_usd}")
             else:
                 # Fixed sizing - use config value
                 position_size_usd = self.config.position_size_usd
@@ -1247,71 +1229,24 @@ class PositionManager:
                 position_side = request.side.lower()
                 order_side = request.side.lower()
 
-            # Get per-exchange params from monitoring.params
-            try:
-                exchange_params = await self.repository.get_params_by_exchange_name(request.exchange)
-
-                if exchange_params and exchange_params.get('stop_loss_filter') is not None:
-                    # Use stop_loss_filter from DB
-                    db_stop_loss_percent = float(exchange_params['stop_loss_filter'])
-                    logger.debug(
-                        f"📊 Using stop_loss_filter from DB for {request.exchange}: {db_stop_loss_percent}%"
-                    )
-                    stop_loss_percent: Decimal = to_decimal(request.stop_loss_percent or db_stop_loss_percent)
-                else:
-                    # Fallback to .env if DB params not available
-                    logger.warning(
-                        f"⚠️  stop_loss_filter not in DB for {request.exchange}, "
-                        f"using .env fallback: {self.config.stop_loss_percent}%"
-                    )
-                    stop_loss_percent = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
-
-            except Exception as e:
-                # Fallback to .env on error
-                logger.error(
-                    f"❌ Failed to load params from DB for {request.exchange}: {e}. "
-                    f"Using .env fallback: {self.config.stop_loss_percent}%"
-                )
-                stop_loss_percent = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
-
+            # Get params (Prioritize REQUEST -> ENV)
+            # DATABASE PARAMETERS (monitoring.params) DEPRECATED AND REMOVED 2026-01-02
+            
+            # 1. Stop Loss Percent
+            stop_loss_percent: Decimal = to_decimal(request.stop_loss_percent or self.config.stop_loss_percent)
+            
             stop_loss_price = calculate_stop_loss(
                 to_decimal(request.entry_price), position_side, stop_loss_percent
             )
 
-            # Get trailing params (Prioritize REQUEST -> DB -> ENV)
+            # 2. Trailing Stop Params
             trailing_activation_percent = request.trailing_activation_percent
-            trailing_callback_percent = request.trailing_callback_percent
-
-            # If not in request, try monitoring.params (DB)
-            if exchange_params:
-                if trailing_activation_percent is None and exchange_params.get('trailing_activation_filter') is not None:
-                    trailing_activation_percent = float(exchange_params['trailing_activation_filter'])
-                    logger.debug(
-                        f"📊 Using trailing_activation_filter from DB for {request.exchange}: "
-                        f"{trailing_activation_percent}%"
-                    )
-
-                if trailing_callback_percent is None and exchange_params.get('trailing_distance_filter') is not None:
-                    trailing_callback_percent = float(exchange_params['trailing_distance_filter'])
-                    logger.debug(
-                        f"📊 Using trailing_distance_filter from DB for {request.exchange}: "
-                        f"{trailing_callback_percent}%"
-                    )
-
-            # Fallback to .env if not in DB
             if trailing_activation_percent is None:
                 trailing_activation_percent = float(self.config.trailing_activation_percent)
-                logger.warning(
-                    f"⚠️  trailing_activation_filter not in DB for {request.exchange}, "
-                    f"using .env fallback: {trailing_activation_percent}%"
-                )
 
+            trailing_callback_percent = request.trailing_callback_percent
             if trailing_callback_percent is None:
                 trailing_callback_percent = float(self.config.trailing_callback_percent)
-                logger.warning(
-                    f"⚠️  trailing_distance_filter not in DB for {request.exchange}, "
-                    f"using .env fallback: {trailing_callback_percent}%"
-                )
 
             logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity}")
             # COSMETIC FIX: Show scientific notation for small numbers instead of 0.0000
@@ -2040,14 +1975,6 @@ class PositionManager:
         # CRITICAL FIX: Calculate actual position size that will be used
         if request.position_size_usd:
             position_size_usd = request.position_size_usd
-        elif self.config.use_smart_limit:
-            # Must calculate dynamic size for accurate exposure check
-            try:
-                position_size_usd = await self._get_dynamic_position_size(request.exchange)
-            except Exception as e:
-                # Fallback to config if calculation fails
-                position_size_usd = self.config.position_size_usd
-                logger.warning(f"Failed to calculate dynamic size for risk check: {e}, using config fallback")
         else:
             position_size_usd = self.config.position_size_usd
             
@@ -2216,61 +2143,7 @@ class PositionManager:
 
         return formatted_qty
 
-    async def _get_dynamic_position_size(self, exchange_name: str) -> Decimal:
-        """
-        Calculate dynamic position size based on total balance and leverage
-        
-        Formula: position_size = (total_balance / POSITIONS_SMART_LIMIT) * LEVERAGE
-        
-        This method is ONLY used when USE_SMART_LIMIT=true (default).
-        When USE_SMART_LIMIT=false, POSITION_SIZE_USD is used directly.
-        
-        Args:
-            exchange_name: Exchange name (binance/bybit)
-            
-        Returns:
-            Position size in USD as Decimal
-        """
-        try:
-            exchange = self.exchanges.get(exchange_name)
-            if not exchange:
-                logger.warning(f"Exchange {exchange_name} not found, using config fallback")
-                return Decimal(str(self.config.position_size_usd))
-            
-            # Get total balance
-            total_balance = await exchange._get_total_balance_usdt()
-            
-            if total_balance <= 0:
-                logger.warning(f"Invalid total balance {total_balance}, using config fallback")
-                return Decimal(str(self.config.position_size_usd))
-            
-            # Get config values
-            positions_limit = Decimal(str(self.config.positions_smart_limit))
-            leverage = Decimal(str(self.config.leverage))
-            
-            # Calculate dynamic size: (balance / limit) * leverage
-            base_size = Decimal(str(total_balance)) / positions_limit
-            dynamic_size = base_size * leverage
-            
-            # Apply min/max limits
-            min_size = Decimal(str(self.config.min_position_size_usd))
-            max_size = Decimal(str(self.config.max_position_size_usd))
-            
-            clamped_size = max(min_size, min(dynamic_size, max_size))
-            
-            logger.info(
-                f"💰 Dynamic position size for {exchange_name}: "
-                f"${float(clamped_size):.2f} "
-                f"(balance=${total_balance:.2f}, limit={float(positions_limit)}, "
-                f"leverage={float(leverage)}x, raw=${float(dynamic_size):.2f})"
-            )
-            
-            return clamped_size
-            
-        except Exception as e:
-            logger.error(f"Error calculating dynamic position size: {e}", exc_info=True)
-            logger.warning(f"Using config fallback: ${self.config.position_size_usd}")
-            return Decimal(str(self.config.position_size_usd))
+
 
     async def _validate_spread(self, exchange: ExchangeManager, symbol: str) -> bool:
         """Validate bid-ask spread"""
@@ -2337,7 +2210,7 @@ class PositionManager:
                 sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
 
                 # CRITICAL: Check using unified has_stop_loss (checks both position.info.stopLoss AND orders)
-                has_sl, existing_sl_price = await sl_manager.has_stop_loss(position.symbol)
+                has_sl, existing_sl_price, _ = await sl_manager.has_stop_loss(position.symbol)
 
                 if has_sl:
                     logger.info(f"📌 Stop loss already exists for {position.symbol} at {existing_sl_price}")

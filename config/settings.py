@@ -43,7 +43,7 @@ class TradingConfig:
     position_size_usd: Decimal = Decimal('6')
     min_position_size_usd: Decimal = Decimal('5')
     max_position_size_usd: Decimal = Decimal('10000')
-    positions_smart_limit: int = 30  # Deprecated - kept for backward compatibility
+
     max_positions: int = 150
     max_exposure_usd: Decimal = Decimal('99000')
 
@@ -215,8 +215,7 @@ class Config:
             config.min_position_size_usd = Decimal(val)
         if val := os.getenv('MAX_POSITION_SIZE_USD'):
             config.max_position_size_usd = Decimal(val)
-        if val := os.getenv('POSITIONS_SMART_LIMIT'):
-            config.positions_smart_limit = int(val)
+
         if val := os.getenv('MAX_POSITIONS'):
             config.max_positions = int(val)
         if val := os.getenv('MAX_EXPOSURE_USD'):
@@ -272,9 +271,7 @@ class Config:
         if val := os.getenv('SIGNAL_BUFFER_FIXED'):
             config.signal_buffer_fixed = int(val)
 
-        # Position sizing mode
-        if val := os.getenv('USE_SMART_LIMIT'):
-            config.use_smart_limit = val.lower() == 'true'
+
 
         # FIX: 2025-10-30 - Добавлена загрузка SIGNAL фильтров из .env
         if val := os.getenv('SIGNAL_MIN_OPEN_INTEREST_USDT'):

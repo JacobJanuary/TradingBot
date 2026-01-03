@@ -288,7 +288,7 @@ class TradingBot:
                     # Convert PositionState objects to dicts for sync_positions()
                     binance_positions = [
                         {
-                            'symbol': p.symbol,
+                            'symbol': p.symbol.replace('/', '').split(':')[0],
                             'side': p.side,
                             'quantity': p.quantity,
                             'entry_price': p.entry_price,
@@ -336,6 +336,7 @@ class TradingBot:
                 self.reentry_manager = ReentryManager(
                     position_manager=self.position_manager,
                     aggtrades_stream=self.aggtrades_stream,
+                    mark_price_stream=self.websockets.get('binance_hybrid'),  # CRITICAL FIX 2026-01-03
                     cooldown_sec=reentry_cooldown,
                     drop_percent=reentry_drop,
                     max_reentries=max_reentries,
@@ -349,6 +350,16 @@ class TradingBot:
                 
                 # Connect reentry manager to position manager
                 self.position_manager.reentry_manager = self.reentry_manager
+                
+                # CRITICAL FIX 2026-01-03: Wire reentry price updates from mark stream
+                # This ensures closed positions (reentry signals) receive price updates
+                binance_ws = self.websockets.get('binance_hybrid')
+                if binance_ws:
+                    async def reentry_price_handler(symbol: str, price: str):
+                        from decimal import Decimal
+                        await self.reentry_manager.update_price(symbol, Decimal(price))
+                    
+                    binance_ws.set_reentry_callback(reentry_price_handler)
                 
                 logger.info(
                     f"✅ ReentryManager started "
@@ -365,6 +376,18 @@ class TradingBot:
                 
                 if active_count > 0:
                    logger.info(f"📡 [AGGTRADES] Subscribed {active_count} active positions to trade stream")
+
+                # REENTRY FIX: Subscribe to Mark Price for all active reentry signals
+                # ReentryManager needs price updates to trigger re-entry, so we must be subscribed
+                reentry_signals = self.reentry_manager.signals
+                if reentry_signals:
+                    binance_ws = self.websockets.get('binance_hybrid')
+                    if binance_ws:
+                        logger.info(f"🔄 [REENTRY] Subscribing {len(reentry_signals)} active signals to Mark Price...")
+                        for symbol in reentry_signals:
+                            # Use optimistic subscribe (fire and forget)
+                            await binance_ws.subscribe_symbol(symbol)
+                        logger.info(f"✅ [REENTRY] Subscribed {len(reentry_signals)} signals to Mark Price")
 
             # Initialize aged position manager (only if unified protection is disabled)
             use_unified_protection = os.getenv('USE_UNIFIED_PROTECTION', 'false').lower() == 'true'

@@ -149,8 +149,7 @@ DB_PASSWORD=your_password
 ```env
 # Position sizing
 POSITION_SIZE_USD=100
-USE_SMART_LIMIT=true
-POSITIONS_SMART_LIMIT=6
+
 
 # Risk management
 STOP_LOSS_PERCENT=4.0

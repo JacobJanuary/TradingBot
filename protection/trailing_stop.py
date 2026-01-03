@@ -53,9 +53,7 @@ class TrailingStopConfig:
 
     breakeven_at: Optional[Decimal] = Decimal('0.5')  # Move SL to breakeven at X%
 
-    # Time-based features
-    time_based_activation: bool = False
-    min_position_age_minutes: int = 10
+
 
     # Acceleration feature
     accelerate_on_momentum: bool = False
@@ -828,14 +826,7 @@ class SmartTrailingStopManager:
                 and ts.current_price <= ts.activation_price
             )
 
-        # Time-based activation
-        if self.config.time_based_activation and not should_activate:
-            position_age = (datetime.now() - ts.created_at).seconds / 60
-            if position_age >= self.config.min_position_age_minutes:
-                profit = self._calculate_profit_percent(ts)
-                if profit > 0:
-                    should_activate = True
-                    logger.info(f"{ts.symbol}: Time-based activation after {position_age:.0f} minutes")
+
 
         if should_activate:
             return await self._activate_trailing_stop(ts)

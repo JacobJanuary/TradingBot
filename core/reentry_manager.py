@@ -18,7 +18,7 @@ import logging
 from typing import Dict, Optional, Set
 from dataclasses import dataclass, field
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -55,19 +55,22 @@ class ReentrySignal:
     drop_percent: Decimal = Decimal('5.0')
     
     # Signal lifetime
-    expires_at: datetime = field(default_factory=lambda: datetime.utcnow() + timedelta(hours=24))
+    expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(hours=24))
+    
+    # Current price tracking (updated by update_price)
+    current_price: Optional[Decimal] = None
     
     # Status
     status: str = 'active'  # active, reentered, expired, max_reached
     
     def is_expired(self) -> bool:
         """Check if signal has expired (24h from original entry)"""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     def is_in_cooldown(self) -> bool:
         """Check if still in cooldown period after exit"""
         cooldown_end = self.last_exit_time + timedelta(seconds=self.cooldown_sec)
-        return datetime.utcnow() < cooldown_end
+        return datetime.now(timezone.utc) < cooldown_end
     
     def can_reenter(self) -> bool:
         """Check if re-entry is allowed"""
@@ -104,6 +107,7 @@ class ReentryManager:
     def __init__(self, 
                  position_manager,
                  aggtrades_stream=None,
+                 mark_price_stream=None,  # NEW: For subscribing reentry signals to mark price
                  cooldown_sec: int = 300,
                  drop_percent: float = 5.0,
                  max_reentries: int = 5,
@@ -119,12 +123,14 @@ class ReentryManager:
         Args:
             position_manager: PositionManager instance
             aggtrades_stream: BinanceAggTradesStream for delta confirmation
+            mark_price_stream: BinanceHybridStream for subscribing to mark prices
             cooldown_sec: Seconds to wait after exit before checking (default: 300)
             drop_percent: Price drop % to trigger re-entry (default: 5.0)
             max_reentries: Max re-entries per signal (default: 5)
         """
         self.position_manager = position_manager
         self.aggtrades_stream = aggtrades_stream
+        self.mark_price_stream = mark_price_stream  # NEW
         self.repository = repository
         
         # Config
@@ -223,9 +229,15 @@ class ReentryManager:
                 # Resubscribe to stream
                 if self.aggtrades_stream:
                     await self.aggtrades_stream.subscribe(signal.symbol)
+                
+                # CRITICAL FIX 2026-01-03: Subscribe to Mark Price for price updates
+                if self.mark_price_stream:
+                    await self.mark_price_stream.subscribe_symbol(signal.symbol)
             
             if rows:
                 logger.info(f"📥 Loaded {len(rows)} active reentry signals from DB")
+                if self.mark_price_stream:
+                    logger.info(f"🔌 Subscribed {len(rows)} signals to Mark Price")
                 
         except Exception as e:
             logger.error(f"Failed to load active signals: {e}")
@@ -360,7 +372,7 @@ class ReentryManager:
         if existing:
             # Update existing signal with new exit info
             existing.last_exit_price = exit_price
-            existing.last_exit_time = datetime.utcnow()
+            existing.last_exit_time = datetime.now(timezone.utc)
             existing.last_exit_reason = exit_reason
             existing.reentry_count += 1
             existing.max_price_after_exit = None  # Reset tracking
@@ -391,7 +403,7 @@ class ReentryManager:
                 original_entry_price=original_entry_price,
                 original_entry_time=original_entry_time,
                 last_exit_price=exit_price,
-                last_exit_time=datetime.utcnow(),
+                last_exit_time=datetime.now(timezone.utc),
                 last_exit_reason=exit_reason,
                 cooldown_sec=self.cooldown_sec,
                 drop_percent=self.drop_percent,
@@ -414,6 +426,12 @@ class ReentryManager:
             # Subscribe to aggTrades for this symbol
             if self.aggtrades_stream:
                 await self.aggtrades_stream.subscribe(symbol)
+            
+            # CRITICAL FIX 2026-01-03: Subscribe to Mark Price for price updates
+            # Without this, reentry signals show 0% price change
+            if self.mark_price_stream:
+                await self.mark_price_stream.subscribe_symbol(symbol)
+                logger.info(f"🔌 {symbol}: Subscribed to Mark Price for reentry monitoring")
     
     async def update_price(self, symbol: str, price: Decimal):
         """
@@ -427,10 +445,19 @@ class ReentryManager:
             price: Current price
         """
         signal = self.signals.get(symbol)
+        
+        # DEBUG: Log every call to trace the issue
+        if self.signals:  # Only log if we have signals
+            monitored = list(self.signals.keys())[:3]
+            if symbol in self.signals:
+                logger.debug(f"📈 [REENTRY] update_price called: {symbol}={price} (FOUND in signals)")
+            # For performance, only log misses occasionally
+        
         if not signal or signal.status != 'active':
             return
         
         # Update price tracking
+        signal.current_price = price  # Always store latest price for reporting
         if signal.max_price_after_exit is None:
             signal.max_price_after_exit = price
             signal.min_price_after_exit = price
@@ -513,7 +540,7 @@ class ReentryManager:
             tuple[bool, str]: (should_trigger, reason)
         """
         # Check rate limit
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         timestamps = self.instant_reentry_counts.get(symbol, [])
         
         # Filter to last hour
@@ -567,7 +594,7 @@ class ReentryManager:
         self.stats['instant_reentries'] += 1
         
         # Track for rate limiting
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if symbol not in self.instant_reentry_counts:
             self.instant_reentry_counts[symbol] = []
         self.instant_reentry_counts[symbol].append(now)
@@ -662,7 +689,7 @@ class ReentryManager:
                             
                             # Cleanup inactive signals from memory only if they are old enough
                             # (Keep them in DB)
-                            time_since_update = datetime.utcnow() - signal.last_exit_time
+                            time_since_update = datetime.now(timezone.utc) - signal.last_exit_time
                             if time_since_update > timedelta(hours=1):
                                 del self.signals[symbol]
                                 self.monitoring_symbols.discard(symbol)
@@ -676,20 +703,40 @@ class ReentryManager:
                 if expired_count > 0:
                     logger.info(f"📊 Reentry signals: {len(self.signals)} active, {expired_count} expired this cycle")
                 
-                # Log stats every 5 minutes (every 5th cycle)
-                import random
-                if random.randint(1, 5) == 1 and self.signals:
-                    active_sigs = [s for s in self.signals.values() if s.status == 'active']
-                    for sig in active_sigs[:3]:  # Log up to 3
-                        time_left = (sig.expires_at - datetime.utcnow()).total_seconds() / 3600
-                        cooldown_left = max(0, (sig.last_exit_time + timedelta(seconds=sig.cooldown_sec) - datetime.utcnow()).total_seconds())
-                        trigger_price = sig.get_reentry_trigger_price()
+                # Log detailed status report for ALL active signals (every 1 minute)
+                active_sigs = [s for s in self.signals.values() if s.status == 'active']
+                if active_sigs:
+                    logger.info(f"📡 [REENTRY MONITOR] {len(active_sigs)} active signal(s):")
+                    
+                    for sig in active_sigs:
+                        # Calculate price change % from exit price
+                        current_price = sig.current_price if hasattr(sig, 'current_price') and sig.current_price else sig.last_exit_price
+                        price_change_pct = ((current_price - sig.last_exit_price) / sig.last_exit_price * 100) if sig.last_exit_price else Decimal('0')
+                        price_direction = "+" if price_change_pct >= 0 else ""
+                        
+                        # Get delta from aggtrades stream (raw USDT value is more meaningful)
+                        delta_usdt = Decimal('0')
+                        if self.aggtrades_stream:
+                            try:
+                                # Get rolling delta (buy_volume - sell_volume in USDT over 60s)
+                                delta_usdt = self.aggtrades_stream.get_rolling_delta(sig.symbol, window_sec=60)
+                            except Exception as e:
+                                logger.debug(f"Delta fetch error for {sig.symbol}: {e}")
+                        
+                        # Format delta as USDT value (K for thousands)
+                        if abs(delta_usdt) >= 1000:
+                            delta_str = f"{delta_usdt/1000:+.1f}K"
+                        else:
+                            delta_str = f"{delta_usdt:+.0f}"
+                        
+                        # Calculate expiration time (HH:MM)
+                        expires_at_str = sig.expires_at.strftime('%H:%M') if sig.expires_at else 'N/A'
+                        
                         logger.info(
-                            f"📈 {sig.symbol}: awaiting reentry | "
-                            f"trigger={trigger_price:.4f} | "
-                            f"cooldown={cooldown_left:.0f}s | "
-                            f"expires={time_left:.1f}h | "
-                            f"count={sig.reentry_count}/{sig.max_reentries}"
+                            f"  → {sig.symbol} ({sig.side.upper()}) | "
+                            f"price={current_price:.4f} ({price_direction}{price_change_pct:.2f}%) | "
+                            f"Δ=${delta_str} | "
+                            f"until {expires_at_str}"
                         )
             
             except asyncio.CancelledError:

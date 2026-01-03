@@ -28,8 +28,7 @@ async def test_profit_percent_available_in_peak_save_logging():
     config.atr_multiplier = Decimal('2.0')
     config.step_activation = False
     config.breakeven_at = None
-    config.time_based_activation = False
-    config.min_position_age_minutes = 10
+
     config.accelerate_on_momentum = False
     config.momentum_threshold = Decimal('0.1')
 
@@ -63,14 +62,14 @@ async def test_profit_percent_available_in_peak_save_logging():
     )
 
     # Add to manager
-    manager.positions['TESTUSDT'] = ts
+    manager.trailing_stops['TESTUSDT'] = ts
 
     # Mock _should_save_peak to return True (trigger the logging path)
     with patch.object(manager, '_should_save_peak', return_value=(True, None)):
         # Mock _save_state to avoid DB calls
         with patch.object(manager, '_save_state', new=AsyncMock()):
             # This should NOT raise UnboundLocalError
-            result = await manager.update_price('TESTUSDT', 103.0)
+            result = await manager.update_price('TESTUSDT', Decimal('103.0'))
 
     # Verify profit_percent was calculated
     assert ts.highest_profit_percent > Decimal('0')
@@ -93,8 +92,7 @@ async def test_profit_percent_calculated_even_when_peak_not_saved():
     config.atr_multiplier = Decimal('2.0')
     config.step_activation = False
     config.breakeven_at = None
-    config.time_based_activation = False
-    config.min_position_age_minutes = 10
+
     config.accelerate_on_momentum = False
     config.momentum_threshold = Decimal('0.1')
 
@@ -126,11 +124,11 @@ async def test_profit_percent_calculated_even_when_peak_not_saved():
         quantity=Decimal('10')
     )
 
-    manager.positions['TESTUSDT'] = ts
+    manager.trailing_stops['TESTUSDT'] = ts
 
     # Mock _should_save_peak to return False (skip save path)
     with patch.object(manager, '_should_save_peak', return_value=(False, 'test skip reason')):
-        result = await manager.update_price('TESTUSDT', 102.0)
+        result = await manager.update_price('TESTUSDT', Decimal('102.0'))
 
     # Verify profit_percent was still calculated
     assert ts.highest_profit_percent == Decimal('2')  # (102-100)/100 * 100 = 2%
