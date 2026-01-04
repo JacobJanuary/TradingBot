@@ -462,19 +462,24 @@ class StopLossManager:
             # COMPATIBILITY FIX (2026-01-04): Handle CCXT version differences
             # Server check (v4.5.30) shows: 'fapiPrivatePostAlgoOrder' AND 'fapiprivate_post_algoorder'
             
-            algo_method = None
-            if hasattr(self.exchange, 'fapiPrivatePostAlgoOrder'):
-                algo_method = self.exchange.fapiPrivatePostAlgoOrder
-            elif hasattr(self.exchange, 'fapiprivate_post_algoorder'):
-                algo_method = self.exchange.fapiprivate_post_algoorder
+            algo_method = getattr(self.exchange, 'fapiPrivatePostAlgoOrder', None)
+            if not algo_method:
+                algo_method = getattr(self.exchange, 'fapiprivate_post_algoorder', None)
             
             if not algo_method:
                 # Last ditch: try snake case standard just in case (e.g. older versions)
-                if hasattr(self.exchange, 'fapi_private_post_algo_order'):
-                    algo_method = self.exchange.fapi_private_post_algo_order
-                else:
-                    self.logger.error("❌ CRITICAL: No Algo Order method found in CCXT! Update lib.")
-                    raise AttributeError("CCXT missing fapiPrivatePostAlgoOrder")
+                algo_method = getattr(self.exchange, 'fapi_private_post_algo_order', None)
+
+            if not algo_method:
+                # Debug: Log available methods to help diagnose the issue
+                try:
+                    methods = [m for m in dir(self.exchange) if 'algo' in m.lower()]
+                    self.logger.error(f"❌ Available algo methods on exchange object: {methods}")
+                except Exception:
+                    pass
+                
+                self.logger.error("❌ CRITICAL: No Algo Order method found in CCXT! Update lib.")
+                raise AttributeError("CCXT missing fapiPrivatePostAlgoOrder")
             
             response = await algo_method(params)
             
