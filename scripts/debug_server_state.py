@@ -52,7 +52,8 @@ async def test_guardian_logic():
         mgr = StopLossManager(ex, 'binance')
         
         try:
-            await mgr._set_binance_stop_loss_algo("BTCUSDT", 50000, "short", 0.1)
+            # Correct Signature: symbol, side, amount, stop_price
+            await mgr._set_binance_stop_loss_algo("BTCUSDT", "short", 0.1, 50000)
         except AttributeError as e:
             if "CCXT_MISSING_ALGO_METHOD_V2" in str(e):
                 print("✅ PASSED: Logic caught AttributeError and raised custom V2 error.")
