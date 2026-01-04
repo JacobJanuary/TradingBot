@@ -84,9 +84,32 @@ class StopLossManager:
                     self.logger.debug(f"Checking Algo orders for {binance_symbol}")
                     
                     # Fetch Algo orders
-                    algo_orders = await self.exchange.fapiPrivateGetOpenAlgoOrders({
-                        'symbol': binance_symbol
-                    })
+                    algo_orders = []
+                    try:
+                        algo_orders = await self.exchange.fapiPrivateGetOpenAlgoOrders({
+                            'symbol': binance_symbol
+                        })
+                    except AttributeError:
+                        # Fallback for older CCXT
+                        try:
+                            algo_orders = await self.exchange.fapiprivate_get_openalgoorders({
+                                'symbol': binance_symbol
+                            })
+                        except AttributeError:
+                            pass
+                    except Exception as e:
+                        # Specific handling for "no attribute" if it comes as generic exception
+                        self.logger.warning(f"Failed to fetch algo orders (primary): {e}")
+
+                    if not algo_orders:
+                         # Try snake case just in case
+                         try:
+                             if hasattr(self.exchange, 'fapi_private_get_open_algo_orders'):
+                                 algo_orders = await self.exchange.fapi_private_get_open_algo_orders({
+                                     'symbol': binance_symbol
+                                 })
+                         except Exception:
+                             pass
                     
                     self.logger.debug(f"Found {len(algo_orders)} algo orders for {binance_symbol}")
                     
