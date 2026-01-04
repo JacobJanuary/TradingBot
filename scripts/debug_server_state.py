@@ -1,6 +1,13 @@
 
 import os
 import sys
+
+# AUTO-FIX PYTHON PATH for imports
+current_dir = os.path.dirname(os.path.abspath(__file__)) # scripts/
+project_root = os.path.dirname(current_dir) # root
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import asyncio
 import unittest
 import json
@@ -63,17 +70,39 @@ async def check_recent_errors():
     try:
         # User DSN from env/input
         import os
-        # Try to load .env manually if needed, or assume env vars set
-        # But script run manually might not have env. 
-        # Using the DSN provided by user in conversation or localhost default
-        # "postgresql://tradebot_user:LohNeMamont%40%2911@localhost:5433/tradebot_db" (User said output earlier)
-        # But on SERVER it connects to localhost:5432 usually?
-        # User said: "DB_PORT=5433" in local request.
-        # On SERVER, port is usually 5432.
-        # Let's try default DSN first, then the custom one.
         
-        dsn = os.getenv("DATABASE_URL", "postgresql://tradebot_user:tradebot_password@localhost:5432/tradebot_db")
+        # 1. Try generic environment variable
+        dsn = os.getenv("DATABASE_URL")
         
+        # 2. If no DSN, try to parse .env file manually
+        if not dsn:
+            db_user = "tradebot_user"
+            db_pass = "tradebot_password"
+            db_host = "localhost"
+            db_port = "5432"
+            db_name = "tradebot_db"
+            
+            env_path = os.path.join(project_root, '.env')
+            if os.path.exists(env_path):
+                print(f"Reading credentials from {env_path}")
+                with open(env_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('#'): continue
+                        if 'DB_USER=' in line: db_user = line.split('=')[1].strip()
+                        if 'DB_PASSWORD=' in line: db_pass = line.split('=')[1].strip()
+                        if 'DB_HOST=' in line: db_host = line.split('=')[1].strip()
+                        if 'DB_PORT=' in line: db_port = line.split('=')[1].strip()
+                        if 'DB_NAME=' in line: db_name = line.split('=')[1].strip()
+            
+            # Construct DSN
+            # Handle special chars in password if needed, but simple string usually fine for asyncpg unless complex
+            # URL encode password just in case
+            from urllib.parse import quote_plus
+            encoded_pass = quote_plus(db_pass)
+            dsn = f"postgresql://{db_user}:{encoded_pass}@{db_host}:{db_port}/{db_name}"
+            # print(f"DEBUG: Using DSN: postgresql://{db_user}:****@{db_host}:{db_port}/{db_name}")
+
         conn = await asyncpg.connect(dsn)
         
         # 5 mins ago
