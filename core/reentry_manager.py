@@ -660,8 +660,37 @@ class ReentryManager:
     async def _trigger_reentry(self, signal: ReentrySignal, current_price: Decimal):
         """Execute re-entry for signal"""
         
-        # CRITICAL FIX: Check if position already exists BEFORE attempting
-        if signal.symbol in self.position_manager.positions:
+        # CRITICAL FIX v2 (2026-01-04): Robust position check
+        # Naive check "if signal.symbol in positions" fails if keys format differs (e.g. CVX/USDT vs CVXUSDT)
+        # We must check 1) Normalized Cache Keys and 2) Database directly
+        
+        position_exists = False
+        
+        # 1. Check Cache with Normalization
+        try:
+            clean_symbol = signal.symbol.replace('/', '').split(':')[0]
+            # Use list() to avoid runtime error if dict changes during iteration
+            for pos_symbol in list(self.position_manager.positions.keys()):
+                if pos_symbol.replace('/', '').split(':')[0] == clean_symbol:
+                    position_exists = True
+                    logger.warning(f"⚠️ {signal.symbol}: Found in cache as '{pos_symbol}' (Key mismatch prevented naive check)")
+                    break
+        except Exception as e:
+            logger.error(f"Error checking cache for {signal.symbol}: {e}")
+
+        # 2. Check Database (if not in cache)
+        # This handles cases where position exists in DB but failed to load to cache (Ghost Position)
+        if not position_exists:
+            if hasattr(self, 'repository') and self.repository:
+                try:
+                    db_pos = await self.repository.get_open_position(signal.symbol, signal.exchange)
+                    if db_pos:
+                        position_exists = True
+                        logger.warning(f"⚠️ {signal.symbol}: Found in database (id={db_pos.get('id')}) - Ghost Position detected")
+                except Exception as e:
+                    logger.error(f"Error checking DB for {signal.symbol}: {e}")
+
+        if position_exists:
             logger.warning(
                 f"⚠️ {signal.symbol}: Position already exists, marking signal as reentered"
             )
