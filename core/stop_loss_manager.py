@@ -19,6 +19,10 @@ import asyncio
 import ccxt
 from core.event_logger import get_event_logger, EventType
 
+print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+print("!!! DEBUG: CORE.STOP_LOSS_MANAGER MODULE LOADED (V3) !!!")
+print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+
 logger = logging.getLogger(__name__)
 
 
@@ -457,26 +461,36 @@ class StopLossManager:
             f"side={side}, qty={amount}"
         )
         
-        try:
-            # CRITICAL: Use NEW Algo Order endpoint (December 2025 migration)
-            # COMPATIBILITY FIX (2026-01-04): Handle CCXT version differences
-            # Server check (v4.5.30) shows: 'fapiPrivatePostAlgoOrder' AND 'fapiprivate_post_algoorder'
+            # TRY-EXCEPT BLOCK FOR CCXT COMPATIBILITY
+            # Explicitly catch AttributeError to handle potential dynamic property issues
+            algo_method = None
+            try:
+                algo_method = self.exchange.fapiPrivatePostAlgoOrder
+            except AttributeError:
+                pass
             
-            algo_method = getattr(self.exchange, 'fapiPrivatePostAlgoOrder', None)
             if not algo_method:
-                algo_method = getattr(self.exchange, 'fapiprivate_post_algoorder', None)
-            
-            if not algo_method:
-                # Last ditch: try snake case standard just in case (e.g. older versions)
-                algo_method = getattr(self.exchange, 'fapi_private_post_algo_order', None)
+                try:
+                    algo_method = self.exchange.fapiprivate_post_algoorder
+                except AttributeError:
+                    pass
 
             if not algo_method:
-                # Debug: Log available methods to help diagnose the issue
+                try:
+                    algo_method = self.exchange.fapi_private_post_algo_order
+                except AttributeError:
+                    pass
+
+            if not algo_method:
+                # Debug: Log available methods
                 try:
                     methods = [m for m in dir(self.exchange) if 'algo' in m.lower()]
-                    self.logger.error(f"❌ Available algo methods on exchange object: {methods}")
+                    self.logger.error(f"❌ Available algo methods: {methods}")
                 except Exception:
                     pass
+                
+                # Throw a DIFFERENT error to verify this code is reached
+                raise AttributeError("CCXT_MISSING_ALGO_METHOD_V2")
                 
                 self.logger.error("❌ CRITICAL: No Algo Order method found in CCXT! Update lib.")
                 raise AttributeError("CCXT missing fapiPrivatePostAlgoOrder")
