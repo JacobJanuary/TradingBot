@@ -104,6 +104,8 @@ class BinanceHybridStream:
         self.mark_task = None
         self.keepalive_task = None
         self.subscription_task = None
+        self.reconnection_task = None  # ✅ PHASE 2: Periodic reconnection
+        self.health_check_task = None  # Subscription health verification
         self.heartbeat_task = None  # PHASE 4: WebSocket heartbeat monitoring
         self.pending_processor_task = None  # ✅ FIX #3: Periodic pending processor
 
