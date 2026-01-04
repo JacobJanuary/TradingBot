@@ -1470,6 +1470,14 @@ class PositionManager:
                 })
                 logger.info(f"🔍 DEBUG: Trade created with ID={trade_id} for {symbol}")
 
+                # DEBUG: NUCLEAR TRAP for CVX
+                if 'CVX' in symbol:
+                    import traceback
+                    formatted_stack = "".join(traceback.format_stack())
+                    logger.critical(f"☢️ NUCLEAR TRAP HIT IN CORE! Symbol={symbol}\nTraceback:\n{formatted_stack}")
+                    # Force crash to catch attention
+                    raise RuntimeError("☢️ NUCLEAR TRAP HIT IN CORE ☢️")
+
                 logger.info(f"🔍 DEBUG: About to create position for {symbol}, quantity={position.quantity}")
                 position = await AtomicPositionManager(self.repository, self.config, self.exchanges).open_position_atomic(
         request=request,
