@@ -53,6 +53,27 @@ def check_exchange_manager():
     except Exception as e:
         print(f"❌ Error reading file: {e}")
 
+def check_running_processes():
+    print("\n[DIAGNOSTIC 1c] Checking Running Python Processes")
+    try:
+        import subprocess
+        # grep for python, exclude grep itself
+        cmd = "ps aux | grep python | grep -v grep | grep -v debug_server_state"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        processes = result.stdout.strip().split('\n')
+        print(f"Found {len(processes)} python processes:")
+        for p in processes:
+            if not p: continue
+            # Highlight suspicious scripts
+            if "test_aceusdt" in p or "verify_sl" in p:
+                print(f"🚨 SUSPICIOUS: {p}")
+            else:
+                print(f"   {p}")
+                
+    except Exception as e:
+        print(f"❌ Error checking processes: {e}")
+
 # 2. RUN GUARDIAN TEST LOGIC
 async def test_guardian_logic():
     print("\n[DIAGNOSTIC 2] Testing Runtime Guardian Logic")
@@ -177,6 +198,7 @@ async def check_recent_errors():
 async def main():
     check_file_content()
     check_exchange_manager()
+    check_running_processes()
     await test_guardian_logic()
     await check_recent_errors()
 
