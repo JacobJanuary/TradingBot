@@ -319,7 +319,8 @@ class TradingBot:
                 logger.info(f"✅ Delta filter connected (window={delta_window}s, threshold={delta_threshold}x)")
 
             # Initialize ReentryManager for trailing re-entry strategy
-            if self.aggtrades_stream and self.position_manager:
+            reentry_enabled = os.getenv('REENTRY_ENABLED', 'true').lower() == 'true'
+            if reentry_enabled and self.aggtrades_stream and self.position_manager:
                 from core.reentry_manager import ReentryManager
                 
                 # Get reentry params from env
