@@ -1,19 +1,20 @@
 
-import ccxt
+import ccxt.pro as ccxt
 import sys
+import asyncio
 
-print(f"CCXT Version: {ccxt.__version__}")
-try:
-    exchange = ccxt.binance({'options': {'defaultType': 'future'}})
-    print("Exchange initialized. Searching for 'algo' methods...")
+async def inspect():
+    print(f"CCXT Version: {ccxt.__version__}")
+    try:
+        # Use CCXT Pro (Async)
+        exchange = ccxt.binance({'options': {'defaultType': 'future'}})
+        print("Exchange initialized (CCXT PRO / ASYNC). Searching for 'algo' methods...")
     
     algo_methods = [m for m in dir(exchange) if 'algo' in m.lower()]
     found = False
     
     for m in algo_methods:
         # Check if it looks like the one we want
-        markers = ['post', 'get', 'order']
-        # simple heuristic
         print(f"  - {m}")
         found = True
         
@@ -32,5 +33,10 @@ try:
         has = hasattr(exchange, v)
         print(f"  {v}: {has}")
 
-except Exception as e:
-    print(f"Error inspecting exchange: {e}")
+    await exchange.close()
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(inspect())
+    except Exception as e:
+        print(f"Error inspecting exchange: {e}")

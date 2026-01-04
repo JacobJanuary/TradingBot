@@ -8,6 +8,20 @@ from logging.handlers import RotatingFileHandler
 import signal
 import sys
 import os
+
+# FORCE LOCAL MODULES IMPORT PRIORITY
+try:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    if BASE_DIR not in sys.path:
+        sys.path.insert(0, BASE_DIR)
+    else:
+        # Ensure it's first
+        sys.path.remove(BASE_DIR)
+        sys.path.insert(0, BASE_DIR)
+    print(f"DEBUG: sys.path[O] forced to: {sys.path[0]}")
+except Exception as e:
+    print(f"DEBUG: Failed to force sys.path: {e}")
+
 from datetime import datetime, timezone
 from typing import Dict, Optional
 import argparse
