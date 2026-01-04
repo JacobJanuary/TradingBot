@@ -1743,10 +1743,13 @@ class SmartTrailingStopManager:
                             binance_symbol = ts.symbol.replace('/', '').replace(':USDT', '')
                             
                             # Fetch open Algo orders
-                            algo_res = await self.exchange.exchange.fapiPrivateGetOpenAlgoOrders({
-                                'symbol': binance_symbol,
-                                'algo_type': 'STOP_MARKET'
-                            })
+                            try:
+                                algo_res = await self.exchange.exchange.fapiPrivateGetOpenAlgoOrders({
+                                    'symbol': binance_symbol,
+                                    'algo_type': 'STOP_MARKET'
+                                })
+                            except AttributeError:
+                                algo_res = [] # Fallback if method missing
                             
                             # Handle response (list or dict with 'orders')
                             algo_orders = []

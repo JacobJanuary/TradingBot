@@ -399,10 +399,15 @@ class EnhancedZombieOrderManager:
                             market = self.exchange.exchange.market(symbol)
                             raw_symbol = market['id'] # e.g. "BTCUSDT"
     
-                            algo_res = await self.exchange.exchange.fapiPrivateGetOpenAlgoOrders({
-                                'symbol': raw_symbol,
-                                'algo_type': 'STOP_MARKET'
-                            })
+                            try:
+                                algo_res = await self.exchange.exchange.fapiPrivateGetOpenAlgoOrders({
+                                    'symbol': raw_symbol,
+                                    'algo_type': 'STOP_MARKET'
+                                })
+                            except AttributeError:
+                                # Fallback or skip if method missing
+                                logger.debug(f"Missing Algo API for {symbol}, skipping algo scan")
+                                continue
                             
                             # Result can be list or dict
                             orders_list = []

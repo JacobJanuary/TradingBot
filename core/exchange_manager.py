@@ -4,7 +4,10 @@ Based on implementations from:
 - https://github.com/freqtrade/freqtrade/blob/develop/freqtrade/exchange/exchange.py
 - https://github.com/jesse-ai/jesse/blob/master/jesse/exchanges/
 """
-import ccxt.async_support as ccxt
+try:
+    import ccxt.pro as ccxt
+except ImportError:
+    import ccxt.async_support as ccxt
 import logging
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from decimal import Decimal
