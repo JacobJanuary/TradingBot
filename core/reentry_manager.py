@@ -82,16 +82,25 @@ class ReentrySignal:
         )
     
     def get_reentry_trigger_price(self) -> Decimal:
-        """Calculate price that triggers re-entry"""
+        """Calculate price that triggers re-entry
+        
+        Uses dynamic max/min tracking after exit:
+        - LONG: triggers when price drops X% from max_price_after_exit
+        - SHORT: triggers when price rises X% from min_price_after_exit
+        
+        Fallback to last_exit_price if max/min not yet tracked.
+        """
         drop_mult = 1 - (self.drop_percent / 100)
         
         if self.side == 'long':
-            # For long: re-enter when price drops X% from exit
-            return self.last_exit_price * drop_mult
+            # For long: re-enter when price drops X% from max since exit
+            baseline = self.max_price_after_exit or self.last_exit_price
+            return baseline * drop_mult
         else:
-            # For short: re-enter when price rises X% from exit
+            # For short: re-enter when price rises X% from min since exit
+            baseline = self.min_price_after_exit or self.last_exit_price
             rise_mult = 1 + (self.drop_percent / 100)
-            return self.last_exit_price * rise_mult
+            return baseline * rise_mult
 
 
 class ReentryManager:
@@ -197,7 +206,8 @@ class ReentryManager:
                        original_entry_price, original_entry_time,
                        last_exit_price, last_exit_time, last_exit_reason,
                        reentry_count, max_reentries,
-                       cooldown_sec, drop_percent, expires_at, status
+                       cooldown_sec, drop_percent, expires_at, status,
+                       max_price_after_exit, min_price_after_exit
                 FROM monitoring.reentry_signals
                 WHERE status = 'active'
             """
@@ -205,6 +215,10 @@ class ReentryManager:
                 rows = await conn.fetch(query)
             
             for row in rows:
+                # Parse max/min prices (may be NULL)
+                max_price = Decimal(str(row['max_price_after_exit'])) if row['max_price_after_exit'] else None
+                min_price = Decimal(str(row['min_price_after_exit'])) if row['min_price_after_exit'] else None
+                
                 signal = ReentrySignal(
                     signal_id=row['signal_id'],
                     db_id=row['id'],
@@ -221,7 +235,9 @@ class ReentryManager:
                     cooldown_sec=row['cooldown_sec'],
                     drop_percent=Decimal(str(row['drop_percent'])),
                     expires_at=row['expires_at'],
-                    status=row['status']
+                    status=row['status'],
+                    max_price_after_exit=max_price,
+                    min_price_after_exit=min_price,
                 )
                 self.signals[signal.symbol] = signal
                 self.monitoring_symbols.add(signal.symbol)
@@ -458,12 +474,28 @@ class ReentryManager:
         
         # Update price tracking
         signal.current_price = price  # Always store latest price for reporting
+        max_changed = False
+        
         if signal.max_price_after_exit is None:
-            signal.max_price_after_exit = price
-            signal.min_price_after_exit = price
+            # Initialize from exit price, then update with current if higher/lower
+            signal.max_price_after_exit = max(signal.last_exit_price, price)
+            signal.min_price_after_exit = min(signal.last_exit_price, price)
+            max_changed = True
         else:
+            old_max = signal.max_price_after_exit
+            old_min = signal.min_price_after_exit
             signal.max_price_after_exit = max(signal.max_price_after_exit, price)
             signal.min_price_after_exit = min(signal.min_price_after_exit, price)
+            # Track if max/min actually changed (for LONG we care about max, for SHORT about min)
+            if signal.side == 'long' and signal.max_price_after_exit > old_max:
+                max_changed = True
+            elif signal.side == 'short' and signal.min_price_after_exit < old_min:
+                max_changed = True
+        
+        # REAL-TIME PERSISTENCE: Save immediately when max/min changes
+        # This ensures we don't lose tracking data on bot restart
+        if max_changed and signal.db_id:
+            asyncio.create_task(self._save_signal_state(signal))
         
         # Check if we should re-enter
         if signal.can_reenter():
@@ -678,6 +710,8 @@ class ReentryManager:
                         logger.info(f"⏰ {symbol}: Reentry signal expired")
                         should_save = True
                     
+                    # NOTE: max_price_after_exit is now saved in real-time in update_price()
+                    
                     # Check safe unsubscription (Expired OR Max Reached)
                     if signal.status in ['expired', 'max_reached']:
                         # Only unsubscribe if NO active position
@@ -711,8 +745,18 @@ class ReentryManager:
                     for sig in active_sigs:
                         # Calculate price change % from exit price
                         current_price = sig.current_price if hasattr(sig, 'current_price') and sig.current_price else sig.last_exit_price
-                        price_change_pct = ((current_price - sig.last_exit_price) / sig.last_exit_price * 100) if sig.last_exit_price else Decimal('0')
-                        price_direction = "+" if price_change_pct >= 0 else ""
+                        
+                        # Dynamic max/min tracking for re-entry trigger
+                        if sig.side == 'long':
+                            baseline = sig.max_price_after_exit or sig.last_exit_price
+                            drop_from_max = ((baseline - current_price) / baseline * 100) if baseline else Decimal('0')
+                            drop_str = f"drop={drop_from_max:.1f}%"
+                        else:
+                            baseline = sig.min_price_after_exit or sig.last_exit_price
+                            rise_from_min = ((current_price - baseline) / baseline * 100) if baseline else Decimal('0')
+                            drop_str = f"rise={rise_from_min:.1f}%"
+                        
+                        trigger_price = sig.get_reentry_trigger_price()
                         
                         # Get delta from aggtrades stream (raw USDT value is more meaningful)
                         delta_usdt = Decimal('0')
@@ -734,8 +778,8 @@ class ReentryManager:
                         
                         logger.info(
                             f"  → {sig.symbol} ({sig.side.upper()}) | "
-                            f"price={current_price:.4f} ({price_direction}{price_change_pct:.2f}%) | "
-                            f"Δ=${delta_str} | "
+                            f"now={current_price:.4f} max={baseline:.4f} {drop_str} | "
+                            f"trigger={trigger_price:.4f} | Δ=${delta_str} | "
                             f"until {expires_at_str}"
                         )
             
