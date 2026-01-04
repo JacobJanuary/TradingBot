@@ -159,6 +159,7 @@ async def check_recent_errors():
             error_msg = data.get('error', 'N/A')
             
             print(f"[{dt.strftime('%H:%M:%S')}] (Age: {age:.1f}s) Error: {error_msg}")
+            print(f"   FULL DATA: {json.dumps(data, indent=2, default=str)}")
             
             if age < 300: # 5 mins
                 recent_count += 1
