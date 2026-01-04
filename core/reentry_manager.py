@@ -654,11 +654,27 @@ class ReentryManager:
     
     async def _trigger_reentry(self, signal: ReentrySignal, current_price: Decimal):
         """Execute re-entry for signal"""
+        
+        # CRITICAL FIX: Check if position already exists BEFORE attempting
+        if signal.symbol in self.position_manager.positions:
+            logger.warning(
+                f"⚠️ {signal.symbol}: Position already exists, marking signal as reentered"
+            )
+            signal.status = 'reentered'
+            signal.reentry_count += 1
+            await self._save_signal_state(signal)
+            return
+        
         logger.info(
             f"🚀 {signal.symbol}: REENTRY TRIGGERED! "
             f"price={current_price}, exit_price={signal.last_exit_price}, "
             f"drop={float((signal.last_exit_price - current_price) / signal.last_exit_price * 100):.2f}%"
         )
+        
+        # CRITICAL FIX: Mark signal as 'reentered' IMMEDIATELY to prevent duplicate attempts
+        # This prevents infinite loop if price stays in trigger zone
+        signal.status = 'reentered'
+        signal.reentry_count += 1
         
         self.stats['reentries_triggered'] += 1
         
@@ -679,16 +695,17 @@ class ReentryManager:
             
             if result:
                 self.stats['reentries_successful'] += 1
-                
-                # Update status in DB
-                await self._save_signal_state(signal)
-                
                 logger.info(f"✅ {signal.symbol}: Reentry position opened successfully")
             else:
                 logger.error(f"❌ {signal.symbol}: Failed to open reentry position")
+            
+            # Save signal state (status already set to 'reentered')
+            await self._save_signal_state(signal)
         
         except Exception as e:
             logger.error(f"❌ {signal.symbol}: Reentry failed: {e}")
+            # Still save the 'reentered' status to prevent infinite retries
+            await self._save_signal_state(signal)
     
     async def _monitor_loop(self):
         """Background loop to check and cleanup signals"""
