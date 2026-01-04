@@ -737,47 +737,47 @@ class ReentryManager:
                 await self._save_signal_state(signal)
                 return
         
-        logger.info(
-            f"🚀 {signal.symbol}: REENTRY TRIGGERED! "
-            f"price={current_price}, exit_price={signal.last_exit_price}, "
-            f"drop={float((signal.last_exit_price - current_price) / signal.last_exit_price * 100):.2f}%"
-        )
-        
-        # CRITICAL FIX: Mark signal as 'reentered' IMMEDIATELY to prevent duplicate attempts
-        # This prevents infinite loop if price stays in trigger zone
-        signal.status = 'reentered'
-        signal.reentry_count += 1
-        
-        self.stats['reentries_triggered'] += 1
-        
-        try:
-            # Create position request
-            from core.position_manager import PositionRequest
-            
-            request = PositionRequest(
-                signal_id=signal.signal_id,
-                symbol=signal.symbol,
-                exchange=signal.exchange,
-                side='BUY' if signal.side == 'long' else 'SELL',
-                entry_price=current_price
+            logger.info(
+                f"🚀 {signal.symbol}: REENTRY TRIGGERED! "
+                f"price={current_price}, exit_price={signal.last_exit_price}, "
+                f"drop={float((signal.last_exit_price - current_price) / signal.last_exit_price * 100):.2f}%"
             )
             
-            # Open position through position manager
-            result = await self.position_manager.open_position(request)
+            # CRITICAL FIX: Mark signal as 'reentered' IMMEDIATELY to prevent duplicate attempts
+            # This prevents infinite loop if price stays in trigger zone
+            signal.status = 'reentered'
+            signal.reentry_count += 1
             
-            if result:
-                self.stats['reentries_successful'] += 1
-                logger.info(f"✅ {signal.symbol}: Reentry position opened successfully")
-            else:
-                logger.error(f"❌ {signal.symbol}: Failed to open reentry position")
+            self.stats['reentries_triggered'] += 1
             
-            # Save signal state (status already set to 'reentered')
-            await self._save_signal_state(signal)
-        
-        except Exception as e:
-            logger.error(f"❌ {signal.symbol}: Reentry failed: {e}")
-            # Still save the 'reentered' status to prevent infinite retries
-            await self._save_signal_state(signal)
+            try:
+                # Create position request
+                from core.position_manager import PositionRequest
+                
+                request = PositionRequest(
+                    signal_id=signal.signal_id,
+                    symbol=signal.symbol,
+                    exchange=signal.exchange,
+                    side='BUY' if signal.side == 'long' else 'SELL',
+                    entry_price=current_price
+                )
+                
+                # Open position through position manager
+                result = await self.position_manager.open_position(request)
+                
+                if result:
+                    self.stats['reentries_successful'] += 1
+                    logger.info(f"✅ {signal.symbol}: Reentry position opened successfully")
+                else:
+                    logger.error(f"❌ {signal.symbol}: Failed to open reentry position")
+                
+                # Save signal state (status already set to 'reentered')
+                await self._save_signal_state(signal)
+            
+            except Exception as e:
+                logger.error(f"❌ {signal.symbol}: Reentry failed: {e}")
+                # Still save the 'reentered' status to prevent infinite retries
+                await self._save_signal_state(signal)
         finally:
             self._processing_signals.discard(signal.symbol)
     
