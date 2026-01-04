@@ -32,6 +32,27 @@ def check_file_content():
     except Exception as e:
         print(f"❌ Error reading file: {e}")
 
+def check_exchange_manager():
+    print("\n[DIAGNOSTIC 1b] Checking File Content: core/exchange_manager.py")
+    try:
+        path = "core/exchange_manager.py"
+        with open(path, 'r') as f:
+            content = f.read()
+            # Look for the try-except block added in step 4260
+            # "try:\n                algo_method = self.exchange.fapiPrivatePostAlgoOrder\n            except AttributeError:"
+            if "try:" in content and "algo_method = self.exchange.fapiPrivatePostAlgoOrder" in content and "except AttributeError" in content:
+                print("✅ PASSED: try-except block FOUND in core/exchange_manager.py")
+            else:
+                print("❌ FAILED: try-except block NOT found in core/exchange_manager.py!")
+                start = content.find("fapiPrivatePostAlgoOrder") - 50
+                if start > 0:
+                    end = start + 300
+                    print(f"Snippet:\n{content[start:end]}")
+                else:
+                    print("String 'fapiPrivatePostAlgoOrder' NOT FOUND in file at all.")
+    except Exception as e:
+        print(f"❌ Error reading file: {e}")
+
 # 2. RUN GUARDIAN TEST LOGIC
 async def test_guardian_logic():
     print("\n[DIAGNOSTIC 2] Testing Runtime Guardian Logic")
@@ -154,6 +175,7 @@ async def check_recent_errors():
 
 async def main():
     check_file_content()
+    check_exchange_manager()
     await test_guardian_logic()
     await check_recent_errors()
 
