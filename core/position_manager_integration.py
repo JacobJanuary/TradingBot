@@ -158,11 +158,21 @@ async def apply_critical_fixes(position_manager):
     # FIX: TypeError - patched_open_position must accept PositionRequest object
     # Changed from: multiple positional arguments
     # Changed to: single request parameter matching original signature
+    # Global counter for debug
+    _debug_log_counter = 0
+
     async def patched_open_position(request):
         """Patched version with proper locking and logging"""
-        # DEBUG: Verify we are running
-        if hasattr(request, 'symbol') and 'CVX' in str(request.symbol):
-             logger.critical(f"🛑 PATCHED_OPEN_POSITION CALLED for {request.symbol}. Request type: {type(request)}")
+        nonlocal _debug_log_counter
+        # DEBUG: Unconditional logging for first 10 calls
+        if hasattr(request, 'symbol'): 
+             if 'CVX' in str(request.symbol) or _debug_log_counter < 10:
+                 logger.critical(f"🛑 PATCHED TRAP HIT: symbol={request.symbol}, type={type(request)}")
+                 import traceback
+                 logger.critical("Traceback:\n" + "".join(traceback.format_stack()))
+                 _debug_log_counter += 1
+        else:
+             logger.critical(f"🛑 PATCHED TRAP HIT: No symbol attr! Request: {request}")
         
         correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
         
