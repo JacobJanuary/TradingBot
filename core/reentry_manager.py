@@ -410,11 +410,12 @@ class ReentryManager:
             elif existing.status == 'reentered':
                 # Don't reactivate if this exit is from our own reentry position
                 # This prevents: reentry->position->exit->reactivate->reentry loop
-                logger.info(f"⚠️ {symbol}: Signal was reentered, keeping expired (prevents loop)")
+                logger.info(f"⚠️ {symbol}: Signal was 'reentered', forcing 'expired' (Fix Loop)")
                 existing.status = 'expired'
             else:
+                logger.warning(f"🔄 {symbol}: Reactivating signal! Prev Status={existing.status}")
                 existing.status = 'active'
-                logger.info(f"🔄 {symbol}: Reactivated reentry signal")
+                logger.info(f"🔄 {symbol}: Signal Reactivated to ACTIVE")
             
             # Save state
             await self._save_signal_state(existing)
