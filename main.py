@@ -25,6 +25,7 @@ from core.aged_position_manager import AgedPositionManager
 from core.position_manager_unified_patch import start_periodic_aged_scan, start_websocket_health_monitor
 from monitoring.health_check import HealthChecker, HealthStatus
 from monitoring.performance import PerformanceTracker
+import core.stop_loss_manager
 
 # Setup logging
 logging.basicConfig(
@@ -36,6 +37,15 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# DEBUG TRACER
+try:
+    logger.error("="*50)
+    logger.error(f"DEBUG: STARTING MAIN.PY FROM: {os.path.abspath(__file__)}")
+    logger.error(f"DEBUG: LOADED CORE.STOP_LOSS_MANAGER FROM: {core.stop_loss_manager.__file__}")
+    logger.error("="*50)
+except Exception as e:
+    logger.error(f"DEBUG ERROR: {e}")
 
 
 class TradingBot:
