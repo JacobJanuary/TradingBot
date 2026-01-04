@@ -54,10 +54,10 @@ logger = logging.getLogger(__name__)
 
 # DEBUG TRACER
 try:
-    import core.stop_loss_manager_v2
+    import core.stop_loss_manager
     logger.error("="*50)
     logger.error(f"DEBUG: STARTING MAIN.PY FROM: {os.path.abspath(__file__)}")
-    logger.error(f"DEBUG: LOADED CORE.STOP_LOSS_MANAGER_V2 FROM: {core.stop_loss_manager_v2.__file__}")
+    logger.error(f"DEBUG: LOADED CORE.STOP_LOSS_MANAGER FROM: {core.stop_loss_manager.__file__}")
     logger.error("="*50)
 except Exception as e:
     logger.error(f"DEBUG ERROR: {e}")
