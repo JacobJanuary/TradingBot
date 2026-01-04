@@ -11,3 +11,5 @@ pytest-asyncio
 msgpack
 psycopg2-binary
 colorlog
+prometheus_client
+psutil
