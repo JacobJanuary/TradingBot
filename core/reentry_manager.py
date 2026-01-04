@@ -615,6 +615,47 @@ class ReentryManager:
         
         return (False, f"weak_delta:{float(rolling_delta):.0f}")
     
+    async def _is_position_already_open(self, symbol: str, exchange: str) -> bool:
+        """
+        Robustly check if position exists using 3 layers:
+        1. Normalized Cache
+        2. Database
+        3. Exchange API
+        """
+        position_exists = False
+        
+        # 1. Check Cache with Normalization
+        try:
+            clean_symbol = symbol.replace('/', '').split(':')[0]
+            for pos_symbol in list(self.position_manager.positions.keys()):
+                if pos_symbol.replace('/', '').split(':')[0] == clean_symbol:
+                    logger.warning(f"⚠️ {symbol}: Found in cache as '{pos_symbol}'")
+                    return True
+        except Exception as e:
+            logger.error(f"Error checking cache for {symbol}: {e}")
+
+        # 2. Check Database
+        if hasattr(self, 'repository') and self.repository:
+            try:
+                db_pos = await self.repository.get_open_position(symbol, exchange)
+                if db_pos:
+                    logger.warning(f"⚠️ {symbol}: Found in database (id={db_pos.get('id')})")
+                    return True
+            except Exception as e:
+                logger.error(f"Error checking DB for {symbol}: {e}")
+
+        # 3. Check Exchange API
+        if hasattr(self.position_manager, 'verify_position_exists'):
+            try:
+                exists = await self.position_manager.verify_position_exists(symbol, exchange)
+                if exists:
+                    logger.warning(f"⚠️ {symbol}: Found on EXCHANGE (API verification)")
+                    return True
+            except Exception as e:
+                logger.error(f"Error checking Exchange for {symbol}: {e}")
+                
+        return False
+
     async def _trigger_instant_reentry(
         self,
         signal_id: int,
@@ -624,6 +665,12 @@ class ReentryManager:
         entry_price: Decimal
     ):
         """Execute instant re-entry (no cooldown)"""
+        
+        # CRITICAL FIX 3: Add Robust Check to Instant Reentry too
+        if await self._is_position_already_open(symbol, exchange):
+            logger.warning(f"⚠️ {symbol}: Position already exists, skipping instant reentry")
+            return
+
         logger.info(
             f"🚀 {symbol}: INSTANT REENTRY executing at {entry_price}"
         )
@@ -660,52 +707,8 @@ class ReentryManager:
     async def _trigger_reentry(self, signal: ReentrySignal, current_price: Decimal):
         """Execute re-entry for signal"""
         
-        # CRITICAL FIX v2 (2026-01-04): Robust position check
-        # Naive check "if signal.symbol in positions" fails if keys format differs (e.g. CVX/USDT vs CVXUSDT)
-        # We must check 1) Normalized Cache Keys and 2) Database directly
-        
-        position_exists = False
-        
-        # 1. Check Cache with Normalization
-        try:
-            clean_symbol = signal.symbol.replace('/', '').split(':')[0]
-            # Use list() to avoid runtime error if dict changes during iteration
-            for pos_symbol in list(self.position_manager.positions.keys()):
-                if pos_symbol.replace('/', '').split(':')[0] == clean_symbol:
-                    position_exists = True
-                    logger.warning(f"⚠️ {signal.symbol}: Found in cache as '{pos_symbol}' (Key mismatch prevented naive check)")
-                    break
-        except Exception as e:
-            logger.error(f"Error checking cache for {signal.symbol}: {e}")
-
-        # 2. Check Database (if not in cache)
-        # This handles cases where position exists in DB but failed to load to cache (Ghost Position)
-        if not position_exists:
-            if hasattr(self, 'repository') and self.repository:
-                try:
-                    logger.info(f"🔍 Checking DB for {signal.symbol} (exchange={signal.exchange})")
-                    db_pos = await self.repository.get_open_position(signal.symbol, signal.exchange)
-                    if db_pos:
-                        position_exists = True
-                        logger.warning(f"⚠️ {signal.symbol}: Found in database (id={db_pos.get('id')}) - Ghost Position detected")
-                    else:
-                        logger.info(f"⚪ {signal.symbol}: Not found in DB")
-                except Exception as e:
-                    logger.error(f"Error checking DB for {signal.symbol}: {e}")
-
-        # 3. Check Exchange API (Last Resort)
-        # If DB check fails (e.g. pool issue) or is out of sync, check Exchange directly
-        if not position_exists and hasattr(self.position_manager, 'verify_position_exists'):
-            try:
-                # verify_position_exists internally checks exchange API
-                exists_on_exchange = await self.position_manager.verify_position_exists(signal.symbol, signal.exchange)
-                if exists_on_exchange:
-                    position_exists = True
-                    logger.warning(f"⚠️ {signal.symbol}: Found on EXCHANGE (DB/Cache missed it) - Sync issue detected")
-            except Exception as e:
-                logger.error(f"Error checking Exchange for {signal.symbol}: {e}")
-
-        if position_exists:
+        # CRITICAL FIX v2 + v3: Robust position check (Helper method)
+        if await self._is_position_already_open(signal.symbol, signal.exchange):
             logger.warning(
                 f"⚠️ {signal.symbol}: Position already exists, marking signal as reentered"
             )
