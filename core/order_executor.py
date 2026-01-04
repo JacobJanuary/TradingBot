@@ -36,7 +36,7 @@ class OrderExecutor:
 
     # ==================== ERROR CLASSIFICATION ====================
     # Постоянные ошибки - не retry
-
+    PERMANENT_ERROR_PATTERNS = [
         'insufficient',     # Insufficient funds/balance
         'not available',    # Symbol/market not available
         'delisted',         # Symbol delisted
