@@ -160,6 +160,10 @@ async def apply_critical_fixes(position_manager):
     # Changed to: single request parameter matching original signature
     async def patched_open_position(request):
         """Patched version with proper locking and logging"""
+        # DEBUG: Verify we are running
+        if hasattr(request, 'symbol') and 'CVX' in str(request.symbol):
+             logger.critical(f"🛑 PATCHED_OPEN_POSITION CALLED for {request.symbol}. Request type: {type(request)}")
+        
         correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
         
         # DEBUG: Trace source of CVXUSDT spam (Improved)
