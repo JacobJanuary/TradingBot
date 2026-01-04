@@ -682,38 +682,38 @@ class ReentryManager:
                 logger.warning(f"⚠️ {symbol}: Position already exists, skipping instant reentry")
                 return
 
-        logger.info(
-            f"🚀 {symbol}: INSTANT REENTRY executing at {entry_price}"
-        )
-        
-        self.stats['instant_reentries'] += 1
-        
-        # Track for rate limiting
-        now = datetime.now(timezone.utc)
-        if symbol not in self.instant_reentry_counts:
-            self.instant_reentry_counts[symbol] = []
-        self.instant_reentry_counts[symbol].append(now)
-        
-        try:
-            from core.position_manager import PositionRequest
-            
-            request = PositionRequest(
-                signal_id=signal_id,
-                symbol=symbol,
-                exchange=exchange,
-                side='BUY' if side == 'long' else 'SELL',
-                entry_price=entry_price
+            logger.info(
+                f"🚀 {symbol}: INSTANT REENTRY executing at {entry_price}"
             )
             
-            result = await self.position_manager.open_position(request)
+            self.stats['instant_reentries'] += 1
             
-            if result:
-                logger.info(f"✅ {symbol}: Instant reentry position opened!")
-            else:
-                logger.error(f"❌ {symbol}: Failed to open instant reentry position")
-        
-        except Exception as e:
-            logger.error(f"❌ {symbol}: Instant reentry failed: {e}")
+            # Track for rate limiting
+            now = datetime.now(timezone.utc)
+            if symbol not in self.instant_reentry_counts:
+                self.instant_reentry_counts[symbol] = []
+            self.instant_reentry_counts[symbol].append(now)
+            
+            try:
+                from core.position_manager import PositionRequest
+                
+                request = PositionRequest(
+                    signal_id=signal_id,
+                    symbol=symbol,
+                    exchange=exchange,
+                    side='BUY' if side == 'long' else 'SELL',
+                    entry_price=entry_price
+                )
+                
+                result = await self.position_manager.open_position(request)
+                
+                if result:
+                    logger.info(f"✅ {symbol}: Instant reentry position opened!")
+                else:
+                    logger.error(f"❌ {symbol}: Failed to open instant reentry position")
+            
+            except Exception as e:
+                logger.error(f"❌ {symbol}: Instant reentry failed: {e}")
         finally:
             self._processing_signals.discard(symbol)
     
