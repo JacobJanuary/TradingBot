@@ -1,0 +1,13 @@
+ccxt==4.5.30
+asyncpg
+python-binance
+aiohttp
+websockets
+pandas
+numpy
+python-dotenv
+pytest
+pytest-asyncio
+msgpack
+psycopg2-binary
+colorlog
