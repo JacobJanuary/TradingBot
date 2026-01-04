@@ -65,11 +65,25 @@ def check_running_processes():
         print(f"Found {len(processes)} python processes:")
         for p in processes:
             if not p: continue
+            
+            # Extract PID to find CWD
+            try:
+                # p string format: user pid ...
+                parts = p.split()
+                pid = parts[1]
+                
+                # Get CWD
+                cwd_cmd = f"readlink -f /proc/{pid}/cwd" 
+                cwd_res = subprocess.run(cwd_cmd, shell=True, capture_output=True, text=True)
+                cwd = cwd_res.stdout.strip()
+            except:
+                cwd = "???"
+
             # Highlight suspicious scripts
-            if "test_aceusdt" in p or "verify_sl" in p:
-                print(f"🚨 SUSPICIOUS: {p}")
+            if "test_aceusdt" in p or "verify_sl" in p or "main.py" in p:
+                print(f"🚨 SUSPICIOUS [PID {pid} @ {cwd}]: {p}")
             else:
-                print(f"   {p}")
+                print(f"   [PID {pid} @ {cwd}]: {p}")
                 
     except Exception as e:
         print(f"❌ Error checking processes: {e}")
