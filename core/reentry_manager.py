@@ -683,12 +683,27 @@ class ReentryManager:
         if not position_exists:
             if hasattr(self, 'repository') and self.repository:
                 try:
+                    logger.info(f"🔍 Checking DB for {signal.symbol} (exchange={signal.exchange})")
                     db_pos = await self.repository.get_open_position(signal.symbol, signal.exchange)
                     if db_pos:
                         position_exists = True
                         logger.warning(f"⚠️ {signal.symbol}: Found in database (id={db_pos.get('id')}) - Ghost Position detected")
+                    else:
+                        logger.info(f"⚪ {signal.symbol}: Not found in DB")
                 except Exception as e:
                     logger.error(f"Error checking DB for {signal.symbol}: {e}")
+
+        # 3. Check Exchange API (Last Resort)
+        # If DB check fails (e.g. pool issue) or is out of sync, check Exchange directly
+        if not position_exists and hasattr(self.position_manager, 'verify_position_exists'):
+            try:
+                # verify_position_exists internally checks exchange API
+                exists_on_exchange = await self.position_manager.verify_position_exists(signal.symbol, signal.exchange)
+                if exists_on_exchange:
+                    position_exists = True
+                    logger.warning(f"⚠️ {signal.symbol}: Found on EXCHANGE (DB/Cache missed it) - Sync issue detected")
+            except Exception as e:
+                logger.error(f"Error checking Exchange for {signal.symbol}: {e}")
 
         if position_exists:
             logger.warning(
