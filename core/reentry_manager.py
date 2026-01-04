@@ -403,6 +403,11 @@ class ReentryManager:
                 existing.status = 'max_reached'
                 self.stats['signals_max_reached'] += 1
                 logger.info(f"🛑 {symbol}: Max reentries reached ({existing.max_reentries})")
+            elif existing.status == 'reentered':
+                # Don't reactivate if this exit is from our own reentry position
+                # This prevents: reentry->position->exit->reactivate->reentry loop
+                logger.info(f"⚠️ {symbol}: Signal was reentered, keeping expired (prevents loop)")
+                existing.status = 'expired'
             else:
                 existing.status = 'active'
                 logger.info(f"🔄 {symbol}: Reactivated reentry signal")
