@@ -162,14 +162,14 @@ async def apply_critical_fixes(position_manager):
         """Patched version with proper locking and logging"""
         correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
         
-        # DEBUG: Trace source of CVXUSDT spam
-        if request.symbol == 'CVXUSDT':
+        # DEBUG: Trace source of CVXUSDT spam (Improved)
+        if 'CVX' in str(request.symbol):
             import traceback
             tb = "".join(traceback.format_stack())
             await log_event(
                 EventType.SYSTEM_ERROR,
                 {
-                    'message': 'Caught CVXUSDT open_position call',
+                    'message': f"Caught open_position call for {request.symbol}",
                     'signal_id': request.signal_id,
                     'traceback': tb
                 },
