@@ -671,7 +671,7 @@ class ExchangeManager:
             if self.name == 'binance':
                 # DECEMBER 2025 MIGRATION: Use StopLossManager for Algo API
                 # Old create_order with type='STOP_MARKET' returns error -4120
-                from core.stop_loss_manager import StopLossManager
+                from core.stop_loss_manager_v2 import StopLossManager
                 sl_manager = StopLossManager(self.exchange, self.name)
                 
                 result = await sl_manager.set_stop_loss(

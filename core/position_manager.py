@@ -1229,7 +1229,7 @@ class PositionManager:
             # Try to use AtomicPositionManager if available
             try:
                 # Initialize atomic manager
-                from core.stop_loss_manager import StopLossManager
+                from core.stop_loss_manager_v2 import StopLossManager
                 
                 # SL/TS params already loaded from .env above
                 
@@ -2150,7 +2150,7 @@ class PositionManager:
                 # ============================================================
                 # UNIFIED APPROACH: Use StopLossManager for ALL SL operations
                 # ============================================================
-                from core.stop_loss_manager import StopLossManager
+                from core.stop_loss_manager_v2 import StopLossManager
 
                 # ✅ FIX #1.5b: Pass position_manager for TS-awareness
                 sl_manager = StopLossManager(exchange.exchange, position.exchange, position_manager=self)
