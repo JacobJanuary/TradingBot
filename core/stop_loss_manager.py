@@ -461,6 +461,7 @@ class StopLossManager:
             f"side={side}, qty={amount}"
         )
         
+        try:
             # TRY-EXCEPT BLOCK FOR CCXT COMPATIBILITY
             # Explicitly catch AttributeError to handle potential dynamic property issues
             algo_method = None
