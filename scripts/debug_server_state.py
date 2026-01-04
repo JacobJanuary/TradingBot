@@ -112,6 +112,23 @@ def check_running_processes():
     except Exception as e:
         print(f"❌ Error checking processes: {e}")
 
+def check_systemd_services():
+    print("\n[DIAGNOSTIC 1e] Checking Systemd Services (Bot/Monitor)")
+    try:
+        import subprocess
+        # List all loaded units
+        cmd = "systemctl list-units --type=service --all | grep -E 'bot|monitor|trading' | grep -v grep"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        services = result.stdout.strip().split('\n')
+        print(f"Found {len(services)} suspicious services:")
+        for s in services:
+            if not s: continue
+            print(f"   {s.strip()}")
+            
+    except Exception as e:
+        print(f"❌ Error checking services: {e}")
+
 # 2. RUN GUARDIAN TEST LOGIC
 async def test_guardian_logic():
     print("\n[DIAGNOSTIC 2] Testing Runtime Guardian Logic")
@@ -238,6 +255,7 @@ async def main():
     check_exchange_manager()
     check_monitor_codebase()
     check_running_processes()
+    check_systemd_services()
     await test_guardian_logic()
     await check_recent_errors()
 
