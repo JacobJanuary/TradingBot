@@ -405,12 +405,15 @@ class ReentryManager:
             existing.last_exit_price = exit_price
             existing.last_exit_time = datetime.now(timezone.utc)
             existing.last_exit_reason = exit_reason
-            existing.reentry_count += 1
-            existing.max_price_after_exit = None  # Reset tracking
+            # NOTE: DON'T increment reentry_count here! 
+            # It's incremented in _trigger_reentry() when reentry actually happens.
+            # Incrementing here caused double-counting.
+            existing.max_price_after_exit = None  # Reset tracking for next cycle
             existing.min_price_after_exit = None
             
             logger.info(
-                f"🔄 {symbol}: Updated reentry signal (count={existing.reentry_count})"
+                f"🔄 {symbol}: Position exited, checking reentry signal state "
+                f"(count={existing.reentry_count}/{existing.max_reentries}, status={existing.status})"
             )
             
             # Check if max reached
@@ -419,20 +422,21 @@ class ReentryManager:
                 self.stats['signals_max_reached'] += 1
                 logger.info(f"🛑 {symbol}: Max reentries reached ({existing.max_reentries})")
             elif existing.status == 'reentered':
-                # Don't reactivate if this exit is from our own reentry position
-                # This prevents: reentry->position->exit->reactivate->reentry loop
-                logger.info(f"⚠️ {symbol}: Signal was 'reentered', forcing 'expired' (Fix Loop)")
-                existing.status = 'expired'
+                # FIX: Position from reentry exited - REACTIVATE for next reentry cycle!
+                # This allows up to max_reentries reentries as per spec.
+                # The _processing_signals lock prevents race conditions.
+                existing.status = 'active'
+                logger.info(
+                    f"✅ {symbol}: Reentry position closed, signal REACTIVATED "
+                    f"(count={existing.reentry_count}/{existing.max_reentries})"
+                )
             elif existing.status in ('expired', 'max_reached'):
-                # CRITICAL FIX: Do NOT reactivate terminal states!
-                # This was the bug causing infinite loop
+                # CRITICAL: Do NOT reactivate terminal states!
                 logger.warning(f"🛑 {symbol}: Signal is TERMINAL ({existing.status}), NOT reactivating")
                 # Keep status as-is, do not change
             else:
-                # Only reactivate from 'active' status (normal cooldown cycle)
-                logger.warning(f"🔄 {symbol}: Reactivating signal! Prev Status={existing.status}")
-                existing.status = 'active'
-                logger.info(f"🔄 {symbol}: Signal Reactivated to ACTIVE")
+                # Status was already 'active' - just update exit info (done above)
+                logger.info(f"🔄 {symbol}: Signal staying active (status was {existing.status})")
             
             # Save state
             await self._save_signal_state(existing)

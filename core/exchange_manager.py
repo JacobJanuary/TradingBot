@@ -1317,8 +1317,22 @@ class ExchangeManager:
                 'timestamp': self.exchange.milliseconds()
             }
 
+            # FIX (2026-01-04): CCXT version compatibility for Algo Order API
+            # Check for method with multiple naming conventions
+            algo_method = None
+            if hasattr(self.exchange, 'fapiPrivatePostAlgoOrder'):
+                algo_method = self.exchange.fapiPrivatePostAlgoOrder
+            elif hasattr(self.exchange, 'fapiprivate_post_algoorder'):
+                algo_method = self.exchange.fapiprivate_post_algoorder
+            elif hasattr(self.exchange, 'fapiprivatePostAlgoorder'):
+                algo_method = self.exchange.fapiprivatePostAlgoorder
+            
+            if not algo_method:
+                logger.error(f"❌ CRITICAL: No Algo Order method found in CCXT! Available methods: {[m for m in dir(self.exchange) if 'algo' in m.lower()]}")
+                raise AttributeError("CCXT missing fapiPrivatePostAlgoOrder")
+            
             new_order = await self.rate_limiter.execute_request(
-                self.exchange.fapiPrivatePostAlgoOrder,
+                algo_method,
                 params
             )
 
