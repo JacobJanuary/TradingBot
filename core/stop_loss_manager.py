@@ -459,8 +459,24 @@ class StopLossManager:
         
         try:
             # CRITICAL: Use NEW Algo Order endpoint (December 2025 migration)
-            # Method: fapiPrivatePostAlgoOrder (verified in CCXT 4.5.26)
-            response = await self.exchange.fapiPrivatePostAlgoOrder(params)
+            # COMPATIBILITY FIX (2026-01-04): Handle CCXT version differences
+            # Server check (v4.5.30) shows: 'fapiPrivatePostAlgoOrder' AND 'fapiprivate_post_algoorder'
+            
+            algo_method = None
+            if hasattr(self.exchange, 'fapiPrivatePostAlgoOrder'):
+                algo_method = self.exchange.fapiPrivatePostAlgoOrder
+            elif hasattr(self.exchange, 'fapiprivate_post_algoorder'):
+                algo_method = self.exchange.fapiprivate_post_algoorder
+            
+            if not algo_method:
+                # Last ditch: try snake case standard just in case (e.g. older versions)
+                if hasattr(self.exchange, 'fapi_private_post_algo_order'):
+                    algo_method = self.exchange.fapi_private_post_algo_order
+                else:
+                    self.logger.error("❌ CRITICAL: No Algo Order method found in CCXT! Update lib.")
+                    raise AttributeError("CCXT missing fapiPrivatePostAlgoOrder")
+            
+            response = await algo_method(params)
             
             # Extract algoId from response
             algo_id = response.get('algoId')
