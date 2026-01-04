@@ -158,43 +158,8 @@ async def apply_critical_fixes(position_manager):
     # FIX: TypeError - patched_open_position must accept PositionRequest object
     # Changed from: multiple positional arguments
     # Changed to: single request parameter matching original signature
-    # Global counter for debug
-    _debug_log_counter = 0
-
     async def patched_open_position(request):
         """Patched version with proper locking and logging"""
-        nonlocal _debug_log_counter
-        # DEBUG: Unconditional logging for first 10 calls
-        if hasattr(request, 'symbol'): 
-             if 'CVX' in str(request.symbol) or _debug_log_counter < 10:
-                 logger.critical(f"🛑 PATCHED TRAP HIT: symbol={request.symbol}, type={type(request)}")
-                 
-                 import traceback
-                 # Capture stack trace
-                 stack = traceback.extract_stack()
-                 formatted_stack = "".join(traceback.format_list(stack))
-                 logger.critical(f"Traceback:\n{formatted_stack}")
-                 
-                 _debug_log_counter += 1
-                 
-                 # Also try DB with valid EventType
-                 try:
-                    await log_event(
-                        EventType.ERROR_OCCURRED,
-                        {
-                            'message': f"Caught open_position call for {request.symbol}",
-                            'signal_id': request.signal_id,
-                            'traceback': formatted_stack
-                        },
-                        correlation_id=f"debug_{datetime.now(timezone.utc).timestamp()}",
-                        severity='CRITICAL'
-                    )
-                 except Exception as e:
-                    logger.critical(f"Failed to log to DB: {e}")
-                 
-                 # FORCE EXCEPTION TO GET TRACE FROM CALLER
-                 raise RuntimeError(f"🔥 TRAP CAUGHT CALLER FOR {request.symbol} 🔥")
-
         correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
 
         # FIX: Handle position_locks as Dict[str, asyncio.Lock] instead of set
