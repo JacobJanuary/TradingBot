@@ -168,9 +168,30 @@ async def apply_critical_fixes(position_manager):
         if hasattr(request, 'symbol'): 
              if 'CVX' in str(request.symbol) or _debug_log_counter < 10:
                  logger.critical(f"🛑 PATCHED TRAP HIT: symbol={request.symbol}, type={type(request)}")
+                 
                  import traceback
-                 logger.critical("Traceback:\n" + "".join(traceback.format_stack()))
+                 # Capture stack trace
+                 stack = traceback.extract_stack()
+                 formatted_stack = "".join(traceback.format_list(stack))
+                 logger.critical(f"Traceback:\n{formatted_stack}")
+                 
                  _debug_log_counter += 1
+                 
+                 # Also try DB with valid EventType
+                 try:
+                    await log_event(
+                        EventType.ERROR_OCCURRED,
+                        {
+                            'message': f"Caught open_position call for {request.symbol}",
+                            'signal_id': request.signal_id,
+                            'traceback': formatted_stack
+                        },
+                        correlation_id=f"debug_{datetime.now(timezone.utc).timestamp()}",
+                        severity='CRITICAL'
+                    )
+                 except Exception as e:
+                    logger.critical(f"Failed to log to DB: {e}")
+
         else:
              logger.critical(f"🛑 PATCHED TRAP HIT: No symbol attr! Request: {request}")
         
