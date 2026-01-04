@@ -551,16 +551,34 @@ class BinanceHybridStream:
                             )
                             self.mark_connected = False
 
-                # Check User Data Stream heartbeat (unchanged)
+                # --- CHECK 2: User Data Stream ---
+                
+                # A. Check if User task is dead (crashed/exited)
+                if self.user_task and self.user_task.done():
+                    try:
+                        exc = self.user_task.exception()
+                        logger.error(f"💀 [HEARTBEAT] User stream task DIED! Exception: {exc}")
+                    except Exception:
+                        logger.error("💀 [HEARTBEAT] User stream task DIED (no exception)")
+                    
+                    await self._restart_user_stream()
+                    continue
+                
+                # B. Check if User stream stuck in "Connecting" state
+                # (Note: User stream doesn't track last_connected_check separately, 
+                #  but frozen detection below handles stuck connections)
+                
+                # C. Check for frozen User connection (connected but no data)
                 if self.user_connected and self.last_user_message_time > 0:
                     user_silence = current_time - self.last_user_message_time
                     if user_silence > timeout:
                         logger.warning(
                             f"💔 [HEARTBEAT] User stream frozen! "
                             f"No messages for {user_silence:.1f}s (threshold: {timeout}s). "
-                            f"Forcing reconnect..."
+                            f"Forcing restart..."
                         )
-                        self.user_connected = False
+                        # ✅ FIX: Active restart instead of just setting flag!
+                        await self._restart_user_stream()
 
             except asyncio.CancelledError:
                 logger.info("[HEARTBEAT] Heartbeat monitoring task cancelled")
@@ -932,6 +950,34 @@ class BinanceHybridStream:
         # 3. Start new task
         self.mark_task = asyncio.create_task(self._run_mark_stream())
         logger.info("✅ [MARK] Mark Price Stream task restarted")
+
+    async def _restart_user_stream(self):
+        """
+        ✅ Force restart of User Data Stream task
+        
+        Mirrors _restart_mark_stream() logic for User stream.
+        Called when heartbeat detects frozen connection.
+        """
+        logger.warning("🔄 [USER] Forcing restart of User Data Stream task...")
+        
+        # 1. Cancel existing task
+        if self.user_task and not self.user_task.done():
+            self.user_task.cancel()
+            try:
+                await self.user_task
+            except asyncio.CancelledError:
+                pass
+        
+        # 2. Close existing socket/session if open
+        if self.user_ws and not self.user_ws.closed:
+            await self.user_ws.close()
+        
+        # 3. Refresh listen key (may have expired during freeze)
+        await self._create_listen_key()
+        
+        # 4. Start new task
+        self.user_task = asyncio.create_task(self._run_user_stream())
+        logger.info("✅ [USER] User Data Stream task restarted")
 
     async def _handle_mark_message(self, data: Dict):
         """Handle Mark Price Stream message"""
