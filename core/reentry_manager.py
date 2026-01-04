@@ -166,6 +166,10 @@ class ReentryManager:
         # Instant reentry tracking (per symbol)
         self.instant_reentry_counts: Dict[str, list] = {}  # symbol -> [timestamps]
         
+        # Concurrency Lock (Per Symbol)
+        # Prevents race conditions where multiple updates trigger parallel reentries before status is saved
+        self._processing_signals: Set[str] = set()
+        
         # Stats
         self.stats = {
             'signals_registered': 0,
@@ -666,10 +670,17 @@ class ReentryManager:
     ):
         """Execute instant re-entry (no cooldown)"""
         
-        # CRITICAL FIX 3: Add Robust Check to Instant Reentry too
-        if await self._is_position_already_open(symbol, exchange):
-            logger.warning(f"⚠️ {symbol}: Position already exists, skipping instant reentry")
+        # FIX v5: Concurrency Lock
+        if symbol in self._processing_signals:
+            logger.debug(f"🔒 {symbol}: Already processing, skipping concurrent trigger")
             return
+            
+        self._processing_signals.add(symbol)
+        try:
+            # CRITICAL FIX 3: Add Robust Check to Instant Reentry too
+            if await self._is_position_already_open(symbol, exchange):
+                logger.warning(f"⚠️ {symbol}: Position already exists, skipping instant reentry")
+                return
 
         logger.info(
             f"🚀 {symbol}: INSTANT REENTRY executing at {entry_price}"
@@ -703,19 +714,28 @@ class ReentryManager:
         
         except Exception as e:
             logger.error(f"❌ {symbol}: Instant reentry failed: {e}")
+        finally:
+            self._processing_signals.discard(symbol)
     
     async def _trigger_reentry(self, signal: ReentrySignal, current_price: Decimal):
         """Execute re-entry for signal"""
         
-        # CRITICAL FIX v2 + v3: Robust position check (Helper method)
-        if await self._is_position_already_open(signal.symbol, signal.exchange):
-            logger.warning(
-                f"⚠️ {signal.symbol}: Position already exists, marking signal as reentered"
-            )
-            signal.status = 'reentered'
-            signal.reentry_count += 1
-            await self._save_signal_state(signal)
+        # FIX v5: Concurrency Lock
+        if signal.symbol in self._processing_signals:
+            logger.debug(f"🔒 {signal.symbol}: Already processing, skipping concurrent trigger")
             return
+            
+        self._processing_signals.add(signal.symbol)
+        try:
+            # CRITICAL FIX v2 + v3: Robust position check (Helper method)
+            if await self._is_position_already_open(signal.symbol, signal.exchange):
+                logger.warning(
+                    f"⚠️ {signal.symbol}: Position already exists, marking signal as reentered"
+                )
+                signal.status = 'reentered'
+                signal.reentry_count += 1
+                await self._save_signal_state(signal)
+                return
         
         logger.info(
             f"🚀 {signal.symbol}: REENTRY TRIGGERED! "
@@ -758,6 +778,8 @@ class ReentryManager:
             logger.error(f"❌ {signal.symbol}: Reentry failed: {e}")
             # Still save the 'reentered' status to prevent infinite retries
             await self._save_signal_state(signal)
+        finally:
+            self._processing_signals.discard(signal.symbol)
     
     async def _monitor_loop(self):
         """Background loop to check and cleanup signals"""
