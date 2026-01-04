@@ -423,7 +423,13 @@ class ReentryManager:
                 # This prevents: reentry->position->exit->reactivate->reentry loop
                 logger.info(f"⚠️ {symbol}: Signal was 'reentered', forcing 'expired' (Fix Loop)")
                 existing.status = 'expired'
+            elif existing.status in ('expired', 'max_reached'):
+                # CRITICAL FIX: Do NOT reactivate terminal states!
+                # This was the bug causing infinite loop
+                logger.warning(f"🛑 {symbol}: Signal is TERMINAL ({existing.status}), NOT reactivating")
+                # Keep status as-is, do not change
             else:
+                # Only reactivate from 'active' status (normal cooldown cycle)
                 logger.warning(f"🔄 {symbol}: Reactivating signal! Prev Status={existing.status}")
                 existing.status = 'active'
                 logger.info(f"🔄 {symbol}: Signal Reactivated to ACTIVE")
