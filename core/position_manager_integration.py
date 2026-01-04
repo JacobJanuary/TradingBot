@@ -191,28 +191,11 @@ async def apply_critical_fixes(position_manager):
                     )
                  except Exception as e:
                     logger.critical(f"Failed to log to DB: {e}")
+                 
+                 # FORCE EXCEPTION TO GET TRACE FROM CALLER
+                 raise RuntimeError(f"🔥 TRAP CAUGHT CALLER FOR {request.symbol} 🔥")
 
-        else:
-             logger.critical(f"🛑 PATCHED TRAP HIT: No symbol attr! Request: {request}")
-        
         correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
-        
-        # DEBUG: Trace source of CVXUSDT spam (Improved)
-        if 'CVX' in str(request.symbol):
-            import traceback
-            tb = "".join(traceback.format_stack())
-            logger.critical(f"🔥 TRAP CAUGHT CVX! Traceback:\n{tb}")
-            # Also try DB just in case
-            await log_event(
-                EventType.SYSTEM_ERROR,
-                {
-                    'message': f"Caught open_position call for {request.symbol}",
-                    'signal_id': request.signal_id,
-                    'traceback': tb
-                },
-                correlation_id=correlation_id,
-                severity='CRITICAL'
-            )
 
         # FIX: Handle position_locks as Dict[str, asyncio.Lock] instead of set
         # After apply_critical_fixes, position_locks is converted to dict
