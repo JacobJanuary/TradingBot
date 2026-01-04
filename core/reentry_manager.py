@@ -385,29 +385,25 @@ class ReentryManager:
                 )
                 return  # Don't register normal reentry signal
         
+        # FIX: Concurrency Protection
+        # If this symbol is currently being processed (triggering reentry),
+        # DO NOT touch the signal state. This prevents race conditions where
+        # a phantom exit event resets 'reentered' status back to 'active'.
+        if symbol in self._processing_signals:
+            logger.warning(
+                f"🛡️ {symbol}: Ignoring register_exit because signal is LOCKED (processing). "
+                f"Prevents status overwrite."
+            )
+            return
+
         # ===== NORMAL REENTRY REGISTRATION =====
         # Check if we already have a signal for this symbol
         existing = self.signals.get(symbol)
         
-            # UPDATE 2026-01-04: Debounce & Blacklist
-            # Specific suppression for looping symbol
-            if symbol == 'CVXUSDT':
-                logger.warning(f"⛔ {symbol}: Blacklisted symbol ignored in register_exit")
-                return
-
-            now = datetime.now(timezone.utc)
-            # Debounce: If called too frequently (e.g. phantom closes), ignore
-            time_since_exit = (now - existing.last_exit_time).total_seconds()
-            if time_since_exit < 10:
-                logger.warning(
-                    f"⏳ {symbol}: register_exit called too soon ({time_since_exit:.1f}s < 10s). "
-                    f"Ignoring to prevent loop."
-                )
-                return
-
+        if existing:
             # Update existing signal with new exit info
             existing.last_exit_price = exit_price
-            existing.last_exit_time = now
+            existing.last_exit_time = datetime.now(timezone.utc)
             existing.last_exit_reason = exit_reason
             existing.reentry_count += 1
             existing.max_price_after_exit = None  # Reset tracking
