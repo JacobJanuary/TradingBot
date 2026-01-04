@@ -12,7 +12,30 @@ import asyncio
 import unittest
 import json
 import asyncpg
+import subprocess
 from datetime import datetime, timedelta, timezone
+
+def check_monitor_codebase():
+    print("\n[DIAGNOSTIC 1d] Checking TBot_monitoring Codebase")
+    # Path assumption based on previous PID output: /home/elcrypto/TBot_monitoring/monitor_ui
+    monitor_path = "/home/elcrypto/TBot_monitoring/monitor_ui/core/stop_loss_manager.py"
+    
+    if os.path.exists(monitor_path):
+        print(f"Found monitor file: {monitor_path}")
+        try:
+            with open(monitor_path, 'r') as f:
+                content = f.read()
+                if "CCXT_MISSING_ALGO_METHOD_V2" in content:
+                    print("✅ PASSED: TBot_monitoring HAS the fix.")
+                else:
+                    print("❌ FAILED: TBot_monitoring does NOT have the fix (Old Code).")
+        except Exception as e:
+            print(f"❌ Error reading monitor file: {e}")
+    else:
+        # Try parent dir just in case
+        print(f"File not found at {monitor_path}, trying specific search...")
+        # (Simple fallback or just report not found)
+        print("⚠️  Could not locate core/stop_loss_manager.py in TBot_monitoring path.")
 
 # 1. PRINT FILE CONTENT MD5 / GREP
 def check_file_content():
@@ -212,6 +235,7 @@ async def check_recent_errors():
 async def main():
     check_file_content()
     check_exchange_manager()
+    check_monitor_codebase()
     check_running_processes()
     await test_guardian_logic()
     await check_recent_errors()
