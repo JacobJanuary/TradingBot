@@ -160,6 +160,13 @@ async def apply_critical_fixes(position_manager):
     # Changed to: single request parameter matching original signature
     async def patched_open_position(request):
         """Patched version with proper locking and logging"""
+        # DEBUG: Unconditional trap to identify caller
+        logger.critical(f"🛑 PATCHED_OPEN_POSITION CALL: {request.symbol} (Signal: {request.signal_id})")
+        import traceback
+        # Log limited stack trace (last 5 entries) to avoid clutter
+        stack = "".join(traceback.format_list(traceback.extract_stack()[-5:]))
+        logger.critical(f"Stack Trace:\n{stack}")
+
         correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
 
         # FIX: Handle position_locks as Dict[str, asyncio.Lock] instead of set
