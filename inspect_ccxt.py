@@ -9,6 +9,9 @@ async def inspect():
         # Use CCXT Pro (Async)
         exchange = ccxt.binance({'options': {'defaultType': 'future'}})
         print("Exchange initialized (CCXT PRO / ASYNC). Searching for 'algo' methods...")
+    except Exception as e:
+        print(f"Error initializing exchange: {e}")
+        return
     
     algo_methods = [m for m in dir(exchange) if 'algo' in m.lower()]
     found = False

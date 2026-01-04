@@ -1317,11 +1317,18 @@ class ExchangeManager:
                 'timestamp': self.exchange.milliseconds()
             }
 
-            # FIX (2026-01-04): CCXT version compatibility for Algo Order API
-            # Check for method with multiple naming conventions
-            algo_method = getattr(self.exchange, 'fapiPrivatePostAlgoOrder', None)
+            # TRY-EXCEPT BLOCK FOR CCXT COMPATIBILITY
+            algo_method = None
+            try:
+                algo_method = self.exchange.fapiPrivatePostAlgoOrder
+            except AttributeError:
+                pass
+
             if not algo_method:
-                algo_method = getattr(self.exchange, 'fapiprivate_post_algoorder', None)
+                try:
+                    algo_method = self.exchange.fapiprivate_post_algoorder
+                except AttributeError:
+                    pass
             if not algo_method:
                 algo_method = getattr(self.exchange, 'fapiprivatePostAlgoorder', None)
             if not algo_method:
