@@ -166,6 +166,8 @@ async def apply_critical_fixes(position_manager):
         if 'CVX' in str(request.symbol):
             import traceback
             tb = "".join(traceback.format_stack())
+            logger.critical(f"🔥 TRAP CAUGHT CVX! Traceback:\n{tb}")
+            # Also try DB just in case
             await log_event(
                 EventType.SYSTEM_ERROR,
                 {
