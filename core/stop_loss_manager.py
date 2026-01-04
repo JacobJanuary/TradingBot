@@ -526,7 +526,7 @@ class StopLossManager:
             }
             
         except Exception as e:
-            self.logger.error(f"Failed to create Algo SL for {symbol}: {e}")
+            self.logger.error(f"Failed to create Algo SL for {symbol} [UUID: 999-FIX-VERIFIED]: {e}")
             
             # Log error event
             event_logger = get_event_logger()
