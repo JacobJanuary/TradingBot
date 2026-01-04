@@ -161,6 +161,21 @@ async def apply_critical_fixes(position_manager):
     async def patched_open_position(request):
         """Patched version with proper locking and logging"""
         correlation_id = f"open_position_{request.signal_id}_{datetime.now(timezone.utc).timestamp()}"
+        
+        # DEBUG: Trace source of CVXUSDT spam
+        if request.symbol == 'CVXUSDT':
+            import traceback
+            tb = "".join(traceback.format_stack())
+            await log_event(
+                EventType.SYSTEM_ERROR,
+                {
+                    'message': 'Caught CVXUSDT open_position call',
+                    'signal_id': request.signal_id,
+                    'traceback': tb
+                },
+                correlation_id=correlation_id,
+                severity='CRITICAL'
+            )
 
         # FIX: Handle position_locks as Dict[str, asyncio.Lock] instead of set
         # After apply_critical_fixes, position_locks is converted to dict
