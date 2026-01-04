@@ -77,11 +77,12 @@ def check_exchange_manager():
         print(f"❌ Error reading file: {e}")
 
 def check_running_processes():
-    print("\n[DIAGNOSTIC 1c] Checking Running Python Processes")
+    print("\n[DIAGNOSTIC 1c] Checking ALL Processes for Suspicious Activity")
     try:
         import subprocess
-        # grep for python, exclude grep itself
-        cmd = "ps aux | grep python | grep -v grep | grep -v debug_server_state"
+        # Search for python, monitor, TBot, or anything related to the other project
+        # Using -E for extended regex
+        cmd = "ps aux | grep -E 'python|monitor|TBot|ACEUSDT' | grep -v grep | grep -v debug_server_state"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         processes = result.stdout.strip().split('\n')
