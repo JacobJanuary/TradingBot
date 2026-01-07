@@ -1399,16 +1399,24 @@ class BinanceHybridStream:
             return
 
         # LAYER 1: Check for missing subscriptions (presence check)
+        # FIX: Normalize position keys to match subscribed_symbols format (Binance raw)
         all_subscriptions = self.subscribed_symbols.union(self.pending_subscriptions)
-        missing_subscriptions = set(self.positions.keys()) - all_subscriptions
+        
+        # Build mapping: normalized_key -> original_key for reverse lookup
+        position_normalized = {self._normalize_symbol(s): s for s in self.positions.keys()}
+        normalized_position_keys = set(position_normalized.keys())
+        
+        missing_normalized = normalized_position_keys - all_subscriptions
+        # Convert back to original format for logging
+        missing_subscriptions = {position_normalized[n] for n in missing_normalized}
 
         # LAYER 2: Check for "silent fails"  - subscriptions exist but no data flowing
         STALE_DATA_THRESHOLD = 60.0  # seconds
         stale_subscriptions = []
 
         for symbol in self.subscribed_symbols:
-            # Only check symbols we have positions for
-            if symbol not in self.positions:
+            # FIX: Check if normalized symbol has a position (not raw key)
+            if symbol not in normalized_position_keys:
                 continue
 
             data_age = self._get_data_age(symbol)
