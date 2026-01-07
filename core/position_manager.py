@@ -1336,7 +1336,14 @@ class PositionManager:
                     await self.event_router.emit('stream.subscribe', {
                         'symbol': symbol,
                         'exchange': exchange_name,
-                        'timestamp': datetime.now().timestamp()
+                        'timestamp': datetime.now().timestamp(),
+                        # CRITICAL FIX: Include position data so binance_hybrid_stream can populate self.positions
+                        # This fixes the bug where ACCOUNT_UPDATE delay causes position to be invisible
+                        'position_data': {
+                            'side': position.side,
+                            'quantity': float(position.quantity),
+                            'entry_price': float(position.entry_price),
+                        }
                     })
 
                     # 12. Update internal statistics

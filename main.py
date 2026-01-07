@@ -493,6 +493,7 @@ class TradingBot:
             """Handle explicit subscription requests"""
             symbol = data.get('symbol')
             exchange = data.get('exchange', 'binance')
+            position_data = data.get('position_data')  # NEW: Extract position data
 
             if not symbol:
                 return
@@ -503,7 +504,8 @@ class TradingBot:
                     stream = self.websockets.get('binance_hybrid')
                     if stream:
                         logger.info(f"🔌 Triggering explicit subscription for {symbol}")
-                        await stream.subscribe_symbol(symbol)
+                        # CRITICAL FIX: Pass position_data to populate self.positions
+                        await stream.subscribe_symbol(symbol, position_data=position_data)
                     else:
                         logger.warning("Binance stream not available for subscription")
 

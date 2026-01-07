@@ -1103,8 +1103,31 @@ class BinanceHybridStream:
             except Exception as e:
                 logger.error(f"[MARK] Subscription manager error: {e}", exc_info=True)
 
-    async def subscribe_symbol(self, symbol: str):
-        """Public method to subscribe to mark price stream for a symbol"""
+    async def subscribe_symbol(self, symbol: str, position_data: dict = None):
+        """
+        Public method to subscribe to mark price stream for a symbol
+        
+        Args:
+            symbol: Trading symbol (e.g., 'BTCUSDT' or 'BTC/USDT:USDT')
+            position_data: Optional dict with position info (side, quantity, entry_price)
+                          If provided, populates self.positions to handle ACCOUNT_UPDATE delays
+        """
+        # Normalize symbol first
+        normalized_symbol = self._normalize_symbol(symbol)
+        
+        # CRITICAL FIX: Populate self.positions if data provided and not already present
+        # This ensures mark price updates trigger combined events even if ACCOUNT_UPDATE is delayed
+        if position_data and normalized_symbol not in self.positions:
+            self.positions[normalized_symbol] = {
+                'symbol': normalized_symbol,
+                'side': position_data.get('side', 'LONG'),
+                'size': str(position_data.get('quantity', 0)),
+                'entry_price': str(position_data.get('entry_price', 0)),
+                'mark_price': self.mark_prices.get(normalized_symbol, '0'),
+                'unrealized_pnl': '0'
+            }
+            logger.info(f"📊 [MARK] Position cache populated for {normalized_symbol} (ACCOUNT_UPDATE bypass)")
+        
         await self._request_mark_subscription(symbol)
 
     async def _request_mark_subscription(self, symbol: str, subscribe: bool = True):
