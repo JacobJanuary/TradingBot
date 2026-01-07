@@ -18,14 +18,22 @@ Run on server: python scripts/test_position_suiusdt.py
 """
 
 import asyncio
-import sys
+import logging
 import os
-import time
+import sys
+from decimal import Decimal
+from datetime import datetime
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import datetime
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger('test_position_sui')
 
 
 async def main():
@@ -35,80 +43,121 @@ async def main():
     print(f"Time: {datetime.now()}")
     print()
     
-    # Import after path setup
     try:
         from config.settings import config as settings
+        from database.repository import Repository
         from core.exchange_manager import ExchangeManager
+        from core.position_manager import PositionManager, PositionRequest
+        from websocket.event_router import EventRouter
     except ImportError as e:
         print(f"❌ Import error: {e}")
-        print("Run from project root with: python scripts/test_position_suiusdt.py")
         return
-    
-    # Get Binance config
-    binance_config = settings.exchanges.get('binance')
-    if not binance_config:
-        print("❌ No binance config found in settings")
-        return
-    
-    print("[1] Initializing exchange manager...")
-    exchange_manager = ExchangeManager()
-    await exchange_manager.initialize()
-    
-    exchange = exchange_manager.exchanges.get('binance')
-    if not exchange:
-        print("❌ Binance exchange not initialized")
-        return
-    
-    print("✅ Exchange initialized")
-    
-    # Symbol and parameters
-    symbol = "SUI/USDT:USDT"
-    leverage = 5
-    position_size_usdt = 10  # Small test position: $10
-    
-    print()
-    print(f"[2] Opening test position:")
-    print(f"    Symbol: {symbol}")
-    print(f"    Leverage: {leverage}x")
-    print(f"    Size: ${position_size_usdt}")
-    print()
     
     try:
-        # Get current price
-        ticker = await exchange.fetch_ticker(symbol)
-        current_price = float(ticker['last'])
-        print(f"    Current price: ${current_price:.4f}")
+        # 1. Validate settings
+        print("[1] Validating settings...")
+        if not settings.validate():
+            raise Exception("Settings validation failed")
+        print("✅ Settings validated")
         
-        # Calculate quantity
-        quantity = position_size_usdt / current_price
-        quantity = float(exchange.amount_to_precision(symbol, quantity))
-        print(f"    Quantity: {quantity}")
+        # 2. Initialize database
+        print("[2] Initializing database...")
+        db_config = {
+            'host': settings.database.host,
+            'port': settings.database.port,
+            'database': settings.database.database,
+            'user': settings.database.user,
+            'password': settings.database.password,
+        }
+        repository = Repository(db_config)
+        await repository.initialize()
+        print("✅ Database initialized")
+        
+        # 3. Initialize event router
+        event_router = EventRouter()
+        
+        # 4. Initialize exchange
+        print("[3] Initializing exchange...")
+        exchange_config = settings.exchanges['binance']
+        exchange = ExchangeManager(
+            'binance', 
+            exchange_config.__dict__, 
+            repository=repository, 
+            position_manager=None
+        )
+        await exchange.initialize()
+        print("✅ Exchange initialized")
+        
+        # 5. Initialize position manager
+        print("[4] Initializing position manager...")
+        position_manager = PositionManager(
+            settings.trading,
+            {'binance': exchange},
+            repository,
+            event_router
+        )
+        exchange.position_manager = position_manager
+        print("✅ Position manager initialized")
+        
+        # 6. Open test position
+        symbol = "SUIUSDT"
+        leverage = 5
+        position_size_usd = 10.0
+        
+        print()
+        print(f"[5] Opening test position:")
+        print(f"    Symbol: {symbol}")
+        print(f"    Leverage: {leverage}x")
+        print(f"    Size: ${position_size_usd}")
         
         # Set leverage
-        await exchange.set_leverage(leverage, symbol)
+        success = await exchange.set_leverage(symbol, leverage)
+        if not success:
+            print("❌ Failed to set leverage")
+            return
         print(f"    ✅ Leverage set to {leverage}x")
         
-        # Place market order
+        # Get current price
+        ticker = await exchange.fetch_ticker(symbol)
+        if not ticker:
+            print("❌ Failed to fetch ticker")
+            return
+        current_price = Decimal(str(ticker['last']))
+        print(f"    Current price: ${current_price}")
+        
+        # Create position request
         print()
-        print("[3] Placing MARKET BUY order...")
-        order = await exchange.create_market_order(
+        print("[6] Creating position request...")
+        req = PositionRequest(
+            signal_id=9999,  # Test signal ID
             symbol=symbol,
-            side='buy',
-            amount=quantity
+            exchange='binance',
+            side='BUY',
+            entry_price=current_price,
+            position_size_usd=position_size_usd,
+            stop_loss_percent=None
         )
         
-        print(f"    ✅ Order placed: {order['id']}")
-        print(f"    Status: {order['status']}")
-        print(f"    Filled: {order.get('filled', 0)}")
-        print(f"    Avg Price: ${order.get('average', 0):.4f}")
+        # Execute
+        print("[7] Executing open_position...")
+        result = await position_manager.open_position(req)
+        
+        if result:
+            print()
+            print("✅✅ POSITION OPENED SUCCESSFULLY! ✅✅")
+            print(f"    Details: {result}")
+        else:
+            print("❌ Failed to open position")
+        
+        # Cleanup
+        await exchange.close()
+        await repository.pool.close()
         
     except Exception as e:
-        print(f"❌ Error opening position: {e}")
+        print(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
         return
-    finally:
-        await exchange_manager.close()
     
     # Verification instructions
     print()
@@ -116,22 +165,17 @@ async def main():
     print("VERIFICATION STEPS")
     print("=" * 70)
     print("""
-1. Check logs for CRITICAL FIX verification:
+1. Check logs for CRITICAL FIX:
    grep "Position cache populated" logs/trading_bot.log | tail -5
    
    Expected: "📊 [MARK] Position cache populated for SUIUSDT (ACCOUNT_UPDATE bypass)"
 
-2. Check for position updates (should appear within seconds):
+2. Check position updates (should appear within seconds):
    grep "SUIUSDT" logs/trading_bot.log | tail -20
+
+3. If the log message appears, the fix is working!
    
-   Look for: "📊 Position update: SUIUSDT" or "[TS_DEBUG]"
-
-3. Check TS is monitoring:
-   grep "TS.*SUIUSDT" logs/trading_bot.log | tail -10
-
-4. If all checks pass, the fix is working!
-
-5. To close the test position, use manual close or wait for TS.
+4. Close position when done via exchange UI or wait for TS.
 """)
 
 
