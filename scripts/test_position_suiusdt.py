@@ -37,14 +37,12 @@ async def main():
     
     # Import after path setup
     try:
-        from config.settings import Settings
+        from config.settings import config as settings
         from core.exchange_manager import ExchangeManager
     except ImportError as e:
         print(f"❌ Import error: {e}")
         print("Run from project root with: python scripts/test_position_suiusdt.py")
         return
-    
-    settings = Settings()
     
     # Get Binance config
     binance_config = settings.exchanges.get('binance')
