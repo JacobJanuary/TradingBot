@@ -30,26 +30,7 @@ async def main():
     print(f"Time: {datetime.now()}")
     print()
     
-    # Import after path setup
-    from config.settings import settings
-    from websocket.binance_hybrid_stream import BinanceHybridStream
-    
-    # Get exchange config
-    binance_config = settings.exchanges.get('binance')
-    if not binance_config:
-        print("❌ No binance config found")
-        return
-    
-    # Create stream instance (just to access state, not to connect)
-    stream = BinanceHybridStream(
-        api_key=binance_config.api_key,
-        api_secret=binance_config.api_secret,
-        testnet=binance_config.testnet
-    )
-    
-    # We can't access live state without connecting to the running bot
-    # Instead, let's check by reading the log file
-    
+    # We only analyze log files - no need for imports
     log_file = "/home/elcrypto/TradingBot/logs/trading_bot.log"
     
     # Check 1: Find the affected symbols
