@@ -134,8 +134,7 @@ async def main():
             exchange='binance',
             side='BUY',
             entry_price=current_price,
-            position_size_usd=position_size_usd,
-            stop_loss_percent=None
+            position_size_usd=position_size_usd
         )
         
         # Execute
