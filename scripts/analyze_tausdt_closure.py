@@ -30,16 +30,20 @@ def main():
     
     events = []
     
-    # Scan specifically around the event time (00:09:46)
-    # 50k lines covers about 1 hour usually, should be enough
+    # Look for ANY trade updates around the closure time 00:09:46
+    target_time_snippets = ["00:09:4", "00:09:5"]
+    
+    events = []
+    
     for line in lines[-50000:]:
-        # Filter for TAUSDT or relevant generic events if close to our timestamp
-        if symbol in line or "ORDER_TRADE_UPDATE" in line:
-            if any(p in line for p in closure_patterns):
+        # If it's around the target time (00:09:4x or 00:09:5x)
+        if any(t in line for t in target_time_snippets):
+            # Capture relevant events
+            if "ORDER_TRADE_UPDATE" in line or "execution" in line or "TAUSDT" in line:
                 events.append(line.strip())
                 
-    print(f"Found {len(events)} relevant events. Showing last 40:")
-    for line in events[-40:]:
+    print(f"Found {len(events)} events around 00:09:46. Showing ALL:")
+    for line in events:
         print(line)
 
 if __name__ == "__main__":
