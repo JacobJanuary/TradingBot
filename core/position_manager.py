@@ -761,6 +761,15 @@ class PositionManager:
             db_positions_to_close = []
             for symbol, pos_state in list(self.positions.items()):
                 if pos_state.exchange == exchange_name and symbol not in active_symbols:
+                    # CRITICAL SAFEGUARD: 2026-01-09
+                    # Check if position is receiving WebSocket updates to prevent false orphaned detection
+                    # REST API (fetch_positions) can lag or return incomplete data (pagination issues)
+                    if pos_state.last_price_update:
+                        time_since_ws_update = (datetime.now(timezone.utc) - pos_state.last_price_update).total_seconds()
+                        if time_since_ws_update < 60: # 60s leniency
+                            logger.warning(f"🛡️ SAFEGUARD: {symbol} missing from REST but active in WS ({time_since_ws_update:.1f}s ago). Skipping close.")
+                            continue
+
                     logger.info(f"🔍 DEBUG: {symbol} NOT in active_symbols, will close")
                     db_positions_to_close.append(pos_state)
 
