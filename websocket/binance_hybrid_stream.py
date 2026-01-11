@@ -1433,6 +1433,12 @@ class BinanceHybridStream:
         # Convert back to original format for logging
         missing_subscriptions = {position_normalized[n] for n in missing_normalized}
 
+        # DEBUG: Log if we found missing subscriptions (specifically for HYPERUSDT diagnosis)
+        if missing_subscriptions:
+            logger.info(f"🔍 [DEBUG-HYPER] Missing: {missing_subscriptions}")
+            logger.info(f"   Normalized keys: {sorted(list(normalized_position_keys))}")
+            logger.info(f"   All Subscriptions: {sorted(list(all_subscriptions))}")
+
         # LAYER 2: Check for "silent fails"  - subscriptions exist but no data flowing
         STALE_DATA_THRESHOLD = 60.0  # seconds
         stale_subscriptions = []
