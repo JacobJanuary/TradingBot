@@ -56,13 +56,17 @@ def main():
     # 3. Check Subscription Health Warnings (Expanded)
     print("\n--- SUBSCRIPTION HEALTH ---")
     sub_warns = []
-    # Expanded patterns to catch stale data warnings
+    # Expanded patterns to catch stale data warnings AND connection issues
     warn_patterns = [
         "positions WITHOUT subscriptions", 
         "Subscription gap",
         "SILENT FAILS",
         "STALE POSITIONS",
-        "STALE SUBSCRIPTION"
+        "STALE SUBSCRIPTION",
+        "Connection lost",
+        "Reconnecting",
+        "Connection closed",
+        "Restoring"
     ]
     
     for line in lines[-20000:]: # Last 20k lines
