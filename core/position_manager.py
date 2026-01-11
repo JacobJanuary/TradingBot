@@ -1256,11 +1256,27 @@ class PositionManager:
 
                 # Execute atomic creation
                 # Execute atomic creation
-                atomic_result = await atomic_manager.open_position_atomic(
-                    request=request,
-                    quantity=float(quantity),
-                    exchange_manager=self.exchanges
-                )
+                try:
+                    atomic_result = await atomic_manager.open_position_atomic(
+                        request=request,
+                        quantity=float(quantity),
+                        exchange_manager=self.exchanges
+                    )
+                except Exception as atomic_error:
+                    logger.error(f"❌ Atomic position creation failed for {symbol}: {atomic_error}")
+                    
+                    # EMERGENGY ROLLBACK: Close position to prevent "Ghost Position"
+                    # If atomic creation failed (e.g. at SL stage), the position might still be open on exchange.
+                    # We MUST close it to release funds/margin for retry.
+                    try:
+                        logger.warning(f"⚠️ Attempting emergency rollback (closing position) for {symbol}")
+                        await exchange.close_position(symbol)
+                        logger.info(f"✅ Emergency rollback successful for {symbol}")
+                    except Exception as close_error:
+                        logger.error(f"❌ Failed to execute emergency rollback for {symbol}: {close_error}")
+                    
+                    # Return None to signal failure (SignalProcessor will retry, now with clean state)
+                    return None
 
                 if atomic_result:
                     logger.info(f"✅ Position created ATOMICALLY with guaranteed SL")
