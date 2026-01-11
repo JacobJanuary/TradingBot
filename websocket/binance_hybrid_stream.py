@@ -631,9 +631,19 @@ class BinanceHybridStream:
                 )
 
                 try:
-                    await self._restore_subscriptions()
+                    # FIX 2026-01-11: Don't use _restore_subscriptions() here!
+                    # It clears ALL subscriptions and forces a full reconnect/resubscribe cycle.
+                    # Instead, iterate and subscribe individually only for pending items.
+                    pending_list = list(self.pending_subscriptions)
+                    
+                    for symbol in pending_list:
+                        logger.info(f"🔄 [PENDING] Retry subscribing to {symbol}")
+                        await self._subscribe_mark_price(symbol)
+                        # Small delay to avoid rate limits
+                        await asyncio.sleep(0.2)
+
                     logger.info(
-                        f"✅ [PENDING] Successfully processed pending subscriptions "
+                        f"✅ [PENDING] Processed {num_pending} pending subscriptions "
                         f"(remaining: {len(self.pending_subscriptions)})"
                     )
                 except Exception as e:
