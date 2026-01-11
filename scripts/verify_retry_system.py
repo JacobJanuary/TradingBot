@@ -22,25 +22,13 @@ async def main():
     print("="*60)
 
     # 1. Locate the retry mechanism
-    # Try to import parameters usually used for retries
     try:
-        from utils.retry_handler import async_retry_handler
-        print("✅ Found utils.retry_handler.async_retry_handler")
-        retry_decorator = async_retry_handler
+        from utils.decorators import retry
+        print("✅ Found utils.decorators.retry")
+        retry_decorator = retry
     except ImportError:
-        try:
-            # Fallback/Alternative location
-            from core.resiliency import with_retry
-            print("✅ Found core.resiliency.with_retry")
-            retry_decorator = with_retry
-        except ImportError:
-            try: 
-                 from utils.retry import retry
-                 print("✅ Found utils.retry.retry")
-                 retry_decorator = retry
-            except ImportError:
-                print("❌ Could not find standard retry decorator/handler!")
-                return
+        print("❌ Could not find utils.decorators.retry!")
+        return
 
     # 2. Define a failing function
     call_count = 0
