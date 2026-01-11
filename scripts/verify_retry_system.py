@@ -16,6 +16,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("retry_test")
 
+import os
+sys.path.append(os.getcwd())
+
 async def main():
     print("="*60)
     print("TESTING RETRY MECHANISM")
