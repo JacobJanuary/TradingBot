@@ -8,9 +8,9 @@ from datetime import datetime
 def main():
     log_file = "/home/elcrypto/TradingBot/logs/trading_bot.log"
     target_symbol = "HYPERUSDT"
-    target_date_patterns = ["2026-01-05", "2026-01-04", "2026-01-06"]  # Range around Jan 5
+    target_time = "05:05"
     
-    print(f"Analyzing logs for {target_symbol} around Jan 5...")
+    print(f"Analyzing logs for {target_symbol} around time {target_time}...")
     
     try:
         with open(log_file, 'r') as f:
@@ -22,14 +22,22 @@ def main():
     # 1. Analyze HYPERUSDT events
     hyper_events = []
     
-    for line in lines:
+    for line in lines[-50000:]: # Last 50k lines
         if target_symbol in line:
-            if any(d in line for d in target_date_patterns):
-                hyper_events.append(line.strip())
+            # Capture ALL HYPERUSDT events to see context
+            hyper_events.append(line.strip())
+            
+    print(f"\nFound {len(hyper_events)} events for {target_symbol} (showing context around 05:05 if exists).")
     
-    print(f"\nFound {len(hyper_events)} events for {target_symbol} around Jan 5.")
-    if len(hyper_events) > 0:
-        print("Last 20 events:")
+    # Filter for 05:05 specifically
+    specific_events = [e for e in hyper_events if target_time in e]
+    
+    if specific_events:
+        print(f"EVENTS AT {target_time}:")
+        for e in specific_events:
+            print(e)
+    else:
+        print(f"No events found specifically at {target_time}. Showing last 20 general events for symbol:")
         for e in hyper_events[-20:]:
             print(e)
             
