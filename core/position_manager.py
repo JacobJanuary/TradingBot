@@ -1988,6 +1988,20 @@ class PositionManager:
         # Validate price before division
         if price <= 0:
             logger.error(f"Invalid price for position calculation: {price} for {symbol}")
+            
+            # FIX: Log to DB
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.POSITION_CREATION_FAILED,
+                    {
+                        'symbol': symbol,
+                        'reason': 'invalid_price',
+                        'detail': f"Price {price} <= 0"
+                    },
+                    symbol=symbol,
+                    severity='ERROR'
+                )
             return None
 
         # Simple calculation: size_usd / price
@@ -2018,6 +2032,20 @@ class PositionManager:
                 adjusted_quantity = Decimal(str(min_amount))
             else:
                 logger.warning(f"Quantity {quantity} below minimum {min_amount} and too expensive (${min_cost:.2f} > ${tolerance:.2f})")
+                
+                # FIX: Log detailed reason to DB
+                event_logger = get_event_logger()
+                if event_logger:
+                    await event_logger.log_event(
+                        EventType.POSITION_CREATION_FAILED,
+                        {
+                            'symbol': symbol,
+                            'reason': 'below_min_quantity_and_tolerance',
+                            'detail': f"MinQty {min_amount} cost ${min_cost:.2f} > Tolerance ${tolerance:.2f} (Target: ${size_usd})"
+                        },
+                        symbol=symbol,
+                        severity='WARNING'
+                    )
                 return None
 
         # CRITICAL FIX: Check minimum notional value (Bybit/Binance)
@@ -2054,6 +2082,20 @@ class PositionManager:
                         f"Cannot meet minNotional ${min_notional} without exceeding tolerance: "
                         f"{symbol} would cost ${new_cost:.2f} > ${tolerance:.2f}"
                     )
+                    
+                    # FIX: Log detailed reason to DB
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        await event_logger.log_event(
+                            EventType.POSITION_CREATION_FAILED,
+                            {
+                                'symbol': symbol,
+                                'reason': 'below_min_notional_and_tolerance',
+                                'detail': f"MinNotional ${min_notional} > Cost ${new_cost:.2f} (Tolerance ${tolerance:.2f})"
+                            },
+                            symbol=symbol,
+                            severity='WARNING'
+                        )
                     return None
 
         # NOW apply exchange precision (safe - adjusted_quantity >= minimum)
@@ -2094,6 +2136,19 @@ class PositionManager:
         can_open, reason = await exchange.can_open_position(symbol, float(size_usd))
         if not can_open:
             logger.warning(f"Cannot open {symbol} position: {reason}")
+            
+            event_logger = get_event_logger()
+            if event_logger:
+                await event_logger.log_event(
+                    EventType.POSITION_CREATION_FAILED,
+                    {
+                        'symbol': symbol,
+                        'reason': 'insufficient_balance_or_risk',
+                        'detail': reason
+                    },
+                    symbol=symbol,
+                    severity='WARNING'
+                )
             return None
 
         # Final validation - check actual value
