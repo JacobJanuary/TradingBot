@@ -10,47 +10,71 @@ def main():
     target_symbol = "HYPERUSDT"
     target_time = "05:02"
     
-    print(f"Analyzing logs for {target_symbol} around time {target_time}...")
-    
-    try:
-        with open(log_file, 'r') as f:
-            lines = f.readlines()
-    except Exception as e:
-        print(f"Error reading log file: {e}")
-        return
+import glob
+import os
 
-    # 1. Analyze HYPERUSDT events
-    hyper_events = []
-    error_events_at_time = []
+def main():
+    log_dir = "/home/elcrypto/TradingBot/logs"
+    log_files = glob.glob(f"{log_dir}/trading_bot.log*")
+    # Sort logs: trading_bot.log is newest, .1 is older, etc.
+    # Usually log rotation renames current to .1. So we want to check all.
+    # But simple ascii sort might put .10 before .2.
+    # Let's just process all of them.
     
-    for line in lines[-50000:]: # Last 50k lines
-        if target_symbol in line:
-            hyper_events.append(line.strip())
-        
-        if target_time in line and ("error" in line.lower() or "failed" in line.lower() or "retry" in line.lower() or "exception" in line.lower()):
-            error_events_at_time.append(line.strip())
-            
-    print(f"\nFound {len(hyper_events)} events for {target_symbol} total.")
+    target_times = ["05:01", "05:02", "05:03"] # 3 minute window
+    target_symbol = "HYPERUSDT"
     
-    # Filter for 05:02 specifically details
-    specific_events = [e for e in hyper_events if target_time in e]
+    print(f"Analyzing {len(log_files)} log files in {log_dir}...")
+    print(f"Target Time Window: {target_times}")
     
-    if specific_events:
-        print(f"\nEVENTS AT {target_time} for {target_symbol}:")
-        for e in specific_events:
+    found_events = []
+    error_events = []
+    
+    min_time_seen = "9999"
+    max_time_seen = "0000"
+    
+    total_lines = 0
+    
+    for log_file in log_files:
+        try:
+            with open(log_file, 'r') as f:
+                # Read line by line to avoid memory issues if massive
+                for line in f:
+                    total_lines += 1
+                    # Extract roughly time
+                    # Format: 2026-01-11 08:34:44,...
+                    if len(line) > 20:
+                        timestamp = line[11:16] # "08:34"
+                        if timestamp < min_time_seen: min_time_seen = timestamp
+                        if timestamp > max_time_seen: max_time_seen = timestamp
+                        
+                        # Check target window
+                        if any(t in line for t in target_times):
+                            if target_symbol in line:
+                                found_events.append(f"[{os.path.basename(log_file)}] {line.strip()}")
+                            
+                            if "error" in line.lower() or "failed" in line.lower() or "retry" in line.lower() or "exception" in line.lower():
+                                error_events.append(f"[{os.path.basename(log_file)}] {line.strip()}")
+                                
+        except Exception as e:
+            print(f"Error reading {log_file}: {e}")
+
+    print(f"Scanned {total_lines} lines.")
+    print(f"Log Coverage (Approx): {min_time_seen} to {max_time_seen}")
+
+    if found_events:
+        print(f"\n✅ Found {len(found_events)} {target_symbol} events in window:")
+        for e in sorted(found_events): # Sort might not be perfect time-wise but helps
             print(e)
     else:
-        print(f"No {target_symbol} events found specifically at {target_time}.")
+        print(f"\n❌ No {target_symbol} events found in 05:01-05:03 window.")
 
-    if error_events_at_time:
-         print(f"\n❌ ALL ERRORS/FAILURES AT {target_time}:")
-         for e in error_events_at_time:
-             print(e)
+    if error_events:
+        print(f"\n❌ Found {len(error_events)} FAILURES in window:")
+        for e in sorted(error_events):
+            print(e)
     else:
-         print(f"No errors found at {target_time} generic search.")
-         
-    # Show nearby context if possible
-    # ...
+        print("\n✅ No errors found in 05:01-05:03 window.")
             
     # 2. Check RETRY logic generic errors
     print("\n--- RETRY MODULE CHECK ---")
