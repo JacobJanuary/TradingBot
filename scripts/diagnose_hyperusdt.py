@@ -8,7 +8,7 @@ from datetime import datetime
 def main():
     log_file = "/home/elcrypto/TradingBot/logs/trading_bot.log"
     target_symbol = "HYPERUSDT"
-    target_time = "05:05"
+    target_time = "05:02"
     
     print(f"Analyzing logs for {target_symbol} around time {target_time}...")
     
@@ -21,25 +21,36 @@ def main():
 
     # 1. Analyze HYPERUSDT events
     hyper_events = []
+    error_events_at_time = []
     
     for line in lines[-50000:]: # Last 50k lines
         if target_symbol in line:
-            # Capture ALL HYPERUSDT events to see context
             hyper_events.append(line.strip())
+        
+        if target_time in line and ("error" in line.lower() or "failed" in line.lower() or "retry" in line.lower() or "exception" in line.lower()):
+            error_events_at_time.append(line.strip())
             
-    print(f"\nFound {len(hyper_events)} events for {target_symbol} (showing context around 05:05 if exists).")
+    print(f"\nFound {len(hyper_events)} events for {target_symbol} total.")
     
-    # Filter for 05:05 specifically
+    # Filter for 05:02 specifically details
     specific_events = [e for e in hyper_events if target_time in e]
     
     if specific_events:
-        print(f"EVENTS AT {target_time}:")
+        print(f"\nEVENTS AT {target_time} for {target_symbol}:")
         for e in specific_events:
             print(e)
     else:
-        print(f"No events found specifically at {target_time}. Showing last 20 general events for symbol:")
-        for e in hyper_events[-20:]:
-            print(e)
+        print(f"No {target_symbol} events found specifically at {target_time}.")
+
+    if error_events_at_time:
+         print(f"\n❌ ALL ERRORS/FAILURES AT {target_time}:")
+         for e in error_events_at_time:
+             print(e)
+    else:
+         print(f"No errors found at {target_time} generic search.")
+         
+    # Show nearby context if possible
+    # ...
             
     # 2. Check RETRY logic generic errors
     print("\n--- RETRY MODULE CHECK ---")
