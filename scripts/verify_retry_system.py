@@ -36,7 +36,7 @@ async def main():
     # 2. Define a failing function
     call_count = 0
     
-    @retry_decorator(retries=3, delay=1.0, backoff=2.0)
+    @retry_decorator(max_attempts=3, delay=1.0, backoff=2.0)
     async def failing_operation():
         nonlocal call_count
         call_count += 1
