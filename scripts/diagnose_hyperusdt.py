@@ -53,16 +53,25 @@ def main():
     for e in retry_events[-10:]:
         print(e)
 
-    # 3. Check Subscription Health Warnings
+    # 3. Check Subscription Health Warnings (Expanded)
     print("\n--- SUBSCRIPTION HEALTH ---")
     sub_warns = []
+    # Expanded patterns to catch stale data warnings
+    warn_patterns = [
+        "positions WITHOUT subscriptions", 
+        "Subscription gap",
+        "SILENT FAILS",
+        "STALE POSITIONS",
+        "STALE SUBSCRIPTION"
+    ]
+    
     for line in lines[-20000:]: # Last 20k lines
-        if "positions WITHOUT subscriptions" in line or "Subscription gap" in line:
+        if any(p in line for p in warn_patterns):
             sub_warns.append(line.strip())
             
     if sub_warns:
         print(f"⚠️ Found {len(sub_warns)} subscription warnings!")
-        for w in sub_warns[-5:]:
+        for w in sub_warns[-10:]: # Show last 10
             print(w)
     else:
         print("✅ No active subscription warnings found in recent logs.")
