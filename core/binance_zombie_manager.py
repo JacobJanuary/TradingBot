@@ -266,14 +266,14 @@ class BinanceZombieManager:
                 # BINANCE BUG: Empty response when orders exist
                 if attempt < max_retries - 1:
                     wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                    logger.warning(
-                        f"⚠️ Binance empty response (known bug), "
+                    logger.debug(
+                        f"Binance empty response (0 orders), "
                         f"retry {attempt + 1}/{max_retries} in {wait_time}s"
                     )
                     self.metrics['empty_responses'] += 1
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.warning(f"⚠️ Still empty after {max_retries} attempts")
+                    logger.debug(f"Orders checks finished: 0 orders found after {max_retries} attempts")
                     # Return empty list, not None
                     return []
 

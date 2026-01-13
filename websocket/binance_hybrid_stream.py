@@ -162,7 +162,7 @@ class BinanceHybridStream:
 
         # PHASE 4: WebSocket heartbeat monitoring (detects frozen connections)
         self.heartbeat_task = asyncio.create_task(
-            self._heartbeat_monitoring_task(check_interval=30, timeout=45)
+            self._heartbeat_monitoring_task(check_interval=30, mark_timeout=45, user_timeout=300)
         )
 
         # ✅ FIX #3: Periodic pending processor (processes pending every 2 minutes)
@@ -459,7 +459,7 @@ class BinanceHybridStream:
                 logger.error(f"[MARK] Error in health check task: {e}", exc_info=True)
                 await asyncio.sleep(60)
 
-    async def _heartbeat_monitoring_task(self, check_interval: int = 30, timeout: int = 45, idle_stream_threshold: int = 120):
+    async def _heartbeat_monitoring_task(self, check_interval: int = 30, mark_timeout: int = 45, user_timeout: int = 300, idle_stream_threshold: int = 120):
         """
         PHASE 4: WebSocket heartbeat monitoring
 
@@ -470,10 +470,11 @@ class BinanceHybridStream:
 
         Args:
             check_interval: How often to check (default: 30s)
-            timeout: No-message threshold (default: 45s)
+            mark_timeout: No-message threshold for Mark Stream (default: 45s)
+            user_timeout: No-message threshold for User Stream (default: 300s)
             idle_stream_threshold: Threshold for stale data detection (default: 120s)
         """
-        logger.info(f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring (check: {check_interval}s, timeout: {timeout}s)")
+        logger.info(f"💓 [HEARTBEAT] Starting WebSocket heartbeat monitoring (check: {check_interval}s, mark_timeout: {mark_timeout}s, user_timeout: {user_timeout}s)")
 
         # ✅ FIX #2.1: Track idle stream threshold
         IDLE_THRESHOLD = 300  # 5 minutes allowed without messages if 0 subscriptions
@@ -521,13 +522,13 @@ class BinanceHybridStream:
                 # If we have subscriptions, we MUST receive data
                 has_subscriptions = len(self.subscribed_symbols) > 0 or len(self.pending_subscriptions) > 0
                 
-                effective_timeout = timeout if has_subscriptions else IDLE_THRESHOLD
+                effective_timeout = mark_timeout if has_subscriptions else IDLE_THRESHOLD
 
                 if mark_silence > effective_timeout:
                     if has_subscriptions:
                         logger.warning(
                             f"💔 [HEARTBEAT] Mark stream frozen! "
-                            f"No messages for {mark_silence:.1f}s (threshold: {timeout}s). "
+                            f"No messages for {mark_silence:.1f}s (threshold: {mark_timeout}s). "
                             f"Forcing reconnect..."
                         )
                         self.mark_connected = False
@@ -573,10 +574,12 @@ class BinanceHybridStream:
                 # C. Check for frozen User connection (connected but no data)
                 if self.user_connected and self.last_user_message_time > 0:
                     user_silence = current_time - self.last_user_message_time
-                    if user_silence > timeout:
+                    # User Stream is mostly silent, so we use a much larger timeout (e.g. 5 mins)
+                    # and rely on aiohttp heartbeat for connection health
+                    if user_silence > user_timeout:
                         logger.warning(
                             f"💔 [HEARTBEAT] User stream frozen! "
-                            f"No messages for {user_silence:.1f}s (threshold: {timeout}s). "
+                            f"No messages for {user_silence:.1f}s (threshold: {user_timeout}s). "
                             f"Forcing restart..."
                         )
                         # ✅ FIX: Active restart instead of just setting flag!
@@ -680,8 +683,8 @@ class BinanceHybridStream:
                 # Connect
                 self.user_ws = await self.user_session.ws_connect(
                     url,
-                    heartbeat=None,
-                    autoping=False,
+                    heartbeat=30.0,  # Send PING every 30s to keep connection alive
+                    autoping=True,   # Automatically reply to server PINGs (and handle PONGs)
                     autoclose=False
                 )
 
@@ -1166,7 +1169,11 @@ class BinanceHybridStream:
                 "id": self.next_request_id
             }
 
-            await self.mark_ws.send_str(json.dumps(message))
+            # Add timeout to prevent hanging on send
+            await asyncio.wait_for(
+                self.mark_ws.send_str(json.dumps(message)),
+                timeout=5.0
+            )
 
             self.subscribed_symbols.add(symbol)
             self.pending_subscriptions.discard(symbol)  # Clear from pending after successful subscription

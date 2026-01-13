@@ -980,6 +980,7 @@ class WebSocketSignalProcessor:
             results_by_exchange[exchange_id] = {
                 'exchange_name': exchange_name_cap,
                 'executed': executed,
+                'target': max_trades,
                 'total_signals': len(exchange_signals),
                 'after_filters': len(filtered_signals),
                 'selected_for_execution': len(signals_to_execute),
