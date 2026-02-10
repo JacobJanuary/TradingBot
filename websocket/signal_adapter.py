@@ -76,22 +76,30 @@ class SignalAdapter:
             # Создаем адаптированный сигнал
             adapted = {
                 'id': ws_signal.get('id'),
-                'symbol': ws_signal.get('pair_symbol'),
-                'action': ws_signal.get('recommended_action'),
-                'score_week': float(ws_signal.get('score_week', 0)),
-                'score_month': float(ws_signal.get('score_month', 0)),
+                'symbol': ws_signal.get('pair_symbol', ws_signal.get('symbol')),
+                'action': ws_signal.get('recommended_action', ws_signal.get('action')),
+                'score_week': float(ws_signal.get('score_week', ws_signal.get('total_score', 0))),
+                'score_month': float(ws_signal.get('score_month', ws_signal.get('total_score', 0))),
+                'total_score': float(ws_signal.get('total_score', ws_signal.get('score_week', 0))),
                 'created_at': created_at,
                 'exchange': exchange,
-                'exchange_id': exchange_id,  # ✅ NEW: Include exchange_id
+                'exchange_id': exchange_id,
                 'wave_timestamp': wave_timestamp,
 
-                # ✅ NEW: Include filter parameters
+                # Composite strategy fields (FIX: were silently dropped)
+                'rsi': float(ws_signal.get('rsi', 0)),
+                'volume_zscore': float(ws_signal.get('volume_zscore', 0)),
+                'oi_delta_pct': float(ws_signal.get('oi_delta_pct', 0)),
+                'price': ws_signal.get('price', ws_signal.get('current_price', 0)),
+                'patterns': ws_signal.get('patterns', []),
+
+                # Filter parameters
                 'filter_params': filter_params,
 
                 # Дополнительные поля для совместимости
                 'timestamp': created_at,
                 'is_active': True,
-                'signal_type': ws_signal.get('recommended_action')
+                'signal_type': ws_signal.get('recommended_action', ws_signal.get('action'))
             }
             
             return adapted
