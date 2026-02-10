@@ -63,17 +63,7 @@ from core.position_manager_unified_patch import (
 )
 
 # CRITICAL FIX: Import normalize_symbol for correct position verification
-def normalize_symbol(symbol: str) -> str:
-    """
-    Normalize symbol format for consistent comparison
-    Converts exchange format 'HIGH/USDT:USDT' to database format 'HIGHUSDT'
-    This function MUST match the one in position_synchronizer.py
-    """
-    if '/' in symbol and ':' in symbol:
-        # Exchange format: 'HIGH/USDT:USDT' -> 'HIGHUSDT'
-        base_quote = symbol.split(':')[0]  # 'HIGH/USDT'
-        return base_quote.replace('/', '')  # 'HIGHUSDT'
-    return symbol
+from utils.symbol_helpers import normalize_symbol
 
 
 def to_exchange_symbol(db_symbol: str, exchange_id: str) -> str:
@@ -147,6 +137,14 @@ class PositionRequest:
     # stop_loss_percent removed 2026-01-03 (All from .env)
     # trailing_* overrides removed 2026-01-03 (All from .env)
     # signal_stop_loss_percent removed 2026-01-03
+
+    # Composite strategy overrides (2026-02-09)
+    # When set, these override .env config values for this position
+    # Keys: leverage, stop_loss_percent, trailing_activation_percent, trailing_callback_percent
+    strategy_params: Optional[Dict] = None
+
+    # §6.6: If True, lifecycle manages TS/SL — skip legacy SmartTrailingStopManager
+    lifecycle_managed: bool = False
 
 
 @dataclass
@@ -1215,20 +1213,22 @@ class PositionManager:
                 position_side = request.side.lower()
                 order_side = request.side.lower()
 
-            # Get params from .env ONLY (2026-01-03: removed signal/DB params)
+            # Get params: strategy_params override (composite strategy) → .env fallback
+            sp = request.strategy_params or {}
             
-            # 1. Stop Loss Percent - ALWAYS from .env
-            stop_loss_percent: Decimal = to_decimal(self.config.stop_loss_percent)
+            # 1. Stop Loss Percent
+            stop_loss_percent: Decimal = to_decimal(sp.get('stop_loss_percent', self.config.stop_loss_percent))
             
             stop_loss_price = calculate_stop_loss(
                 to_decimal(request.entry_price), position_side, stop_loss_percent
             )
 
-            # 2. Trailing Stop Params - ALWAYS from .env
-            trailing_activation_percent = float(self.config.trailing_activation_percent)
-            trailing_callback_percent = float(self.config.trailing_callback_percent)
+            # 2. Trailing Stop Params
+            trailing_activation_percent = float(sp.get('trailing_activation_percent', self.config.trailing_activation_percent))
+            trailing_callback_percent = float(sp.get('trailing_callback_percent', self.config.trailing_callback_percent))
 
-            logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity}")
+            source = "strategy" if sp else ".env"
+            logger.info(f"Opening position ATOMICALLY: {symbol} {request.side} {quantity} (params from {source})")
             # COSMETIC FIX: Show scientific notation for small numbers instead of 0.0000
             # For numbers < 0.0001, .4f rounds to 0.0000 which is confusing
             # Using float() for automatic formatting (scientific notation for small numbers)
@@ -1254,7 +1254,6 @@ class PositionManager:
                     config=self.config  # RESTORED 2025-10-25: pass config for leverage
                 )
 
-                # Execute atomic creation
                 # Execute atomic creation
                 atomic_result = await atomic_manager.open_position_atomic(
                     request=request,
@@ -1299,44 +1298,51 @@ class PositionManager:
                         del self.pending_updates[symbol]
 
                     # 10. Initialize trailing stop (ATOMIC path)
-                    # NOTE: initial_stop НЕ передается - Protection SL уже создан StopLossManager
-                    # Trailing создаст свой SL только при активации (когда позиция в прибыли)
-                    trailing_manager = self.trailing_managers.get(exchange_name)
-                    if trailing_manager:
-                        try:
-                            # FIX: Add timeout to prevent wave execution hanging
-                            await asyncio.wait_for(
-                                trailing_manager.create_trailing_stop(
-                                    symbol=symbol,
-                                    side=position.side,
-                                    entry_price=position.entry_price,
-                                    quantity=position.quantity,
-                                    initial_stop=to_decimal(atomic_result['stop_loss_price']),  # TS manages SL from start
-                                    position_params={
-                                        'trailing_activation_percent': trailing_activation_percent,
-                                        'trailing_callback_percent': trailing_callback_percent
-                                    }
-                                ),
-                                timeout=10.0
-                            )
-                            position.has_trailing_stop = True
-
-                            # Save has_trailing_stop to database for restart persistence
-                            await asyncio.wait_for(
-                                self.repository.update_position(
-                                    position.id,
-                                    has_trailing_stop=True
-                                ),
-                                timeout=5.0
-                            )
-
-                            logger.info(f"✅ Trailing stop initialized for {symbol}")
-                        except asyncio.TimeoutError:
-                            logger.error(f"❌ Timeout creating trailing stop for {symbol} - continuing without TS")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to create trailing stop for {symbol}: {e} - continuing without TS")
+                    # §6.6: Skip legacy TS for lifecycle-managed positions
+                    # Lifecycle manages TS via _check_trailing_stop() with its own params
+                    if request.lifecycle_managed:
+                        logger.info(
+                            f"⏭️ Skipping legacy SmartTrailingStop for {symbol} — "
+                            f"lifecycle manages TS (act={trailing_activation_percent}%, cb={trailing_callback_percent}%)"
+                        )
                     else:
-                        logger.warning(f"⚠️ No trailing manager for exchange {exchange_name}")
+                        # Legacy TS — only for wave pipeline positions
+                        trailing_manager = self.trailing_managers.get(exchange_name)
+                        if trailing_manager:
+                            try:
+                                # FIX: Add timeout to prevent wave execution hanging
+                                await asyncio.wait_for(
+                                    trailing_manager.create_trailing_stop(
+                                        symbol=symbol,
+                                        side=position.side,
+                                        entry_price=position.entry_price,
+                                        quantity=position.quantity,
+                                        initial_stop=to_decimal(atomic_result['stop_loss_price']),  # TS manages SL from start
+                                        position_params={
+                                            'trailing_activation_percent': trailing_activation_percent,
+                                            'trailing_callback_percent': trailing_callback_percent
+                                        }
+                                    ),
+                                    timeout=10.0
+                                )
+                                position.has_trailing_stop = True
+
+                                # Save has_trailing_stop to database for restart persistence
+                                await asyncio.wait_for(
+                                    self.repository.update_position(
+                                        position.id,
+                                        has_trailing_stop=True
+                                    ),
+                                    timeout=5.0
+                                )
+
+                                logger.info(f"✅ Trailing stop initialized for {symbol}")
+                            except asyncio.TimeoutError:
+                                logger.error(f"❌ Timeout creating trailing stop for {symbol} - continuing without TS")
+                            except Exception as e:
+                                logger.error(f"❌ Failed to create trailing stop for {symbol}: {e} - continuing without TS")
+                        else:
+                            logger.warning(f"⚠️ No trailing manager for exchange {exchange_name}")
 
                     # 11. Trigger explicit subscription to ensure we get price updates
                     # CRITICAL FIX: This must happen BEFORE returning, regardless of creation path
@@ -2836,21 +2842,8 @@ class PositionManager:
                         severity='INFO'
                     )
 
-                # Register exit with ReentryManager for potential re-entry
-                if hasattr(self, 'reentry_manager') and self.reentry_manager:
-                    try:
-                        await self.reentry_manager.register_exit(
-                            signal_id=position.id,  # Use position ID if no signal_id
-                            symbol=symbol,
-                            exchange=position.exchange,
-                            side=position.side,
-                            original_entry_price=position.entry_price,
-                            original_entry_time=position.opened_at or datetime.now(timezone.utc),
-                            exit_price=exit_price,
-                            exit_reason=reason
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to register exit for reentry: {e}")
+                # Legacy ReentryManager removed (2026-02-10)
+                # Re-entry is now handled by SignalLifecycleManager
                 # PREVENTIVE FIX: Cancel any remaining SL orders for this symbol
                 # This prevents old SL orders from being reused by future positions
                 try:

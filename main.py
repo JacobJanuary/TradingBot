@@ -18,7 +18,7 @@ try:
         # Ensure it's first
         sys.path.remove(BASE_DIR)
         sys.path.insert(0, BASE_DIR)
-    print(f"DEBUG: sys.path[O] forced to: {sys.path[0]}")
+    pass  # sys.path forced to BASE_DIR
 except Exception as e:
     print(f"DEBUG: Failed to force sys.path: {e}")
 
@@ -32,7 +32,6 @@ from core.exchange_manager import ExchangeManager
 from core.position_manager import PositionManager
 from core.signal_processor_websocket import WebSocketSignalProcessor
 from database.repository import Repository as TradingRepository
-from websocket.binance_stream import BinancePrivateStream
 from websocket.event_router import EventRouter
 from protection.trailing_stop import SmartTrailingStopManager, TrailingStopConfig
 from core.aged_position_manager import AgedPositionManager
@@ -52,15 +51,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# DEBUG TRACER
-try:
-    import core.stop_loss_manager
-    logger.error("="*50)
-    logger.error(f"DEBUG: STARTING MAIN.PY FROM: {os.path.abspath(__file__)}")
-    logger.error(f"DEBUG: LOADED CORE.STOP_LOSS_MANAGER FROM: {core.stop_loss_manager.__file__}")
-    logger.error("="*50)
-except Exception as e:
-    logger.error(f"DEBUG ERROR: {e}")
 
 
 class TradingBot:
@@ -76,14 +66,14 @@ class TradingBot:
 
         # Core components
         self.exchanges: Dict[str, ExchangeManager] = {}
-        self.websockets: Dict[str, BinancePrivateStream] = {}
+        self.websockets: Dict[str, Any] = {}
         self.repository: Optional[TradingRepository] = None
         self.event_router = EventRouter()
         self.position_manager: Optional[PositionManager] = None
         self.aged_position_manager: Optional[AgedPositionManager] = None
         self.signal_processor: Optional[WebSocketSignalProcessor] = None
         self.aggtrades_stream = None  # For delta calculation
-        self.reentry_manager = None  # For trailing re-entry strategy
+        self.lifecycle_manager = None  # Composite strategy lifecycle (2026-02-09)
 
         # Monitoring - will be initialized after repository is ready
         self.health_monitor = None
@@ -235,6 +225,7 @@ class TradingBot:
                                     api_secret=api_secret,
                                     event_handler=self._handle_stream_event,
                                     position_fetch_callback=fetch_active_positions,
+                                    exchange_manager=self.exchanges.get(name),  # For REST price fallback
                                     testnet=False
                                 )
                                 await hybrid_stream.start()
@@ -272,24 +263,6 @@ class TradingBot:
             for exchange in self.exchanges.values():
                 exchange.position_manager = self.position_manager
             logger.info(f"✅ Linked position_manager to {len(self.exchanges)} exchange(s)")
-
-            # Apply critical fixes to PositionManager
-            try:
-                from core.position_manager_integration import apply_critical_fixes, check_fixes_applied
-                await apply_critical_fixes(self.position_manager)
-
-                # Apply validation fixes for 8/8 compliance
-                from core.validation_fixes import add_validation_markers
-                add_validation_markers(self.position_manager)
-
-                # Verify fixes are applied
-                fixes_status = check_fixes_applied(self.position_manager)
-                logger.info(f"Critical fixes status: {fixes_status}")
-
-                if not all(fixes_status.values()):
-                    logger.warning("⚠️ Some fixes may not be fully applied")
-            except Exception as e:
-                logger.error(f"Failed to apply critical fixes: {e}")
 
             # Load existing positions from database
             logger.info("Loading positions from database...")
@@ -343,77 +316,6 @@ class TradingBot:
                 )
                 logger.info(f"✅ Delta filter connected (window={delta_window}s, threshold={delta_threshold}x)")
 
-            # Initialize ReentryManager for trailing re-entry strategy
-            reentry_enabled = os.getenv('REENTRY_ENABLED', 'true').lower() == 'true'
-            if reentry_enabled and self.aggtrades_stream and self.position_manager:
-                from core.reentry_manager import ReentryManager
-                
-                # Get reentry params from env
-                reentry_cooldown = int(os.getenv('REENTRY_COOLDOWN_SEC', '300'))
-                reentry_drop = float(os.getenv('REENTRY_DROP_PERCENT', '5.0'))
-                max_reentries = int(os.getenv('MAX_REENTRIES', '5'))
-                
-                # Instant Reentry params
-                instant_enabled = os.getenv('INSTANT_REENTRY_ENABLED', 'true').lower() == 'true'
-                instant_delta_mult = float(os.getenv('INSTANT_REENTRY_DELTA_MULT', '1.5'))
-                instant_max_per_hour = int(os.getenv('INSTANT_REENTRY_MAX_PER_HOUR', '2'))
-                instant_min_profit = float(os.getenv('INSTANT_REENTRY_MIN_PROFIT_PCT', '5.0'))
-                
-                self.reentry_manager = ReentryManager(
-                    position_manager=self.position_manager,
-                    aggtrades_stream=self.aggtrades_stream,
-                    mark_price_stream=self.websockets.get('binance_hybrid'),  # CRITICAL FIX 2026-01-03
-                    cooldown_sec=reentry_cooldown,
-                    drop_percent=reentry_drop,
-                    max_reentries=max_reentries,
-                    instant_reentry_enabled=instant_enabled,
-                    instant_reentry_delta_mult=instant_delta_mult,
-                    instant_reentry_max_per_hour=instant_max_per_hour,
-                    instant_reentry_min_profit_pct=instant_min_profit,
-                    repository=self.repository
-                )
-                await self.reentry_manager.start()
-                
-                # Connect reentry manager to position manager
-                self.position_manager.reentry_manager = self.reentry_manager
-                
-                # CRITICAL FIX 2026-01-03: Wire reentry price updates from mark stream
-                # This ensures closed positions (reentry signals) receive price updates
-                binance_ws = self.websockets.get('binance_hybrid')
-                if binance_ws:
-                    async def reentry_price_handler(symbol: str, price: str):
-                        from decimal import Decimal
-                        await self.reentry_manager.update_price(symbol, Decimal(price))
-                    
-                    binance_ws.set_reentry_callback(reentry_price_handler)
-                
-                logger.info(
-                    f"✅ ReentryManager started "
-                    f"(cooldown={reentry_cooldown}s, drop={reentry_drop}%, max={max_reentries}, "
-                    f"instant={'ON' if instant_enabled else 'OFF'})"
-                )
-
-                # Subscribe to aggTrades for all active positions
-                # This ensures we have delta data for Instant Reentry at the moment of exit
-                active_count = 0
-                for symbol in self.position_manager.positions:
-                   await self.aggtrades_stream.subscribe(symbol)
-                   active_count += 1
-                
-                if active_count > 0:
-                   logger.info(f"📡 [AGGTRADES] Subscribed {active_count} active positions to trade stream")
-
-                # REENTRY FIX: Subscribe to Mark Price for all active reentry signals
-                # ReentryManager needs price updates to trigger re-entry, so we must be subscribed
-                reentry_signals = self.reentry_manager.signals
-                if reentry_signals:
-                    binance_ws = self.websockets.get('binance_hybrid')
-                    if binance_ws:
-                        logger.info(f"🔄 [REENTRY] Subscribing {len(reentry_signals)} active signals to Mark Price...")
-                        for symbol in reentry_signals:
-                            # Use optimistic subscribe (fire and forget)
-                            await binance_ws.subscribe_symbol(symbol)
-                        logger.info(f"✅ [REENTRY] Subscribed {len(reentry_signals)} signals to Mark Price")
 
             # Initialize aged position manager (only if unified protection is disabled)
             use_unified_protection = os.getenv('USE_UNIFIED_PROTECTION', 'false').lower() == 'true'
@@ -451,12 +353,57 @@ class TradingBot:
             )
             logger.info("✅ WebSocket signal processor initialized")
 
+            # Initialize Composite Strategy + Lifecycle Manager (2026-02-09)
+            strategy_path = os.path.join(BASE_DIR, 'composite_strategy.json')
+            if os.path.exists(strategy_path):
+                try:
+                    from core.composite_strategy import CompositeStrategy
+                    from core.signal_lifecycle import SignalLifecycleManager
+
+                    composite_strategy = CompositeStrategy(strategy_path)
+
+                    lifecycle_manager = SignalLifecycleManager(
+                        composite_strategy=composite_strategy,
+                        position_manager=self.position_manager,
+                        aggtrades_stream=self.aggtrades_stream,
+                        exchange_manager=self.exchanges.get('binance'),
+                        repository=self.repository,
+                        max_concurrent_signals=int(os.getenv('MAX_LIFECYCLE_SIGNALS', '10')),
+                    )
+                    await lifecycle_manager.start()
+                    self.lifecycle_manager = lifecycle_manager
+
+                    # Wire into signal processor
+                    self.signal_processor.set_lifecycle_manager(lifecycle_manager)
+
+                    # Hook aggTrades to feed bar aggregators (FIX N-5: proper callback)
+                    if self.aggtrades_stream:
+                        def _lifecycle_trade_handler(data):
+                            symbol = data.get('s', '').upper()
+                            if lifecycle_manager.has_active_lifecycle(symbol):
+                                price = float(data.get('p', '0'))
+                                qty = float(data.get('q', '0'))
+                                is_buyer_maker = data.get('m', False)
+                                trade_time_ms = data.get('T', 0)
+                                lifecycle_manager.route_trade(
+                                    symbol, price, qty, is_buyer_maker, trade_time_ms
+                                )
+
+                        self.aggtrades_stream._trade_handlers.append(_lifecycle_trade_handler)
+
+                    logger.info(
+                        f"✅ Composite strategy v{composite_strategy.version} ready: "
+                        f"{len(composite_strategy.rules)} rules, lifecycle manager active"
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to initialize composite strategy: {e}")
+                    logger.warning("Continuing without composite strategy — wave pipeline only")
+            else:
+                logger.info("No composite_strategy.json found — using wave pipeline only")
+
             # Set signal processor reference in health monitor
-            logger.warning(f"🔍 DEBUG: self.health_monitor = {self.health_monitor is not None}")
             if self.health_monitor:
-                logger.warning("🔍 DEBUG: Calling set_signal_processor...")
                 self.health_monitor.set_signal_processor(self.signal_processor)
-                logger.warning("🔍 DEBUG: set_signal_processor called")
 
             # Stop-list symbols are now loaded from configuration (.env file)
             # via SymbolFilter in signal_processor
@@ -538,20 +485,6 @@ class TradingBot:
     async def _handle_stream_event(self, event: str, data: Dict):
         """Handle WebSocket stream events"""
         await self.event_router.emit(event, data, source='websocket')
-        
-        # Forward mark prices to ReentryManager for re-entry monitoring
-        if self.reentry_manager and event in ('position.update', 'price_update'):
-            try:
-                symbol = data.get('symbol')
-                # Get price from position update or price update
-                price = data.get('markPrice') or data.get('price') or data.get('current_price')
-                
-                if symbol and price:
-                    from decimal import Decimal
-                    await self.reentry_manager.update_price(symbol, Decimal(str(price)))
-            except Exception as e:
-                # Don't fail main flow for reentry monitoring errors
-                pass
 
     async def _log_initial_state(self):
         """Log initial system state"""
@@ -600,8 +533,8 @@ class TradingBot:
             from core.atomic_position_manager import AtomicPositionManager
             from core.stop_loss_manager import StopLossManager
 
-            # Create atomic manager for recovery
-            sl_manager = StopLossManager(None, 'recovery')
+            # Create atomic manager for recovery (FIX N-6: pass exchange for SL)
+            sl_manager = StopLossManager(self.exchanges, 'recovery')
             atomic_manager = AtomicPositionManager(
                 repository=self.repository,
                 exchange_manager=self.exchanges,

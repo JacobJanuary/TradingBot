@@ -110,6 +110,12 @@ class BinanceAggTradesStream:
         self.stream_task = None
         self.subscription_task = None
         
+        # Reference counting for subscriptions (L-1: initialized here, not via hasattr)
+        self._subscription_refcount: Dict[str, int] = {}
+        
+        # External trade handlers (FIX N-5: proper callback instead of monkey-patch)
+        self._trade_handlers: list = []
+        
         logger.info(f"BinanceAggTradesStream initialized (testnet={testnet})")
     
     async def start(self):
@@ -157,15 +163,18 @@ class BinanceAggTradesStream:
     
     async def subscribe(self, symbol: str):
         """
-        Subscribe to aggTrades for a symbol
+        Subscribe to aggTrades for a symbol.
+        Reference-counted: multiple subscribers to same symbol are tracked.
         
         Args:
             symbol: Trading symbol (e.g., 'BTCUSDT')
         """
         symbol = symbol.upper()
         
+        self._subscription_refcount[symbol] = self._subscription_refcount.get(symbol, 0) + 1
+        
         if symbol in self.subscribed_symbols:
-            logger.debug(f"[AGGTRADES] Already subscribed to {symbol}")
+            logger.debug(f"[AGGTRADES] Already subscribed to {symbol} (refcount={self._subscription_refcount[symbol]})")
             return
         
         # Initialize delta state
@@ -178,16 +187,26 @@ class BinanceAggTradesStream:
         # Queue subscription request
         await self.subscription_queue.put(('subscribe', symbol))
         
-        logger.info(f"📥 [AGGTRADES] Subscription requested: {symbol}")
+        logger.info(f"📥 [AGGTRADES] Subscription requested: {symbol} (refcount={self._subscription_refcount[symbol]})")
     
     async def unsubscribe(self, symbol: str):
         """
-        Unsubscribe from aggTrades for a symbol
+        Unsubscribe from aggTrades for a symbol.
+        Reference-counted: only actually unsubscribes when last subscriber leaves.
         
         Args:
             symbol: Trading symbol (e.g., 'BTCUSDT')
         """
         symbol = symbol.upper()
+        
+        count = self._subscription_refcount.get(symbol, 0)
+        if count > 1:
+            self._subscription_refcount[symbol] = count - 1
+            logger.debug(f"[AGGTRADES] Decremented refcount for {symbol} to {count - 1}, keeping subscription")
+            return
+        
+        # Last subscriber — actually unsubscribe
+        self._subscription_refcount.pop(symbol, None)
         
         if symbol not in self.subscribed_symbols:
             self.pending_subscriptions.discard(symbol)
@@ -196,7 +215,7 @@ class BinanceAggTradesStream:
         # Queue unsubscription request
         await self.subscription_queue.put(('unsubscribe', symbol))
         
-        logger.info(f"📤 [AGGTRADES] Unsubscription requested: {symbol}")
+        logger.info(f"📤 [AGGTRADES] Unsubscription requested: {symbol} (last subscriber)")
     
     def get_rolling_delta(self, symbol: str, window_sec: int = 20) -> Decimal:
         """
@@ -469,6 +488,13 @@ class BinanceAggTradesStream:
         # Add to deque (auto-removes oldest if maxlen exceeded)
         state.trades.append(trade)
         state.last_update = asyncio.get_event_loop().time()
+
+        # Notify registered trade handlers (FIX N-5)
+        for handler in self._trade_handlers:
+            try:
+                handler(data)
+            except Exception as e:
+                logger.debug(f"Trade handler error: {e}")
     
     async def _subscription_manager(self):
         """Process subscription requests from queue"""

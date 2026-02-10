@@ -1,0 +1,1130 @@
+"""
+Signal Lifecycle Manager — Per-Signal State Machine
+
+Implements TRADING_BOT_ALGORITHM_SPEC.md:
+- §2: Strategy matching (CompositeStrategy)
+- §4: Entry logic (open position with matched params)
+- §6: Per-second monitoring (timeout, liquidation, SL, trailing stop)
+- §7: Re-entry logic (cooldown, window, drop%, delta confirmation)
+- §8: PnL calculation on close
+
+Each signal creates an independent SignalLifecycle with its own BarAggregator.
+The on_bar() callback runs the spec's priority-ordered checks every second.
+
+Date: 2026-02-09
+"""
+
+import asyncio
+import logging
+import time
+import aiohttp
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, Optional, Any, Callable, List
+
+from core.composite_strategy import CompositeStrategy, StrategyParams, DerivedConstants
+from core.bar_aggregator import BarAggregator, OneSecondBar
+from core.pnl_calculator import (
+    calculate_pnl_from_entry,
+    calculate_drawdown_from_max,
+    calculate_realized_pnl,
+    get_liquidation_threshold,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ==============================================================================
+# State Machine
+# ==============================================================================
+
+class SignalState(Enum):
+    """Per-signal lifecycle states (§5)"""
+    WAITING_DATA = "waiting_data"       # Loading lookback bars
+    IN_POSITION = "in_position"         # Position open, monitoring
+    REENTRY_WAIT = "reentry_wait"       # Exited, watching for re-entry
+    FINALIZED = "finalized"             # Lifecycle complete
+
+
+@dataclass
+class TradeRecord:
+    """Record of a single entry/exit cycle"""
+    trade_idx: int
+    entry_price: float
+    exit_price: float
+    entry_ts: int
+    exit_ts: int
+    reason: str
+    pnl_pct: float
+    is_reentry: bool = False
+
+
+@dataclass 
+class SignalLifecycle:
+    """Complete lifecycle state for one signal (§5)"""
+    signal_id: int
+    symbol: str
+    exchange: str
+    strategy: StrategyParams
+    derived: DerivedConstants
+
+    # State machine
+    state: SignalState = SignalState.WAITING_DATA
+
+    # Signal-level timing
+    signal_start_ts: int = 0            # When signal was received
+
+    # Position tracking
+    entry_price: float = 0.0
+    max_price: float = 0.0              # Highest price since entry (for drawdown)
+    position_entry_ts: int = 0          # When current position was opened
+    in_position: bool = False
+    trade_count: int = 0                # Total entries (incl. re-entries)
+
+    # Re-entry tracking
+    last_exit_ts: int = 0
+    last_exit_price: float = 0.0
+    last_exit_reason: str = ""
+
+    # Concurrency guard (H-3: prevents double-processing from concurrent bar tasks)
+    _processing: bool = False
+
+    # Trailing stop tracking
+    ts_activated: bool = False          # Has trailing stop been activated?
+
+    # Trade history
+    trades: list = field(default_factory=list)
+
+    # Per-signal bar aggregator
+    bar_aggregator: Optional[BarAggregator] = None
+
+    # Cumulative P&L
+    cumulative_pnl: float = 0.0
+
+    # Signal metadata for DB tracking
+    total_score: float = 0.0
+
+
+# ==============================================================================
+# Lifecycle Manager
+# ==============================================================================
+
+class SignalLifecycleManager:
+    """
+    Manages all active signal lifecycles.
+    
+    Integration:
+    - Receives signals from signal_processor_websocket.py
+    - Uses CompositeStrategy for rule matching
+    - Uses BarAggregator for delta calculations
+    - Delegates position open/close to position_manager
+    - Self-contained monitoring via on_bar() callbacks
+    
+    Usage:
+        manager = SignalLifecycleManager(
+            composite_strategy=cs,
+            position_manager=pm,
+            aggtrades_stream=ats,
+        )
+        await manager.start()
+        # Signal received:
+        await manager.on_signal_received(signal_data)
+    """
+
+    def __init__(
+        self,
+        composite_strategy: CompositeStrategy,
+        position_manager,                    # PositionManager instance
+        aggtrades_stream=None,               # BinanceAggTradesStream instance
+        exchange_manager=None,               # For REST lookback loading
+        repository=None,                     # For lifecycle persistence (§4.1)
+        max_concurrent_signals: int = 10,
+        bar_buffer_size: int = 4000,
+    ):
+        self.composite_strategy = composite_strategy
+        self.position_manager = position_manager
+        self.aggtrades_stream = aggtrades_stream
+        self.exchange_manager = exchange_manager
+        self.repository = repository
+        self.max_concurrent_signals = max_concurrent_signals
+        self.bar_buffer_size = bar_buffer_size
+
+        # Active lifecycles: symbol → SignalLifecycle
+        self.active: Dict[str, SignalLifecycle] = {}
+
+        # Stats
+        self.total_signals_received = 0
+        self.total_signals_matched = 0
+        self.total_positions_opened = 0
+        self.total_positions_closed = 0
+
+        # Running state
+        self._running = False
+        self._monitor_task: Optional[asyncio.Task] = None
+
+    async def start(self):
+        """Start the lifecycle manager."""
+        self._running = True
+        # §12.3: Start 1s tick timer for empty bar generation
+        self._tick_task = asyncio.create_task(self._tick_loop())
+
+        # §4.1: Restore active lifecycles from DB after restart
+        restored = await self.restore_from_db()
+
+        logger.info(
+            f"✅ SignalLifecycleManager started: "
+            f"strategy v{self.composite_strategy.version}, "
+            f"max_concurrent={self.max_concurrent_signals}, "
+            f"bar_buffer={self.bar_buffer_size}, "
+            f"restored={restored}"
+        )
+
+    async def stop(self):
+        """Stop the lifecycle manager. Active positions remain open."""
+        self._running = False
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+        if hasattr(self, '_tick_task') and self._tick_task and not self._tick_task.done():
+            self._tick_task.cancel()
+        logger.info(
+            f"SignalLifecycleManager stopped. "
+            f"Active lifecycles: {len(self.active)}"
+        )
+
+    async def _tick_loop(self):
+        """
+        §12.3: Periodic 1s tick for all active lifecycles.
+        
+        Ensures empty bars are generated and timeout checks happen
+        even when no trades arrive for a symbol.
+        """
+        while self._running:
+            try:
+                await asyncio.sleep(1.0)
+                for symbol, lc in list(self.active.items()):
+                    if lc.state in (SignalState.IN_POSITION, SignalState.REENTRY_WAIT):
+                        if lc.bar_aggregator:
+                            lc.bar_aggregator.tick()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Tick loop error: {e}", exc_info=True)
+
+    # ========================================================================
+    # Signal Entry (§2 + §4)
+    # ========================================================================
+
+    async def on_signal_received(self, signal: dict, matched_params: 'StrategyParams' = None) -> bool:
+        """
+        Process incoming signal: match strategy → open position.
+        
+        Args:
+            signal: Normalized signal dict with keys:
+                symbol, total_score, rsi, volume_zscore, oi_delta_pct,
+                exchange, signal_id
+                
+        Returns:
+            True if lifecycle created, False if rejected
+        """
+        self.total_signals_received += 1
+        symbol = signal.get('symbol', '')
+        score = float(signal.get('total_score', 0))
+        rsi = float(signal.get('rsi', 0))
+        vol_zscore = float(signal.get('volume_zscore', signal.get('vol_zscore', 0)))
+        oi_delta = float(signal.get('oi_delta_pct', signal.get('oi_delta', 0)))
+        exchange = signal.get('exchange', 'binance')
+        signal_id = signal.get('signal_id', signal.get('id', 0))
+
+        # 1. Check capacity
+        if len(self.active) >= self.max_concurrent_signals:
+            logger.warning(
+                f"Max concurrent signals reached ({self.max_concurrent_signals}), "
+                f"rejecting {symbol} score={score}"
+            )
+            return False
+
+        # 2. Check if already tracking this symbol
+        if symbol in self.active:
+            lc = self.active[symbol]
+            logger.info(
+                f"Already tracking {symbol} (state={lc.state.value}), "
+                f"skipping duplicate signal"
+            )
+            return False
+
+        # 3. Check if position already exists via position_manager
+        if self.position_manager and self.position_manager.has_open_position(symbol, exchange):
+            logger.info(f"Position already exists for {symbol} on {exchange}, skipping")
+            return False
+
+        # 4. Match signal to strategy rule (§2.2: all filters)
+        if matched_params is not None:
+            params = matched_params
+        else:
+            params = self.composite_strategy.match_signal(
+                score, rsi=rsi, vol_zscore=vol_zscore, oi_delta=oi_delta
+            )
+        if params is None:
+            logger.debug(f"Signal {symbol} score={score} did not match any strategy rule")
+            return False
+
+        self.total_signals_matched += 1
+        derived = DerivedConstants.from_params(params)
+
+        # 5. Create bar aggregator
+        bar_agg = BarAggregator(symbol, max_bars=self.bar_buffer_size)
+
+        # 6. Create lifecycle
+        # §5.1: signal_start_ts = signal's entry_time, not current time
+        entry_time = signal.get('entry_time', signal.get('timestamp', int(time.time())))
+        lc = SignalLifecycle(
+            signal_id=signal_id or 0,
+            symbol=symbol,
+            exchange=exchange,
+            strategy=params,
+            derived=derived,
+            state=SignalState.WAITING_DATA,
+            signal_start_ts=int(entry_time),
+            bar_aggregator=bar_agg,
+            total_score=score,
+        )
+
+        self.active[symbol] = lc
+
+        # 6b. Open initial position ASAP (before lookback — minimise slippage)
+        signal_price = float(signal.get('price', signal.get('current_price', 0)))
+        success = await self._open_position(lc, is_reentry=False, signal_price=signal_price)
+        if not success:
+            logger.error(f"Failed to open initial position for {symbol}, removing lifecycle")
+            await self._cleanup_lifecycle(lc)
+            return False
+
+        lc.state = SignalState.IN_POSITION
+
+        # 7. Subscribe to aggTrades for this symbol
+        if self.aggtrades_stream:
+            self.aggtrades_stream.subscribe(symbol)
+            logger.info(f"Subscribed to aggTrades for {symbol}")
+
+        # 7b. Load historical lookback bars (§1.2, §9.4)
+        lookback_count = max(params.delta_window, 100)
+        try:
+            loaded = await self._load_lookback_bars(lc, lookback_count)
+            logger.info(f"Loaded {loaded} lookback bars for {symbol} (requested {lookback_count}s)")
+        except Exception as e:
+            logger.warning(f"Failed to load lookback for {symbol}: {e}, continuing without history")
+
+        # 8. Set bar callback → our monitoring loop
+        bar_agg.on_bar_callback = lambda bar, s=symbol: asyncio.create_task(
+            self._on_bar_safe(s, bar)
+        )
+
+        logger.info(
+            f"🚀 Signal lifecycle created: {symbol} "
+            f"rule=[{self.composite_strategy.get_rule_for_score(score).score_range}] "
+            f"leverage={params.leverage}x SL={params.sl_pct}% "
+            f"TS act={params.base_activation}%/cb={params.base_callback}%"
+        )
+        return True
+
+    # ========================================================================
+    # Per-Second Monitoring Loop (§6)
+    # ========================================================================
+
+    async def _on_bar_safe(self, symbol: str, bar: OneSecondBar):
+        """Safe wrapper for on_bar — catches exceptions."""
+        try:
+            await self.on_bar(symbol, bar)
+        except Exception as e:
+            logger.error(f"Error in on_bar for {symbol}: {e}", exc_info=True)
+
+    async def on_bar(self, symbol: str, bar: OneSecondBar):
+        """
+        Per-second monitoring callback (§6).
+        
+        Called by BarAggregator when a new 1s bar completes.
+        Priority-ordered checks:
+        1. TIMEOUT
+        2. LIQUIDATION  
+        3. STOP-LOSS
+        4. TRAILING STOP (activation + callback + delta momentum)
+        5. RE-ENTRY (if not in position)
+        """
+        lc = self.active.get(symbol)
+        if not lc or lc.state == SignalState.FINALIZED:
+            return
+
+        # H-3: Skip if another bar is already being processed for this lifecycle
+        if lc._processing:
+            return
+
+        # H-4: Skip if lifecycle is still loading data
+        if lc.state == SignalState.WAITING_DATA:
+            return
+
+        lc._processing = True
+        try:
+            await self._on_bar_inner(lc, symbol, bar)
+        finally:
+            lc._processing = False
+
+    async def _on_bar_inner(self, lc: SignalLifecycle, symbol: str, bar: OneSecondBar):
+        """Inner bar processing logic, guarded by _processing flag."""
+
+        if lc.state == SignalState.IN_POSITION:
+            # Update max price
+            if bar.price > lc.max_price:
+                lc.max_price = bar.price
+
+            # Priority-ordered exit checks (§6)
+            if await self._check_timeout(lc, bar):
+                return
+            if await self._check_liquidation(lc, bar):
+                return
+            if await self._check_stop_loss(lc, bar):
+                return
+            if await self._check_trailing_stop(lc, bar):
+                return
+
+        elif lc.state == SignalState.REENTRY_WAIT:
+            # §7.1: Track max_price upward during re-entry wait
+            # so that drop% is calculated from the actual peak
+            if bar.price > lc.max_price:
+                lc.max_price = bar.price
+
+            # Check if re-entry window expired FIRST
+            if self._is_reentry_expired(lc, bar.ts):
+                logger.info(
+                    f"⏰ Re-entry window expired for {symbol} "
+                    f"({lc.derived.max_reentry_seconds}s from signal_start)"
+                )
+                await self._finalize_lifecycle(lc, "reentry_window_expired")
+                return
+
+            # Check re-entry conditions
+            await self._check_reentry(lc, bar)
+
+    # ========================================================================
+    # Exit Checks (§6.2–6.6)
+    # ========================================================================
+
+    async def _check_timeout(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
+        """
+        Check position timeout (§6.2).
+        
+        Close if: now - position_entry_ts >= max_position_seconds
+        PnL: leveraged PnL at current price (clamped to -100%)
+        If PnL <= -liq_threshold → count as liquidation
+        """
+        elapsed = bar.ts - lc.position_entry_ts
+        if elapsed < lc.derived.max_position_seconds:
+            return False
+
+        pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, bar.price)
+        liq_threshold = get_liquidation_threshold(lc.strategy.leverage)
+
+        if pnl_from_entry <= -liq_threshold:
+            reason = "LIQ+TIMEOUT"
+        else:
+            reason = "TIMEOUT"
+
+        pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+
+        logger.info(
+            f"⏰ TIMEOUT {lc.symbol}: {elapsed}s >= {lc.derived.max_position_seconds}s, "
+            f"pnl={pnl:.2f}% reason={reason}"
+        )
+        await self._close_position(lc, reason, pnl, bar.price)
+        return True
+
+    async def _check_liquidation(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
+        """
+        Check liquidation (§6.4).
+        
+        Close if: pnl_from_entry <= -(100 / leverage)
+        PnL: -100% (no commission — total loss)
+        """
+        pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, bar.price)
+        liq_threshold = get_liquidation_threshold(lc.strategy.leverage)
+
+        if pnl_from_entry > -liq_threshold:
+            return False
+
+        logger.warning(
+            f"💥 LIQUIDATION {lc.symbol}: pnl_from_entry={pnl_from_entry:.3f}% "
+            f"≤ -{liq_threshold:.1f}%"
+        )
+        await self._close_position(lc, "LIQUIDATED", -100.0, bar.price)
+        return True
+
+    async def _check_stop_loss(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
+        """
+        Check stop-loss (§6.3).
+        
+        Close if: pnl_from_entry <= -sl_pct
+        PnL: leveraged, clamped, minus commission
+        """
+        pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, bar.price)
+        
+        if pnl_from_entry > -lc.strategy.sl_pct:
+            return False
+
+        pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, "SL")
+
+        logger.info(
+            f"🛑 STOP-LOSS {lc.symbol}: pnl_from_entry={pnl_from_entry:.3f}% "
+            f"≤ -{lc.strategy.sl_pct}%, realized={pnl:.2f}%"
+        )
+        await self._close_position(lc, "SL", pnl, bar.price)
+        return True
+
+    async def _check_trailing_stop(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
+        """
+        Check trailing stop — 3 conditions must ALL be true (§6.5).
+        
+        Condition A (Activation):
+            pnl_from_entry >= base_activation%
+            
+        Condition B (Callback):
+            drawdown_from_max >= base_callback%
+            
+        Condition C (Delta Momentum — §6.6):
+            rolling_delta(delta_window) < avg_abs_delta(100) * threshold_mult
+        """
+        pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, bar.price)
+        
+        # Condition A: Activation
+        # §6.5: activation is a LATCH — once activated, stays activated
+        # Only check threshold for initial activation, not for deactivation
+        if pnl_from_entry < lc.strategy.base_activation:
+            return False
+
+        if not lc.ts_activated:
+            lc.ts_activated = True
+            logger.info(
+                f"📈 Trailing stop ACTIVATED for {lc.symbol}: "
+                f"pnl={pnl_from_entry:.2f}% >= {lc.strategy.base_activation}%"
+            )
+
+        # Condition B: Callback (drawdown from peak)
+        drawdown = calculate_drawdown_from_max(lc.max_price, bar.price)
+        if drawdown < lc.strategy.base_callback:
+            return False
+
+        # Condition C: Delta momentum filter (§6.6)
+        # Spec: threshold = avg_delta × threshold_mult (POSITIVE)
+        # Spec: IF rolling_delta <= 0 AND rolling_delta <= threshold → EXIT
+        # Since threshold is positive and delta is already <= 0, second condition is always true
+        # Therefore: simplified to just delta <= 0
+        if lc.bar_aggregator:
+            rolling_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window)
+
+            if rolling_delta > 0:
+                logger.debug(
+                    f"Trailing stop HELD for {lc.symbol}: "
+                    f"delta={rolling_delta:.0f} > 0 (positive momentum)"
+                )
+                return False
+
+            # delta <= 0 → Condition C passed (§6.6)
+            logger.info(
+                f"📊 Delta filter PASSED for {lc.symbol}: "
+                f"delta={rolling_delta:.0f} <= 0"
+            )
+
+        # All 3 conditions met → trigger trailing stop
+        pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, "TRAILING")
+        logger.info(
+            f"🎯 TRAILING STOP {lc.symbol}: "
+            f"pnl_entry={pnl_from_entry:.2f}%, drawdown={drawdown:.2f}%, "
+            f"realized={pnl:.2f}%"
+        )
+        await self._close_position(lc, "TRAILING", pnl, bar.price)
+        return True
+
+    # ========================================================================
+    # Re-entry Logic (§7)
+    # ========================================================================
+
+    async def _check_reentry(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
+        """
+        Check re-entry conditions (§7.1) — strictly per spec.
+        
+        4 conditions must ALL be true:
+        1. Cooldown: elapsed since exit >= base_cooldown
+        2. Drop: price dropped base_reentry_drop% from max_price
+        3. Delta: current bar delta > 0  (§7.1)
+        4. Large trades: current bar large_buy_count > large_sell_count (§7.1)
+        """
+        elapsed_since_exit = bar.ts - lc.last_exit_ts
+
+        # 1. Cooldown check
+        if elapsed_since_exit < lc.strategy.base_cooldown:
+            return False
+
+        # 2. Drop check — price must have dropped from MAX_PRICE (§7.1)
+        if lc.max_price <= 0:
+            return False
+        
+        drop_pct = (lc.max_price - bar.price) / lc.max_price * 100
+        if drop_pct < lc.strategy.base_reentry_drop:
+            return False
+
+        # 3. Delta > 0 — current bar, per spec §7.1
+        if bar.delta <= 0:
+            return False
+
+        # 4. Large trades — current bar, per spec §7.1
+        if bar.large_buy_count <= bar.large_sell_count:
+            return False
+
+        # All conditions met → re-enter
+        logger.info(
+            f"🔄 RE-ENTRY triggered for {lc.symbol}: "
+            f"cooldown={elapsed_since_exit}s, "
+            f"drop={drop_pct:.2f}% >= {lc.strategy.base_reentry_drop}%, "
+            f"bar.delta={bar.delta:.0f}, buy={bar.large_buy_count}/sell={bar.large_sell_count}"
+        )
+
+        success = await self._open_position(lc, is_reentry=True)
+        if success:
+            lc.state = SignalState.IN_POSITION
+            lc.last_exit_ts = 0  # §10: reset on re-entry
+            return True
+        return False
+
+    def _is_reentry_expired(self, lc: SignalLifecycle, current_ts: int) -> bool:
+        """Check if re-entry window has expired (§7.1).
+        
+        Window is measured from signal_start_ts (first entry),
+        NOT from last_exit_ts.
+        """
+        elapsed = current_ts - lc.signal_start_ts
+        return elapsed >= lc.derived.max_reentry_seconds
+
+    async def _load_lookback_bars(self, lc: SignalLifecycle, lookback_sec: int) -> int:
+        """
+        Load historical 1s bars via Binance REST aggTrades API (§1.2, §9.4).
+        
+        Fetches recent trades and aggregates into 1-second bars for
+        accurate delta calculations from the first monitoring tick.
+        
+        Args:
+            lc: SignalLifecycle with bar_aggregator to populate
+            lookback_sec: How many seconds of history to load
+            
+        Returns:
+            Number of bars loaded
+        """
+        if not lc.bar_aggregator:
+            return 0
+
+        symbol = lc.symbol.upper()
+        
+        # Binance Futures aggTrades REST endpoint
+        base_url = "https://fapi.binance.com"
+        url = f"{base_url}/fapi/v1/aggTrades"
+        
+        end_time = int(time.time() * 1000)
+        # Limit lookback to 1 hour max to avoid excessive API calls
+        effective_lookback = min(lookback_sec, 3600)
+        start_time = end_time - (effective_lookback * 1000)
+        
+        all_trades = []
+        current_start = start_time
+        max_pages = 5  # Safety limit: 5 × 1000 trades
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                for page in range(max_pages):
+                    params = {
+                        'symbol': symbol,
+                        'startTime': current_start,
+                        'endTime': end_time,
+                        'limit': 1000,
+                    }
+                    
+                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status != 200:
+                            logger.warning(f"Lookback API error {resp.status} for {symbol}")
+                            break
+                        
+                        trades = await resp.json()
+                        
+                    if not trades:
+                        break
+                    
+                    all_trades.extend(trades)
+                    
+                    # Paginate: next page starts after last trade
+                    last_trade_time = trades[-1].get('T', 0)
+                    current_start = last_trade_time + 1
+                    
+                    if current_start >= end_time or len(trades) < 1000:
+                        break
+                    
+                    await asyncio.sleep(0.1)  # Rate limiting
+                    
+        except Exception as e:
+            logger.warning(f"Lookback fetch error for {symbol}: {e}")
+            
+        if not all_trades:
+            return 0
+        
+        # Aggregate trades into 1-second bars
+        bars_by_second: Dict[int, dict] = {}
+        
+        for trade in all_trades:
+            ts_sec = int(trade.get('T', 0) / 1000)
+            price = float(trade.get('p', 0))
+            qty = float(trade.get('q', 0))
+            is_buyer_maker = trade.get('m', False)
+            volume_usd = price * qty
+            
+            if ts_sec not in bars_by_second:
+                bars_by_second[ts_sec] = {
+                    'price': price,
+                    'delta': 0.0,
+                    'large_buy': 0,
+                    'large_sell': 0,
+                }
+            
+            bar_data = bars_by_second[ts_sec]
+            bar_data['price'] = price  # Last price = close
+            
+            if is_buyer_maker:
+                bar_data['delta'] -= volume_usd
+                if volume_usd >= 10_000:
+                    bar_data['large_sell'] += 1
+            else:
+                bar_data['delta'] += volume_usd
+                if volume_usd >= 10_000:
+                    bar_data['large_buy'] += 1
+        
+        # Sort by timestamp and add to aggregator
+        sorted_seconds = sorted(bars_by_second.keys())
+        for ts_sec in sorted_seconds:
+            bar_data = bars_by_second[ts_sec]
+            bar = OneSecondBar(
+                ts=ts_sec,
+                price=bar_data['price'],
+                delta=bar_data['delta'],
+                large_buy_count=bar_data['large_buy'],
+                large_sell_count=bar_data['large_sell'],
+            )
+            lc.bar_aggregator.add_historical_bar(bar)
+        
+        return len(sorted_seconds)
+
+    # ========================================================================
+    # Position Open / Close (§4, §8)
+    # ========================================================================
+
+    async def _open_position(self, lc: SignalLifecycle, is_reentry: bool = False, signal_price: float = 0.0) -> bool:
+        """
+        Open position via position_manager (§4).
+        
+        Always LONG (per spec decision).
+        Sets leverage and SL from strategy params.
+        
+        Args:
+            lc: Signal lifecycle
+            is_reentry: True if this is a re-entry trade
+            signal_price: Fallback price from signal if bar aggregator is empty
+        """
+        if not self.position_manager:
+            logger.error(f"No position_manager set, cannot open position for {lc.symbol}")
+            return False
+
+        try:
+            from core.position_manager import PositionRequest
+            from decimal import Decimal
+
+            # Get current price (prefer bar aggregator, fallback to signal_price)
+            current_price = 0.0
+            if lc.bar_aggregator and lc.bar_aggregator.bar_count > 0:
+                current_price = lc.bar_aggregator.get_latest_bar().price
+            
+            if current_price <= 0:
+                current_price = signal_price
+            
+            if current_price <= 0:
+                logger.error(f"No valid price for {lc.symbol}, cannot open position")
+                return False
+
+            request = PositionRequest(
+                signal_id=lc.signal_id,
+                symbol=lc.symbol,
+                exchange=lc.exchange,
+                side='BUY',  # Always LONG per spec
+                entry_price=Decimal(str(current_price)),
+                lifecycle_managed=True,  # §6.6: lifecycle manages TS, skip legacy
+            )
+
+            # Store strategy params for position_manager to use
+            # These override the global config values
+            request.strategy_params = {
+                'leverage': lc.strategy.leverage,
+                'stop_loss_percent': lc.strategy.sl_pct,
+                'trailing_activation_percent': lc.strategy.base_activation,
+                'trailing_callback_percent': lc.strategy.base_callback,
+                'total_score': lc.total_score,
+            }
+
+            result = await self.position_manager.open_position(request)
+
+            if result and not isinstance(result, dict):
+                # PositionState returned = success
+                lc.entry_price = float(result.entry_price)
+                lc.max_price = lc.entry_price
+                lc.position_entry_ts = int(time.time())
+                lc.in_position = True
+                lc.trade_count += 1
+                lc.ts_activated = False
+
+                prefix = "RE-ENTRY" if is_reentry else "ENTRY"
+                logger.info(
+                    f"✅ {prefix} {lc.symbol}: price={lc.entry_price}, "
+                    f"leverage={lc.strategy.leverage}x, "
+                    f"SL={lc.strategy.sl_pct}%, "
+                    f"trade #{lc.trade_count}"
+                )
+                self.total_positions_opened += 1
+
+                # Persist state to DB (§4.1)
+                await self._persist_lifecycle(lc)
+
+                return True
+            else:
+                error_msg = result.get('error', 'unknown') if isinstance(result, dict) else 'null_result'
+                logger.warning(f"Position open failed for {lc.symbol}: {error_msg}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Exception opening position for {lc.symbol}: {e}", exc_info=True)
+            return False
+
+    async def _close_position(
+        self,
+        lc: SignalLifecycle,
+        reason: str,
+        pnl: float,
+        exit_price: float,
+    ):
+        """
+        Close position and update lifecycle state (§8).
+        
+        After close:
+        - If re-entry is possible → REENTRY_WAIT
+        - If re-entry window expired or trade_count too high → FINALIZED
+        """
+        # Record trade
+        trade = TradeRecord(
+            trade_idx=lc.trade_count,
+            entry_price=lc.entry_price,
+            exit_price=exit_price,
+            entry_ts=lc.position_entry_ts,
+            exit_ts=int(time.time()),
+            reason=reason,
+            pnl_pct=pnl,
+            is_reentry=lc.trade_count > 1,
+        )
+        lc.trades.append(trade)
+        lc.cumulative_pnl += pnl
+
+        logger.info(
+            f"📊 CLOSED {lc.symbol}: reason={reason}, pnl={pnl:.2f}%, "
+            f"cumulative={lc.cumulative_pnl:.2f}%, trade #{lc.trade_count}"
+        )
+
+        # Close via position_manager
+        if self.position_manager:
+            try:
+                # §8: Don't pass realized_pnl — PM calculates from entry/exit prices in USD
+                # Our pnl is leveraged %, PM expects USD — let PM do the math
+                await self.position_manager.close_position(
+                    symbol=lc.symbol,
+                    reason=f"lifecycle_{reason.lower()}",
+                    close_price=exit_price,
+                )
+            except Exception as e:
+                logger.error(f"Error closing position for {lc.symbol}: {e}")
+
+        # Update lifecycle state
+        lc.in_position = False
+        lc.last_exit_ts = int(time.time())
+        lc.last_exit_price = exit_price
+        lc.last_exit_reason = reason
+
+        # §10: max_price reset ONLY on TRAILING exit for re-entry drop% tracking
+        # On SL exit, max_price stays at peak — spec doesn't reset it
+        if reason == "TRAILING":
+            lc.max_price = exit_price
+
+        self.total_positions_closed += 1
+
+        # Decide next state (§6.7)
+        # Don't re-enter after liquidation — finalize immediately
+        # TIMEOUT allows re-entry (user decision 2026-02-10)
+        if reason in ("LIQUIDATED", "LIQ+TIMEOUT"):
+            await self._finalize_lifecycle(lc, f"closed_{reason.lower()}")
+        elif self._is_reentry_expired(lc, int(time.time())):
+            await self._finalize_lifecycle(lc, "reentry_window_expired")
+        else:
+            lc.state = SignalState.REENTRY_WAIT
+            logger.info(
+                f"🔄 {lc.symbol} → REENTRY_WAIT: "
+                f"cooldown={lc.strategy.base_cooldown}s, "
+                f"drop_needed={lc.strategy.base_reentry_drop}%, "
+                f"window={lc.derived.max_reentry_seconds}s"
+            )
+            # Persist state to DB (§4.1)
+            await self._persist_lifecycle(lc)
+
+    # ========================================================================
+    # Lifecycle Cleanup
+    # ========================================================================
+
+    async def _finalize_lifecycle(self, lc: SignalLifecycle, reason: str):
+        """Finalize and clean up a signal lifecycle."""
+        lc.state = SignalState.FINALIZED
+
+        trades_summary = ", ".join(
+            f"#{t.trade_idx}:{t.reason}={t.pnl_pct:.1f}%" for t in lc.trades
+        ) or "no trades"
+
+        logger.info(
+            f"🏁 FINALIZED {lc.symbol}: reason={reason}, "
+            f"trades={lc.trade_count}, cumPnL={lc.cumulative_pnl:.2f}%, "
+            f"history=[{trades_summary}]"
+        )
+
+        await self._cleanup_lifecycle(lc)
+
+    async def _cleanup_lifecycle(self, lc: SignalLifecycle):
+        """Remove lifecycle from active tracking, unsubscribe streams, delete from DB."""
+        # Delete from DB (§4.1)
+        await self._delete_lifecycle_db(lc)
+
+        # Unsubscribe from aggTrades
+        if self.aggtrades_stream:
+            self.aggtrades_stream.unsubscribe(lc.symbol)
+
+        # Remove from active
+        self.active.pop(lc.symbol, None)
+
+    # ========================================================================
+    # External Interface
+    # ========================================================================
+
+    def route_trade(self, symbol: str, price: float, qty: float,
+                    is_buyer_maker: bool, trade_time_ms: int = 0):
+        """
+        Route an aggTrade to the appropriate bar aggregator.
+        
+        Called by BinanceAggTradesStream for symbols with active lifecycles.
+        """
+        lc = self.active.get(symbol)
+        if lc and lc.bar_aggregator:
+            lc.bar_aggregator.on_trade(price, qty, is_buyer_maker, trade_time_ms)
+
+    def has_active_lifecycle(self, symbol: str) -> bool:
+        """Check if symbol has an active lifecycle."""
+        lc = self.active.get(symbol)
+        return lc is not None and lc.state != SignalState.FINALIZED
+
+    def get_lifecycle(self, symbol: str) -> Optional[SignalLifecycle]:
+        """Get lifecycle for symbol."""
+        return self.active.get(symbol)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get manager statistics."""
+        return {
+            'active_lifecycles': len(self.active),
+            'total_signals_received': self.total_signals_received,
+            'total_signals_matched': self.total_signals_matched,
+            'total_positions_opened': self.total_positions_opened,
+            'total_positions_closed': self.total_positions_closed,
+            'symbols': list(self.active.keys()),
+            'states': {
+                s: lc.state.value 
+                for s, lc in self.active.items()
+            },
+        }
+
+    # ========================================================================
+    # Persistence (§4.1)
+    # ========================================================================
+
+    def _lifecycle_to_dict(self, lc: SignalLifecycle) -> dict:
+        """Serialize lifecycle state for DB storage."""
+        return {
+            'symbol': lc.symbol,
+            'exchange': lc.exchange,
+            'signal_id': lc.signal_id,
+            'state': lc.state.value,
+            'strategy_params': {
+                'leverage': lc.strategy.leverage,
+                'sl_pct': lc.strategy.sl_pct,
+                'base_activation': lc.strategy.base_activation,
+                'base_callback': lc.strategy.base_callback,
+                'base_cooldown': lc.strategy.base_cooldown,
+                'base_reentry_drop': lc.strategy.base_reentry_drop,
+                'delta_window': lc.strategy.delta_window,
+                'threshold_mult': lc.strategy.threshold_mult,
+                'max_reentry_hours': lc.strategy.max_reentry_hours,
+                'max_position_hours': lc.strategy.max_position_hours,
+            },
+            'signal_start_ts': lc.signal_start_ts,
+            'entry_price': lc.entry_price,
+            'max_price': lc.max_price,
+            'position_entry_ts': lc.position_entry_ts,
+            'in_position': lc.in_position,
+            'trade_count': lc.trade_count,
+            'total_score': lc.total_score,
+            'last_exit_ts': lc.last_exit_ts,
+            'last_exit_price': lc.last_exit_price,
+            'last_exit_reason': lc.last_exit_reason,
+            'ts_activated': lc.ts_activated,
+            'cumulative_pnl': lc.cumulative_pnl,
+            'trades': [
+                {
+                    'trade_idx': t.trade_idx,
+                    'entry_price': t.entry_price,
+                    'exit_price': t.exit_price,
+                    'entry_ts': t.entry_ts,
+                    'exit_ts': t.exit_ts,
+                    'reason': t.reason,
+                    'pnl_pct': t.pnl_pct,
+                    'is_reentry': t.is_reentry,
+                }
+                for t in lc.trades
+            ],
+        }
+
+    async def _persist_lifecycle(self, lc: SignalLifecycle):
+        """Save lifecycle state to DB."""
+        if not self.repository:
+            return
+        try:
+            data = self._lifecycle_to_dict(lc)
+            await self.repository.save_lifecycle(data)
+        except Exception as e:
+            logger.error(f"Failed to persist lifecycle for {lc.symbol}: {e}")
+
+    async def _delete_lifecycle_db(self, lc: SignalLifecycle):
+        """Delete lifecycle from DB on finalization."""
+        if not self.repository:
+            return
+        try:
+            await self.repository.delete_lifecycle(lc.symbol, lc.exchange)
+        except Exception as e:
+            logger.error(f"Failed to delete lifecycle for {lc.symbol}: {e}")
+
+    async def restore_from_db(self):
+        """
+        Restore active lifecycles from DB after restart (§4.1).
+        
+        Reconstructs SignalLifecycle objects, creates bar aggregators,
+        re-subscribes to aggTrades, and loads lookback history.
+        """
+        if not self.repository:
+            logger.info("No repository configured — skipping lifecycle restore")
+            return 0
+
+        try:
+            rows = await self.repository.get_active_lifecycles()
+        except Exception as e:
+            logger.error(f"Failed to load lifecycles from DB: {e}")
+            return 0
+
+        if not rows:
+            logger.info("No active lifecycles to restore")
+            return 0
+
+        restored = 0
+        for row in rows:
+            try:
+                symbol = row['symbol']
+                exchange = row['exchange']
+                sp = row.get('strategy_params', {})
+
+                # Reconstruct StrategyParams (FIX N-4: include max_reentry/position_hours)
+                params = StrategyParams(
+                    leverage=sp.get('leverage', 1),
+                    sl_pct=sp.get('sl_pct', 2.0),
+                    base_activation=sp.get('base_activation', 1.0),
+                    base_callback=sp.get('base_callback', 0.5),
+                    base_cooldown=sp.get('base_cooldown', 60),
+                    base_reentry_drop=sp.get('base_reentry_drop', 0.5),
+                    delta_window=sp.get('delta_window', 20),
+                    threshold_mult=sp.get('threshold_mult', 1.5),
+                    max_reentry_hours=sp.get('max_reentry_hours', 4),
+                    max_position_hours=sp.get('max_position_hours', 24),
+                )
+                derived = DerivedConstants.from_params(params)
+
+                # Create bar aggregator (FIX C-1: correct constructor params)
+                bar_agg = BarAggregator(symbol, max_bars=self.bar_buffer_size)
+
+                # Reconstruct trade records
+                trade_records = [
+                    TradeRecord(**t) for t in row.get('trades', [])
+                ]
+
+                state_str = row.get('state', 'in_position')
+                state = SignalState(state_str)
+
+                lc = SignalLifecycle(
+                    signal_id=row.get('signal_id', 0),
+                    symbol=symbol,
+                    exchange=exchange,
+                    strategy=params,
+                    derived=derived,
+                    state=state,
+                    signal_start_ts=row.get('signal_start_ts', 0),
+                    entry_price=float(row.get('entry_price', 0)),
+                    max_price=float(row.get('max_price', 0)),
+                    position_entry_ts=row.get('position_entry_ts', 0),
+                    in_position=row.get('in_position', False),
+                    trade_count=row.get('trade_count', 0),
+                    last_exit_ts=row.get('last_exit_ts', 0),
+                    last_exit_price=float(row.get('last_exit_price', 0)),
+                    last_exit_reason=row.get('last_exit_reason', ''),
+                    ts_activated=row.get('ts_activated', False),
+                    trades=trade_records,
+                    bar_aggregator=bar_agg,
+                    cumulative_pnl=float(row.get('cumulative_pnl', 0)),
+                    total_score=float(row.get('total_score', 0)),
+                )
+
+                self.active[symbol] = lc
+
+                # Re-subscribe to aggTrades
+                if self.aggtrades_stream:
+                    await self.aggtrades_stream.subscribe(symbol)
+
+                # Load lookback bars
+                lookback_count = max(params.delta_window, 100)
+                try:
+                    loaded = await self._load_lookback_bars(lc, lookback_count)
+                    logger.info(f"Restored {symbol}: loaded {loaded} lookback bars")
+                except Exception as e:
+                    logger.warning(f"Lookback failed for restored {symbol}: {e}")
+
+                # Set bar callback
+                bar_agg.on_bar_callback = lambda bar, s=symbol: asyncio.create_task(
+                    self._on_bar_safe(s, bar)
+                )
+
+                restored += 1
+                logger.info(
+                    f"♻️ Restored lifecycle {symbol}: state={state_str}, "
+                    f"trades={lc.trade_count}, pnl={lc.cumulative_pnl:.2f}%"
+                )
+
+            except Exception as e:
+                logger.error(f"Failed to restore lifecycle for {row.get('symbol', '?')}: {e}", exc_info=True)
+
+        logger.info(f"✅ Restored {restored}/{len(rows)} lifecycles from DB")
+        return restored
