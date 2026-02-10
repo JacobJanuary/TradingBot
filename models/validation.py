@@ -146,16 +146,17 @@ class BalanceUpdate(BaseModel):
 # Signal Models
 class TradingSignal(BaseModel):
     """Trading signal validation"""
-    id: int
+    id: Optional[int] = None  # May not be present in some signal formats
     symbol: str
     action: Optional[Union[OrderSide, str]] = None
-    score_week: Decimal = Field(ge=0, le=100)
-    score_month: Decimal = Field(ge=0, le=100)
+    score_week: Decimal = Field(default=Decimal('0'), ge=0)
+    score_month: Decimal = Field(default=Decimal('0'), ge=0)
+    total_score: Optional[Decimal] = Field(default=None, ge=0)  # New: from signal server
     entry_price: Optional[Decimal] = Field(default=None, gt=0)
     stop_loss: Optional[Decimal] = Field(default=None, gt=0)
     take_profit: Optional[Decimal] = Field(default=None, gt=0)
-    created_at: datetime
-    exchange: str
+    created_at: Optional[datetime] = None
+    exchange: str = 'binance'
 
     @field_validator('action', mode='before')
     @classmethod

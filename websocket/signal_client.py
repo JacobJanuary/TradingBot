@@ -68,6 +68,9 @@ class SignalWebSocketClient:
             'total_bytes_received': 0
         }
 
+        # Accumulator for individual 'signal' messages (broadcast)
+        self._pending_signals: List[dict] = []
+
         logger.info(f"Signal WebSocket Client initialized for {self.server_url}")
 
     def set_callbacks(self, **kwargs):
@@ -270,8 +273,16 @@ class SignalWebSocketClient:
             msg_type = data.get('type')
 
             if msg_type == 'signals':
-                # Обработка сигналов
+                # Batch сигналов (from get_signals / auth handshake)
                 await self.handle_signals(data)
+
+            elif msg_type == 'signal':
+                # Individual signal (broadcast from server)
+                # Normalize and accumulate, then flush as batch
+                normalized = self._normalize_signal(data)
+                self._pending_signals.append(normalized)
+                # Flush immediately — each broadcast is a complete wave
+                await self._flush_pending_signals()
 
             elif msg_type == 'pong':
                 # Ответ на ping
@@ -298,10 +309,47 @@ class SignalWebSocketClient:
         except Exception as e:
             logger.error(f"Error handling message: {e}")
 
+    @staticmethod
+    def _normalize_signal(data: dict) -> dict:
+        """
+        Normalize server signal format to TradingBot format.
+        
+        Server sends: pair_symbol, total_score, timestamp, patterns, rsi, volume_zscore, oi_delta_pct
+        TradingBot expects: symbol, score_week, score_month, created_at, exchange, action, id
+        """
+        return {
+            # Pass through original fields
+            **data,
+            # Aliases for TradingBot compatibility
+            'symbol': data.get('pair_symbol', data.get('symbol')),
+            'total_score': data.get('total_score', 0),
+            # Map total_score to score_week/score_month for backward compatibility
+            'score_week': data.get('score_week', data.get('total_score', 0)),
+            'score_month': data.get('score_month', data.get('total_score', 0)),
+            'created_at': data.get('created_at', data.get('timestamp')),
+            'exchange': data.get('exchange', 'binance'),
+            'exchange_id': data.get('exchange_id', 1),
+            'action': data.get('action'),  # May be None — processor handles this
+        }
+
+    async def _flush_pending_signals(self):
+        """Flush accumulated individual signals as a batch to handle_signals."""
+        if not self._pending_signals:
+            return
+        batch = list(self._pending_signals)
+        self._pending_signals.clear()
+        await self.handle_signals({
+            'data': batch,
+            'count': len(batch)
+        })
+
     async def handle_signals(self, data: dict):
         """Обработка полученных сигналов"""
-        signals = data.get('data', [])
-        count = data.get('count', 0)
+        raw_signals = data.get('data', [])
+        count = data.get('count', len(raw_signals))
+
+        # Normalize all signals (server format → TradingBot format)
+        signals = [self._normalize_signal(s) for s in raw_signals]
 
         logger.info(f"Received {count} signals")
 
@@ -309,18 +357,18 @@ class SignalWebSocketClient:
         self.stats['signals_received'] += count
         self.stats['last_signal_time'] = datetime.now()
 
-        # ✅ PROTECTIVE SORT: Ensure signals are sorted DESC by (score_week + score_month)
-        # Even though server sends sorted data, we add this as safety measure
+        # ✅ FIX: Sort by total_score (primary ranking field from server)
+        # Fallback to score_week + score_month for backward compatibility
         sorted_signals = sorted(
             signals,
-            key=lambda s: s.get('score_week', 0) + s.get('score_month', 0),
+            key=lambda s: s.get('total_score', 0) or (s.get('score_week', 0) + s.get('score_month', 0)),
             reverse=True
         )
         
         # Take FIRST N signals (best scores) - was [-N:] (last N)
         self.signal_buffer = sorted_signals[:self.buffer_size]
         
-        logger.debug(f"Buffer updated: {len(self.signal_buffer)}/{self.buffer_size} signals (top score: week={sorted_signals[0].get('score_week') if sorted_signals else 'N/A'})")
+        logger.debug(f"Buffer updated: {len(self.signal_buffer)}/{self.buffer_size} signals (top score: {sorted_signals[0].get('total_score') if sorted_signals else 'N/A'})")
 
         # Вызываем callback если установлен
         if self.on_signals_callback:

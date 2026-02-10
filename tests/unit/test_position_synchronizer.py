@@ -143,7 +143,7 @@ class TestExchangeOrderIdExtraction:
 
     @pytest.mark.asyncio
     async def test_extract_binance_order_id(self, synchronizer, mock_repository):
-        """Should extract positionId from Binance info"""
+        """Should extract positionId from Binance info and pass it to open_position"""
 
         exchange_position = {
             'symbol': 'BTC/USDT:USDT',
@@ -168,7 +168,7 @@ class TestExchangeOrderIdExtraction:
 
     @pytest.mark.asyncio
     async def test_extract_bybit_order_id(self, synchronizer, mock_repository):
-        """Should extract orderId from Bybit info"""
+        """Should extract orderId from Bybit info and pass it to open_position"""
 
         exchange_position = {
             'symbol': 'ETH/USDT:USDT',
@@ -193,11 +193,11 @@ class TestExchangeOrderIdExtraction:
 
 
 class TestValidation:
-    """Test Phase 3: Validation and rejection logic"""
+    """Test Phase 3: Validation — positions without order_id get synthetic IDs"""
 
     @pytest.mark.asyncio
-    async def test_reject_position_without_order_id(self, synchronizer, mock_repository):
-        """Should reject position without exchange_order_id"""
+    async def test_position_without_order_id_gets_synthetic_id(self, synchronizer, mock_repository):
+        """Position without exchange_order_id should still be added with synthetic ID"""
 
         exchange_position = {
             'symbol': 'XRP/USDT:USDT',
@@ -207,31 +207,37 @@ class TestValidation:
             'info': {
                 'avgPrice': '0.5',
                 'positionAmt': '100'
-                # No positionId or orderId - STALE DATA!
+                # No positionId or orderId
             }
         }
 
-        await synchronizer._add_missing_position('binance', exchange_position)
+        result = await synchronizer._add_missing_position('binance', exchange_position)
 
-        # Should NOT create position
-        mock_repository.open_position.assert_not_called()
+        # Position should be created with synthetic order ID
+        assert result is True
+        mock_repository.open_position.assert_called_once()
+        call_args = mock_repository.open_position.call_args[0][0]
+        assert call_args['exchange_order_id'].startswith('MANUAL_BINANCE_')
 
     @pytest.mark.asyncio
-    async def test_reject_position_empty_info(self, synchronizer, mock_repository):
-        """Should reject position with empty info dict"""
+    async def test_position_empty_info_gets_synthetic_id(self, synchronizer, mock_repository):
+        """Position with empty info should still be added with synthetic ID"""
 
         exchange_position = {
             'symbol': 'ADA/USDT:USDT',
             'contracts': 500,
             'side': 'long',
             'markPrice': 0.4,
-            'info': {}  # Empty info - definitely stale!
+            'info': {}  # Empty info
         }
 
-        await synchronizer._add_missing_position('binance', exchange_position)
+        result = await synchronizer._add_missing_position('binance', exchange_position)
 
-        # Should NOT create position
-        mock_repository.open_position.assert_not_called()
+        # Position should be created with synthetic order ID
+        assert result is True
+        mock_repository.open_position.assert_called_once()
+        call_args = mock_repository.open_position.call_args[0][0]
+        assert call_args['exchange_order_id'].startswith('MANUAL_BINANCE_')
 
 
 class TestSymbolNormalization:
@@ -279,14 +285,14 @@ class TestIntegrationScenarios:
         mock_repository.open_position.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_sync_adds_only_real_positions(self, synchronizer, mock_repository):
-        """Full sync should only add positions with valid order_id"""
+    async def test_sync_adds_all_non_stale_positions(self, synchronizer, mock_repository):
+        """Full sync should add all positions that pass stale filter (including those with synthetic IDs)"""
 
         mock_exchange = MagicMock()
 
-        # Mix of real and stale positions
+        # Mix of real and no-order-id positions (both non-stale)
         mock_exchange.fetch_positions = AsyncMock(return_value=[
-            # Real position
+            # Position with order_id
             {
                 'symbol': 'BTC/USDT:USDT',
                 'contracts': 0.5,
@@ -297,23 +303,25 @@ class TestIntegrationScenarios:
                 },
                 'markPrice': 50000
             },
-            # Stale position (no order_id)
+            # Position without order_id (will get synthetic ID)
             {
                 'symbol': 'ETH/USDT:USDT',
                 'contracts': 10,
                 'info': {
                     'positionAmt': '10',
-                    # No positionId - will be rejected
-                }
+                    'avgPrice': '3000'
+                },
+                'markPrice': 3000
             }
         ])
 
         result = await synchronizer.synchronize_exchange('binance', mock_exchange)
 
-        # Only 1 real position should be added
-        assert len(result['added_missing']) == 1
+        # Both positions should be added (second one with synthetic ID)
+        assert len(result['added_missing']) == 2
         assert 'BTCUSDT' in result['added_missing']
-        assert mock_repository.open_position.call_count == 1
+        assert 'ETHUSDT' in result['added_missing']
+        assert mock_repository.open_position.call_count == 2
 
 
 if __name__ == '__main__':

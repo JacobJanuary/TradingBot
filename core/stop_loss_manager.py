@@ -1091,7 +1091,7 @@ async def check_stop_loss_unified(exchange, exchange_name: str, symbol: str) -> 
         bool: True если есть Stop Loss
     """
     manager = StopLossManager(exchange, exchange_name)
-    has_sl, _ = await manager.has_stop_loss(symbol)
+    has_sl, _, _ = await manager.has_stop_loss(symbol)
     return has_sl
 
 

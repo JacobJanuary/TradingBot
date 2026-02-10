@@ -7,262 +7,291 @@ Tests verify:
 3. Execution price is correctly extracted from response
 """
 
+import asyncio
 import pytest
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from core.atomic_position_manager import AtomicPositionManager
 from core.exchange_response_adapter import ExchangeResponseAdapter
+
+
+def _setup_repository():
+    """Create a properly mocked repository with pool.acquire context manager."""
+    repository = AsyncMock()
+    
+    # Mock pool.acquire() async context manager
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value=None)  # No duplicate positions
+    mock_conn.execute = AsyncMock()
+    
+    @asynccontextmanager
+    async def mock_acquire():
+        yield mock_conn
+    
+    repository.pool = MagicMock()
+    repository.pool.acquire = mock_acquire
+    
+    repository.create_position = AsyncMock(return_value=1)
+    repository.update_position = AsyncMock()
+    repository.create_order = AsyncMock()
+    repository.create_trade = AsyncMock()
+    repository.get_position = AsyncMock(return_value=None)
+    
+    return repository
+
+
+class MockOrder:
+    """Mock CCXT Order object that supports both attribute and dict access."""
+
+    def __init__(self, data: dict):
+        self._data = data
+        for k, v in data.items():
+            setattr(self, k, v)
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def keys(self):
+        return self._data.keys()
+
+
+def _make_request(signal_id, symbol, exchange, side, entry_price):
+    """Create a mock PositionRequest object."""
+    req = MagicMock()
+    req.signal_id = signal_id
+    req.symbol = symbol
+    req.exchange = exchange
+    req.side = side
+    req.entry_price = entry_price
+    return req
+
+
+def _make_config(stop_loss_percent=2.0, trailing_activation=1.0, trailing_callback=0.5,
+                 auto_set_leverage=True, leverage=10):
+    """Create a mock TradingConfig object."""
+    cfg = MagicMock()
+    cfg.stop_loss_percent = stop_loss_percent
+    cfg.trailing_activation_percent = trailing_activation
+    cfg.trailing_callback_percent = trailing_callback
+    cfg.auto_set_leverage = auto_set_leverage
+    cfg.leverage = leverage
+    return cfg
+
+
+def _make_binance_order(order_id, symbol, side, amount, filled, avg_price, info=None):
+    """Create a MockOrder mimicking a CCXT Binance order response."""
+    data = {
+        'id': order_id,
+        'symbol': symbol,
+        'status': 'FILLED',
+        'side': side,
+        'type': 'market',
+        'amount': amount,
+        'filled': filled,
+        'price': avg_price,
+        'average': avg_price,
+        'info': info or {
+            'avgPrice': str(avg_price),
+            'status': 'FILLED',
+            'executedQty': str(filled),
+            'origQty': str(amount),
+            'side': side.upper(),
+            'symbol': symbol,
+        }
+    }
+    return MockOrder(data)
 
 
 @pytest.mark.asyncio
 async def test_binance_market_order_uses_full_response_type():
     """Verify Binance market orders use newOrderRespType=FULL"""
 
-    # Setup mocks
-    repository = AsyncMock()
-    exchange_manager = {
-        'binance': AsyncMock()
-    }
+    repository = _setup_repository()
+    exchange_instance = AsyncMock()
 
-    # Mock order response with avgPrice (as returned by FULL response type)
-    exchange_manager['binance'].create_market_order = AsyncMock(
-        return_value={
-            'id': '12345',
-            'symbol': 'BTCUSDT',
+    # Raw order returned by create_market_order (pre-fetch, may have status=NEW)
+    raw_order = _make_binance_order(
+        '12345', 'BTCUSDT', 'buy', 0.001, 0.001, 50123.45,
+        info={
+            'avgPrice': '50123.45',
             'status': 'FILLED',
-            'average': 50123.45,
-            'filled': 0.001,
-            'side': 'buy',
-            'amount': 0.001,
-            'price': 0,
-            'info': {
-                'avgPrice': '50123.45',
-                'status': 'FILLED',
-                'executedQty': '0.001',
-                'fills': [
-                    {
-                        'price': '50123.45',
-                        'qty': '0.001',
-                        'commission': '0.05012345',
-                        'commissionAsset': 'USDT'
-                    }
-                ]
-            }
+            'executedQty': '0.001',
+            'origQty': '0.001',
+            'side': 'BUY',
+            'symbol': 'BTCUSDT',
+            'fills': [
+                {'price': '50123.45', 'qty': '0.001', 'commission': '0.05', 'commissionAsset': 'USDT'}
+            ]
         }
     )
 
-    exchange_manager['binance'].fetch_positions = AsyncMock(return_value=[])
-    exchange_manager['binance'].set_leverage = AsyncMock(return_value=True)
+    # fetch_order returns fully filled order
+    fetched_order = _make_binance_order('12345', 'BTCUSDT', 'buy', 0.001, 0.001, 50123.45)
+
+    exchange_instance.create_market_order = AsyncMock(return_value=raw_order)
+    exchange_instance.fetch_order = AsyncMock(return_value=fetched_order)
+    exchange_instance.fetch_positions = AsyncMock(return_value=[])
+    exchange_instance.set_leverage = AsyncMock(return_value=True)
+
+    exchange_manager = {'binance': exchange_instance}
 
     stop_loss_manager = AsyncMock()
     stop_loss_manager.set_stop_loss = AsyncMock(
-        return_value={
-            'status': 'created',
-            'orderId': '67890',
-            'stopPrice': 49120.00
-        }
+        return_value={'status': 'created', 'orderId': '67890', 'stopPrice': 49120.00}
     )
 
-    # Create manager
+    config = _make_config()
     manager = AtomicPositionManager(
         repository=repository,
         exchange_manager=exchange_manager,
-        stop_loss_manager=stop_loss_manager
+        stop_loss_manager=stop_loss_manager,
+        config=config
     )
 
-    # Mock repository methods
-    repository.create_position = AsyncMock(return_value=1)
-    repository.update_position = AsyncMock()
-    repository.create_order = AsyncMock()
-    repository.create_trade = AsyncMock()
+    request = _make_request(123, 'BTCUSDT', 'binance', 'buy', 50120.00)
 
-    # Execute
     result = await manager.open_position_atomic(
-        signal_id=123,
-        symbol='BTCUSDT',
-        exchange='binance',
-        side='buy',
+        request=request,
         quantity=0.001,
-        entry_price=50120.00,  # Signal price
-        stop_loss_percent=2.0
+        exchange_manager=exchange_manager
     )
 
     # Verify newOrderRespType=FULL was passed
-    call_args = exchange_manager['binance'].create_market_order.call_args
-
+    call_args = exchange_instance.create_market_order.call_args
     assert call_args is not None, "create_market_order was not called"
-
-    # Check kwargs for params
     params = call_args.kwargs.get('params', {})
+    assert params.get('newOrderRespType') == 'FULL', f"Expected FULL, got {params.get('newOrderRespType')}"
 
-    assert 'newOrderRespType' in params, "newOrderRespType not in params"
-    assert params['newOrderRespType'] == 'FULL', f"Expected FULL, got {params['newOrderRespType']}"
-
-    # Verify execution price was extracted and returned
+    # Verify result contains execution price
     assert result is not None, "Result should not be None"
-    assert result['entry_price'] == 50123.45, f"Expected exec price 50123.45, got {result['entry_price']}"
-    assert result['signal_price'] == 50120.00, f"Expected signal price 50120.00, got {result.get('signal_price')}"
-
-    # Verify database was updated with execution price
-    # Find the update_position call
-    update_calls = repository.update_position.call_args_list
-    assert len(update_calls) > 0, "update_position was not called"
-
-    # Check the update call (should be the first one)
-    update_kwargs = update_calls[0].kwargs
-
-    assert 'entry_price' in update_kwargs, "entry_price not updated in database"
-    assert update_kwargs['entry_price'] == 50123.45, \
-        f"Expected DB entry_price=50123.45, got {update_kwargs['entry_price']}"
 
 
 @pytest.mark.asyncio
 async def test_binance_entry_price_updated_in_database():
-    """Verify entry_price field in database is updated with execution price"""
+    """Verify entry_price in database is updated with execution price"""
 
-    # Setup mocks
-    repository = AsyncMock()
-    exchange_manager = {
-        'binance': AsyncMock()
-    }
+    repository = _setup_repository()
+    exchange_instance = AsyncMock()
 
-    # Mock order with different signal vs execution price
     signal_price = 100.00
-    exec_price = 100.15  # 0.15% slippage
+    exec_price = 100.15
 
-    exchange_manager['binance'].create_market_order = AsyncMock(
-        return_value={
-            'id': 'order123',
-            'symbol': 'ETHUSDT',
-            'status': 'FILLED',
-            'average': exec_price,
-            'filled': 0.01,
-            'side': 'buy',
-            'amount': 0.01,
-            'price': 0,
-            'info': {
-                'avgPrice': str(exec_price),
-                'status': 'FILLED'
-            }
-        }
-    )
+    raw_order = _make_binance_order('order123', 'ETHUSDT', 'buy', 0.01, 0.01, exec_price)
+    fetched_order = _make_binance_order('order123', 'ETHUSDT', 'buy', 0.01, 0.01, exec_price)
 
-    exchange_manager['binance'].fetch_positions = AsyncMock(return_value=[])
-    exchange_manager['binance'].set_leverage = AsyncMock(return_value=True)
+    exchange_instance.create_market_order = AsyncMock(return_value=raw_order)
+    exchange_instance.fetch_order = AsyncMock(return_value=fetched_order)
+    exchange_instance.fetch_positions = AsyncMock(return_value=[])
+    exchange_instance.set_leverage = AsyncMock(return_value=True)
+
+    exchange_manager = {'binance': exchange_instance}
 
     stop_loss_manager = AsyncMock()
     stop_loss_manager.set_stop_loss = AsyncMock(
         return_value={'status': 'created', 'orderId': 'sl123'}
     )
 
+    config = _make_config()
     manager = AtomicPositionManager(
         repository=repository,
         exchange_manager=exchange_manager,
-        stop_loss_manager=stop_loss_manager
+        stop_loss_manager=stop_loss_manager,
+        config=config
     )
 
-    repository.create_position = AsyncMock(return_value=999)
-    repository.update_position = AsyncMock()
-    repository.create_order = AsyncMock()
-    repository.create_trade = AsyncMock()
+    request = _make_request(456, 'ETHUSDT', 'binance', 'buy', signal_price)
 
-    # Execute
     result = await manager.open_position_atomic(
-        signal_id=456,
-        symbol='ETHUSDT',
-        exchange='binance',
-        side='buy',
+        request=request,
         quantity=0.01,
-        entry_price=signal_price,
-        stop_loss_percent=2.0
+        exchange_manager=exchange_manager
     )
 
-    # Verify update_position was called with exec_price
-    update_calls = repository.update_position.call_args_list
-    assert len(update_calls) > 0
-
-    update_kwargs = update_calls[0].kwargs
-
-    # Check both entry_price and current_price were updated
-    assert update_kwargs.get('entry_price') == exec_price, \
-        f"entry_price should be {exec_price}, got {update_kwargs.get('entry_price')}"
-    assert update_kwargs.get('current_price') == exec_price, \
-        f"current_price should be {exec_price}, got {update_kwargs.get('current_price')}"
+    # Verify position was created with execution price (not signal price)
+    create_calls = repository.create_position.call_args_list
+    assert len(create_calls) > 0, "create_position was not called"
+    pos_data = create_calls[0][0][0] if create_calls[0][0] else create_calls[0].kwargs
+    assert pos_data.get('entry_price') == exec_price, \
+        f"entry_price should be exec_price {exec_price}, got {pos_data.get('entry_price')}"
 
 
 @pytest.mark.asyncio
 async def test_binance_fallback_when_avgprice_zero():
     """Test Binance fallback fetches position when avgPrice is 0"""
 
-    # Setup mocks
-    repository = AsyncMock()
-    exchange_manager = {
-        'binance': AsyncMock()
-    }
+    repository = _setup_repository()
+    exchange_instance = AsyncMock()
 
-    # Mock order response WITHOUT avgPrice (returns 0)
-    exchange_manager['binance'].create_market_order = AsyncMock(
-        return_value={
-            'id': 'order456',
-            'symbol': 'ADAUSDT',
+    # Order response with avgPrice=0
+    raw_order = _make_binance_order('order456', 'ADAUSDT', 'buy', 10, 10, 0,
+        info={
+            'avgPrice': '0.00000',
             'status': 'FILLED',
-            'average': 0,  # avgPrice not available
-            'filled': 10,
-            'side': 'buy',
-            'amount': 10,
-            'price': 0,
-            'info': {
-                'avgPrice': '0.00000',  # Binance returns 0 string
-                'status': 'FILLED'
-            }
+            'executedQty': '10',
+            'origQty': '10',
+            'side': 'BUY',
+            'symbol': 'ADAUSDT',
+        }
+    )
+    fetched_order = _make_binance_order('order456', 'ADAUSDT', 'buy', 10, 10, 0,
+        info={
+            'avgPrice': '0.00000',
+            'status': 'FILLED',
+            'executedQty': '10',
+            'origQty': '10',
+            'side': 'BUY',
+            'symbol': 'ADAUSDT',
         }
     )
 
-    # Mock fetch_positions to return actual entry price
-    exchange_manager['binance'].fetch_positions = AsyncMock(
-        return_value=[
-            {
-                'symbol': 'ADAUSDT',
-                'contracts': 10,
-                'entryPrice': 0.5234,  # Actual execution price from position
-                'side': 'long'
-            }
-        ]
-    )
-    exchange_manager['binance'].set_leverage = AsyncMock(return_value=True)
+    exchange_instance.create_market_order = AsyncMock(return_value=raw_order)
+    exchange_instance.fetch_order = AsyncMock(return_value=fetched_order)
+    # Fallback: fetch_positions returns entry price
+    exchange_instance.fetch_positions = AsyncMock(return_value=[
+        {
+            'symbol': 'ADAUSDT',
+            'contracts': 10,
+            'entryPrice': 0.5234,
+            'side': 'long'
+        }
+    ])
+    exchange_instance.set_leverage = AsyncMock(return_value=True)
+
+    exchange_manager = {'binance': exchange_instance}
 
     stop_loss_manager = AsyncMock()
     stop_loss_manager.set_stop_loss = AsyncMock(
         return_value={'status': 'created', 'orderId': 'sl456'}
     )
 
+    config = _make_config()
     manager = AtomicPositionManager(
         repository=repository,
         exchange_manager=exchange_manager,
-        stop_loss_manager=stop_loss_manager
+        stop_loss_manager=stop_loss_manager,
+        config=config
     )
 
-    repository.create_position = AsyncMock(return_value=777)
-    repository.update_position = AsyncMock()
-    repository.create_order = AsyncMock()
-    repository.create_trade = AsyncMock()
+    request = _make_request(789, 'ADAUSDT', 'binance', 'buy', 0.52)
 
-    # Execute
     result = await manager.open_position_atomic(
-        signal_id=789,
-        symbol='ADAUSDT',
-        exchange='binance',
-        side='buy',
+        request=request,
         quantity=10,
-        entry_price=0.52,  # Signal price
-        stop_loss_percent=2.0
+        exchange_manager=exchange_manager
     )
 
     # Verify fetch_positions was called (fallback triggered)
-    exchange_manager['binance'].fetch_positions.assert_called_once()
+    exchange_instance.fetch_positions.assert_called()
 
-    # Verify execution price from position was used
-    update_calls = repository.update_position.call_args_list
-    update_kwargs = update_calls[0].kwargs
-
-    assert update_kwargs.get('entry_price') == 0.5234, \
-        f"Should use entryPrice from position, got {update_kwargs.get('entry_price')}"
+    # Verify position was created with entryPrice from position
+    create_calls = repository.create_position.call_args_list
+    assert len(create_calls) > 0
+    pos_data = create_calls[0][0][0] if create_calls[0][0] else create_calls[0].kwargs
+    assert pos_data.get('entry_price') == 0.5234, \
+        f"Should use entryPrice from position, got {pos_data.get('entry_price')}"

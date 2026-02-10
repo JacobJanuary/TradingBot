@@ -14,6 +14,7 @@ import asyncio
 import aiohttp
 import json
 import logging
+import random
 from typing import Dict, Callable, Optional, Set
 from datetime import datetime
 
@@ -39,6 +40,7 @@ class BinanceHybridStream:
                  event_handler: Optional[Callable] = None,
                  position_fetch_callback: Optional[Callable] = None,
                  reentry_price_callback: Optional[Callable] = None,  # NEW 2026-01-03
+                 exchange_manager=None,  # For REST price fallback
                  testnet: bool = False):
         """
         Initialize Binance Hybrid WebSocket
@@ -48,12 +50,14 @@ class BinanceHybridStream:
             api_secret: Binance API secret
             event_handler: Callback for events (event_type, data)
             reentry_price_callback: Callback for ALL mark price updates (for reentry signals)
+            exchange_manager: ExchangeManager instance for REST price fallback
             testnet: Use testnet endpoints
         """
         self.api_key = api_key
         self.api_secret = api_secret
         self.event_handler = event_handler
         self.position_fetch_callback = position_fetch_callback
+        self.exchange_manager = exchange_manager  # For REST price fallback
         self.reentry_price_callback = reentry_price_callback  # NEW 2026-01-03
         self.testnet = testnet
 
@@ -108,6 +112,11 @@ class BinanceHybridStream:
         self.health_check_task = None  # Subscription health verification
         self.heartbeat_task = None  # PHASE 4: WebSocket heartbeat monitoring
         self.pending_processor_task = None  # ✅ FIX #3: Periodic pending processor
+        self.rest_fallback_task = None  # REST price fallback when WS stale
+
+        # REST fallback metrics
+        self.rest_fallback_count = 0
+        self.rest_fallback_active = set()  # Symbols currently being polled via REST
 
         logger.info(f"BinanceHybridStream initialized (testnet={testnet})")
 
@@ -170,6 +179,11 @@ class BinanceHybridStream:
             self._process_pending_subscriptions_task(check_interval=120)
         )
 
+        # REST price fallback: polls via API when WS data is stale >3s
+        self.rest_fallback_task = asyncio.create_task(
+            self._rest_price_fallback_task()
+        )
+
         logger.info("✅ Binance Hybrid WebSocket started")
 
     async def stop(self):
@@ -204,7 +218,8 @@ class BinanceHybridStream:
             self.reconnection_task,  # ✅ PHASE 2
             self.health_check_task,  # Subscription health verification
             self.heartbeat_task,  # PHASE 4: WebSocket heartbeat monitoring
-            self.pending_processor_task  # ✅ FIX #3: Periodic pending processor
+            self.pending_processor_task,  # ✅ FIX #3: Periodic pending processor
+            self.rest_fallback_task  # REST price fallback
         ]:
             if task and not task.done():
                 task.cancel()
@@ -532,6 +547,12 @@ class BinanceHybridStream:
                             f"Forcing reconnect..."
                         )
                         self.mark_connected = False
+                        # Force-close WS to break async for loop (fas_smart pattern)
+                        if self.mark_ws:
+                            try:
+                                await self.mark_ws.close()
+                            except Exception:
+                                pass
                 # ✅ FIX #2.3: Track last price data update (not just any message)
                 # This detects subscription failure (connected, subscriptions sent, but no data)
                 if self.mark_connected and len(self.subscribed_symbols) > 0:
@@ -553,6 +574,12 @@ class BinanceHybridStream:
                                 f"Forcing reconnect..."
                             )
                             self.mark_connected = False
+                            # Force-close WS to break async for loop
+                            if self.mark_ws:
+                                try:
+                                    await self.mark_ws.close()
+                                except Exception:
+                                    pass
 
                 # --- CHECK 2: User Data Stream ---
                 
@@ -667,7 +694,7 @@ class BinanceHybridStream:
 
     async def _run_user_stream(self):
         """Run User Data Stream for position lifecycle"""
-        reconnect_delay = 5
+        reconnect_count = 0
 
         while self.running:
             try:
@@ -689,14 +716,12 @@ class BinanceHybridStream:
                 )
 
                 self.user_connected = True
+                reconnect_count = 0  # Reset on successful connection
                 logger.info("✅ [USER] Connected")
 
                 # ✅ FIX: Sync state with snapshot on reconnect
                 # This handles positions opened while disconnected
                 await self._sync_state_with_snapshot()
-
-                # Reset reconnect delay on successful connection
-                reconnect_delay = 5
 
                 # Receive loop
                 async for msg in self.user_ws:
@@ -729,9 +754,12 @@ class BinanceHybridStream:
                 self.user_connected = False
 
                 if self.running:
-                    logger.info(f"[USER] Reconnecting in {reconnect_delay}s...")
-                    await asyncio.sleep(reconnect_delay)
-                    reconnect_delay = min(reconnect_delay * 2, 60)  # Max 60s
+                    reconnect_count += 1
+                    delay = min(1.0 * (2 ** (reconnect_count - 1)), 60.0)
+                    jitter = delay * 0.25 * (2 * random.random() - 1)
+                    actual_delay = delay + jitter
+                    logger.info(f"[USER] Reconnecting in {actual_delay:.1f}s (attempt {reconnect_count})...")
+                    await asyncio.sleep(actual_delay)
 
     async def _handle_user_message(self, data: Dict):
         """Handle User Data Stream message"""
@@ -748,8 +776,7 @@ class BinanceHybridStream:
             # Recreate listen key
             await self._create_listen_key()
         elif event_type == 'ORDER_TRADE_UPDATE':
-            # Optional: можно обрабатывать ордера если нужно
-            logger.debug(f"[USER] Order update: {data.get('o', {}).get('s')}")
+            await self._handle_order_update(data)
 
     async def _on_account_update(self, data: Dict):
         """
@@ -809,8 +836,87 @@ class BinanceHybridStream:
                 # Request mark price unsubscription
                 await self._request_mark_subscription(symbol, subscribe=False)
 
-                # Request mark price unsubscription
-                await self._request_mark_subscription(symbol, subscribe=False)
+    async def _handle_order_update(self, data: Dict):
+        """
+        Handle ORDER_TRADE_UPDATE event from User Data Stream.
+
+        Parses order fields, logs important state transitions (SL/TP triggers),
+        and emits 'order.update' event via event_handler for consumers.
+
+        Ported from websocket/binance_stream.py:_handle_order_update
+        """
+        order_data = data.get('o', {})
+        if not order_data:
+            return
+
+        order_info = {
+            'symbol': order_data.get('s', ''),
+            'order_id': order_data.get('i'),
+            'client_order_id': order_data.get('c'),
+            'side': order_data.get('S', ''),
+            'type': order_data.get('o', ''),
+            'time_in_force': order_data.get('f'),
+            'quantity': float(order_data.get('q', 0)),
+            'price': float(order_data.get('p', 0)),
+            'stop_price': float(order_data.get('sp', 0)),
+            'execution_type': order_data.get('x', ''),
+            'status': order_data.get('X', ''),
+            'reject_reason': order_data.get('r'),
+            'filled_quantity': float(order_data.get('z', 0)),
+            'last_filled_quantity': float(order_data.get('l', 0)),
+            'average_price': float(order_data.get('ap', 0)),
+            'commission': float(order_data.get('n', 0)),
+            'commission_asset': order_data.get('N'),
+            'timestamp': order_data.get('T'),
+            'is_reduce_only': order_data.get('R', False),
+            'is_close_position': order_data.get('cp', False),
+            'activation_price': float(order_data.get('AP', 0)),
+            'callback_rate': float(order_data.get('cr', 0)),
+            'realized_profit': float(order_data.get('rp', 0)),
+        }
+
+        symbol = order_info['symbol']
+        status = order_info['status']
+        order_type = order_info['type']
+
+        # Log important order events
+        if status == 'NEW':
+            logger.info(
+                f"[ORDER] New: {symbol} {order_info['side']} {order_type}"
+            )
+        elif status == 'FILLED':
+            logger.info(
+                f"[ORDER] Filled: {symbol} {order_info['side']} "
+                f"@ {order_info['average_price']}"
+            )
+
+            # Detect SL/TP triggers
+            if order_type in ('STOP_MARKET', 'STOP'):
+                logger.warning(
+                    f"⚠️ STOP LOSS TRIGGERED: {symbol} "
+                    f"{order_info['side']} @ {order_info['average_price']}"
+                )
+            elif order_type == 'TAKE_PROFIT_MARKET':
+                logger.info(
+                    f"✅ TAKE PROFIT TRIGGERED: {symbol} "
+                    f"{order_info['side']} @ {order_info['average_price']}"
+                )
+        elif status == 'CANCELED':
+            logger.info(f"[ORDER] Cancelled: {symbol} #{order_info['order_id']}")
+        elif status == 'EXPIRED':
+            logger.warning(f"[ORDER] Expired: {symbol} #{order_info['order_id']}")
+        elif status == 'REJECTED':
+            logger.error(
+                f"[ORDER] Rejected: {symbol} #{order_info['order_id']} "
+                f"reason={order_info['reject_reason']}"
+            )
+
+        # Emit order update event for consumers
+        if self.event_handler:
+            try:
+                await self.event_handler('order.update', order_info)
+            except Exception as e:
+                logger.error(f"Order event emission error: {e}")
 
     async def _sync_state_with_snapshot(self):
         """
@@ -875,7 +981,7 @@ class BinanceHybridStream:
 
     async def _run_mark_stream(self):
         """Run Mark Price Stream (combined stream for all subscribed symbols)"""
-        reconnect_delay = 5
+        reconnect_count = 0
 
         while self.running:
             try:
@@ -898,6 +1004,7 @@ class BinanceHybridStream:
                 )
 
                 self.mark_connected = True
+                reconnect_count = 0  # Reset on successful connection
                 logger.info("✅ [MARK] Connected")
 
                 # Restore subscriptions after reconnect
@@ -937,9 +1044,12 @@ class BinanceHybridStream:
                 self.mark_connected = False
 
                 if self.running:
-                    logger.info(f"[MARK] Reconnecting in {reconnect_delay}s...")
-                    await asyncio.sleep(reconnect_delay)
-                    reconnect_delay = min(reconnect_delay * 2, 60)
+                    reconnect_count += 1
+                    delay = min(1.0 * (2 ** (reconnect_count - 1)), 60.0)
+                    jitter = delay * 0.25 * (2 * random.random() - 1)
+                    actual_delay = delay + jitter
+                    logger.info(f"[MARK] Reconnecting in {actual_delay:.1f}s (attempt {reconnect_count})...")
+                    await asyncio.sleep(actual_delay)
 
     async def _restart_mark_stream(self):
         """
@@ -1189,13 +1299,8 @@ class BinanceHybridStream:
         Normalize symbol to Binance raw format
         e.g. 'BTC/USDT:USDT' -> 'BTCUSDT'
         """
-        if not symbol:
-            return ""
-        # Remove settlement part if present
-        if ':' in symbol:
-            symbol = symbol.split(':')[0]
-        # Remove slash
-        return symbol.replace('/', '').upper()
+        from utils.symbol_helpers import normalize_symbol
+        return normalize_symbol(symbol)
 
     async def _restore_subscriptions(self):
         """
@@ -1626,6 +1731,124 @@ class BinanceHybridStream:
         except Exception as e:
             logger.error(f"Event emission error: {e}")
 
+    # ==================== REST PRICE FALLBACK ====================
+
+    async def _rest_price_fallback_task(self):
+        """
+        REST API price fallback when WebSocket data is stale.
+
+        If no price update received for a subscribed symbol with an active position
+        for >3 seconds, polls via CCXT fetch_ticker every 1 second until WS resumes.
+
+        This ensures trailing stops and stop-losses are never blind.
+        """
+        STALE_THRESHOLD = 3.0  # Seconds without WS data before REST kicks in
+        POLL_INTERVAL = 1.0    # REST poll frequency
+
+        logger.info("🔄 [REST FALLBACK] Task started (threshold=3s, poll=1s)")
+
+        while self.running:
+            try:
+                await asyncio.sleep(POLL_INTERVAL)
+
+                if not self.running:
+                    break
+
+                now = asyncio.get_event_loop().time()
+
+                # Only poll symbols that have active positions
+                symbols_to_poll = []
+                for symbol in list(self.subscribed_symbols):
+                    if symbol not in self.positions:
+                        continue
+
+                    ts_key = f"{symbol}_timestamp"
+                    last_update = self.mark_prices.get(ts_key, 0)
+                    gap = now - last_update
+
+                    if gap > STALE_THRESHOLD:
+                        symbols_to_poll.append((symbol, gap))
+
+                if not symbols_to_poll:
+                    # All symbols have fresh data — clear active set
+                    if self.rest_fallback_active:
+                        logger.info(
+                            f"✅ [REST FALLBACK] WS resumed for all symbols. "
+                            f"Stopping REST polling for: {self.rest_fallback_active}"
+                        )
+                        self.rest_fallback_active.clear()
+                    continue
+
+                # Poll stale symbols via REST
+                for symbol, gap in symbols_to_poll:
+                    try:
+                        price = await self._fetch_price_rest(symbol)
+                        if price:
+                            self.rest_fallback_count += 1
+                            self.rest_fallback_active.add(symbol)
+
+                            # Update mark price cache with REST data
+                            self.mark_prices[symbol] = str(price)
+                            self.mark_prices[f"{symbol}_timestamp"] = now
+
+                            # Distribute through normal pipeline
+                            await self._on_mark_price_update({
+                                's': symbol,
+                                'p': str(price)
+                            })
+
+                            logger.warning(
+                                f"🔄 [REST FALLBACK] {symbol} @ ${price:.4f} "
+                                f"(WS gap: {gap:.1f}s, total REST calls: {self.rest_fallback_count})"
+                            )
+                    except Exception as e:
+                        logger.error(f"[REST FALLBACK] Error fetching {symbol}: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[REST FALLBACK] Task error: {e}", exc_info=True)
+                await asyncio.sleep(5)
+
+        logger.info("[REST FALLBACK] Task stopped")
+
+    async def _fetch_price_rest(self, symbol: str) -> Optional[float]:
+        """
+        Fetch current mark price via CCXT REST API.
+
+        Uses exchange_manager.fetch_ticker() if available,
+        falls back to direct aiohttp request to Binance fapi.
+
+        Args:
+            symbol: Raw symbol (e.g. 'BTCUSDT')
+
+        Returns:
+            float price or None on error
+        """
+        # Method 1: Via exchange_manager (CCXT)
+        if self.exchange_manager:
+            try:
+                # Convert raw symbol to CCXT format
+                ccxt_symbol = symbol.replace('USDT', '/USDT:USDT')
+                ticker = await self.exchange_manager.fetch_ticker(ccxt_symbol)
+                if ticker and 'last' in ticker:
+                    return float(ticker['last'])
+            except Exception as e:
+                logger.debug(f"[REST FALLBACK] CCXT fetch_ticker failed for {symbol}: {e}")
+
+        # Method 2: Direct REST (fallback if no exchange_manager)
+        try:
+            url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return float(data.get('price', 0))
+        except Exception as e:
+            logger.debug(f"[REST FALLBACK] Direct REST failed for {symbol}: {e}")
+
+        return None
+
     # ==================== STATUS ====================
 
     def get_status(self) -> Dict:
@@ -1638,5 +1861,7 @@ class BinanceHybridStream:
             'subscribed_symbols': len(self.subscribed_symbols),
             'positions': list(self.positions.keys()),
             'mark_prices': list(self.mark_prices.keys()),
-            'listen_key': self.listen_key[:10] + '...' if self.listen_key else None
+            'listen_key': self.listen_key[:10] + '...' if self.listen_key else None,
+            'rest_fallback_count': self.rest_fallback_count,
+            'rest_fallback_active': list(self.rest_fallback_active),
         }

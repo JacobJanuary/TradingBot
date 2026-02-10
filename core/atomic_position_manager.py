@@ -480,13 +480,19 @@ class AtomicPositionManager:
         side = request.side
         entry_price = float(request.entry_price)
         
-        # ALL params from .env ONLY (2026-01-03: removed signal/request params)
+        # Strategy params override .env fallback (§5.1: use strategy.leverage)
+        sp = getattr(request, 'strategy_params', None) or {}
         if self.config:
-            stop_loss_percent = float(self.config.stop_loss_percent)
-            trailing_activation_percent = float(self.config.trailing_activation_percent)
-            trailing_callback_percent = float(self.config.trailing_callback_percent)
+            stop_loss_percent = float(sp.get('stop_loss_percent', self.config.stop_loss_percent))
+            trailing_activation_percent = float(sp.get('trailing_activation_percent', self.config.trailing_activation_percent))
+            trailing_callback_percent = float(sp.get('trailing_callback_percent', self.config.trailing_callback_percent))
         else:
-            raise AtomicPositionError("Config not available - cannot get SL/TS params")
+            stop_loss_percent = float(sp.get('stop_loss_percent', 4.0))
+            trailing_activation_percent = float(sp.get('trailing_activation_percent', 2.0))
+            trailing_callback_percent = float(sp.get('trailing_callback_percent', 0.5))
+        
+        source = "strategy_params" if sp else ".env"
+        logger.info(f"Atomic params from {source}: SL={stop_loss_percent}%, TS_act={trailing_activation_percent}%, TS_cb={trailing_callback_percent}%")
 
         operation_id = f"pos_{symbol}_{now_utc().timestamp()}"
 
@@ -506,12 +512,11 @@ class AtomicPositionManager:
                 if not exchange_instance:
                     raise AtomicPositionError(f"Exchange {exchange} not available")
 
-                    raise AtomicPositionError(f"Exchange {exchange} not available")
-
-                # RESTORED 2025-10-25: Set leverage before opening position
-                if self.config and self.config.auto_set_leverage:
-                    leverage = self.config.leverage
-                    logger.info(f"🎚️ Setting {leverage}x leverage for {symbol}")
+                # §5.1: Set leverage — strategy_params override, .env fallback
+                sp = getattr(request, 'strategy_params', None) or {}
+                if sp.get('leverage') or (self.config and self.config.auto_set_leverage):
+                    leverage = int(sp.get('leverage', self.config.leverage if self.config else 1))
+                    logger.info(f"🎚️ Setting {leverage}x leverage for {symbol} (source={'strategy' if sp.get('leverage') else '.env'})")
                     leverage_set = await exchange_instance.set_leverage(symbol, leverage)
                     if not leverage_set:
                         logger.warning(
@@ -953,7 +958,7 @@ class AtomicPositionManager:
                     try:
                         # CRITICAL FIX: Poll for position visibility before closing
                         # Race condition: position may not be visible immediately
-                        from core.position_manager import normalize_symbol
+                        from utils.symbol_helpers import normalize_symbol
 
                         our_position = None
                         max_attempts = 20  # Increased from 10 (Error #2 fix)

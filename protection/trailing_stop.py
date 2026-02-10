@@ -7,7 +7,7 @@ Based on best practices from:
 import logging
 from typing import Dict, Optional, List
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import asyncio
 from decimal import Decimal
@@ -525,7 +525,7 @@ class SmartTrailingStopManager:
                 activation_price=Decimal(str(state_data['activation_price'])) if state_data.get('activation_price') else None,
                 current_stop_price=Decimal(str(state_data['current_stop_price'])) if state_data.get('current_stop_price') else None,
                 stop_order_id=state_data.get('stop_order_id'),
-                created_at=state_data.get('created_at', datetime.now()),
+                created_at=state_data.get('created_at', datetime.now(timezone.utc)),
                 activated_at=state_data.get('activated_at'),
                 highest_profit_percent=Decimal(str(state_data.get('highest_profit_percent', 0))),
                 update_count=state_data.get('update_count', 0),
@@ -755,7 +755,7 @@ class SmartTrailingStopManager:
 
                 if should_save:
                     # Update tracking fields BEFORE saving
-                    ts.last_peak_save_time = datetime.now()
+                    ts.last_peak_save_time = datetime.now(timezone.utc)
                     ts.last_saved_peak_price = current_peak
 
                     # Save to database
@@ -946,7 +946,7 @@ class SmartTrailingStopManager:
                 
                 if success:
                     # SUCCESS: Mark as activated
-                    ts.activated_at = datetime.now()
+                    ts.activated_at = datetime.now(timezone.utc)
                     self.stats['total_activated'] += 1
                     
                     logger.info(
@@ -1087,7 +1087,7 @@ class SmartTrailingStopManager:
             if old_stop is None:
                 logger.debug(f"{ts.symbol}: No old stop price, setting initial stop")
                 ts.current_stop_price = new_stop_price
-                ts.last_stop_update = datetime.now()
+                ts.last_stop_update = datetime.now(timezone.utc)
                 ts.update_count += 1
                 await self._update_stop_order(ts)
                 await self._save_state(ts)
@@ -1182,7 +1182,7 @@ class SmartTrailingStopManager:
                     return None
 
             # Only commit state changes if exchange succeeded
-            ts.last_stop_update = datetime.now()
+            ts.last_stop_update = datetime.now(timezone.utc)
             ts.update_count += 1
 
             improvement = abs((new_stop_price - old_stop) / old_stop * 100)
@@ -1246,7 +1246,7 @@ class SmartTrailingStopManager:
         if self.config.accelerate_on_momentum:
             # Calculate price change rate (simplified)
             if ts.last_stop_update:
-                time_diff = Decimal(str((datetime.now() - ts.last_stop_update).seconds / 60))
+                time_diff = Decimal(str((datetime.now(timezone.utc) - ts.last_stop_update).seconds / 60))
                 if time_diff > 0:
                     price_change_rate = abs(
                         (ts.current_price - ts.entry_price) / ts.entry_price / time_diff * Decimal('100')
@@ -1448,16 +1448,12 @@ class SmartTrailingStopManager:
         # Rule 1: Rate limiting - check time since last SUCCESSFUL update
         if ts.last_sl_update_time:
             # FIX: Handle both naive and aware datetimes
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             last_update = ts.last_sl_update_time
 
-            # If last_update is aware, convert now to aware (UTC)
-            if last_update.tzinfo is not None:
-                from datetime import timezone
-                now = datetime.now(timezone.utc)
-            # If last_update is naive but now is aware, make both naive
-            elif now.tzinfo is not None:
-                now = now.replace(tzinfo=None)
+            # Ensure last_update is timezone-aware for comparison
+            if last_update.tzinfo is None:
+                last_update = last_update.replace(tzinfo=timezone.utc)
 
             elapsed_seconds = (now - last_update).total_seconds()
             min_interval = config.trading.trailing_min_update_interval_seconds
@@ -1507,7 +1503,7 @@ class SmartTrailingStopManager:
 
         # Rule 1: Time-based check
         if ts.last_peak_save_time:
-            elapsed_seconds = (datetime.now() - ts.last_peak_save_time).total_seconds()
+            elapsed_seconds = (datetime.now(timezone.utc) - ts.last_peak_save_time).total_seconds()
 
             if elapsed_seconds < TRAILING_MIN_PEAK_SAVE_INTERVAL_SEC:
                 remaining = TRAILING_MIN_PEAK_SAVE_INTERVAL_SEC - elapsed_seconds
@@ -1828,7 +1824,7 @@ class SmartTrailingStopManager:
                     )
 
                 # NEW: Update tracking fields after SUCCESSFUL update
-                ts.last_sl_update_time = datetime.now()  # Record time of successful update
+                ts.last_sl_update_time = datetime.now(timezone.utc)  # Record time of successful update
                 ts.last_updated_sl_price = ts.current_stop_price  # Record successfully updated price
 
                 # NEW: Alert if unprotected window is too large (Binance)

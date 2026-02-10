@@ -5,6 +5,9 @@ WebSocket Signal Processor - Миграция с PostgreSQL polling на WebSock
 import logging
 import asyncio
 import os
+
+# Composite strategy integration (2026-02-09)
+from core.signal_lifecycle import SignalLifecycleManager
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -88,6 +91,9 @@ class WebSocketSignalProcessor:
         self.running = False
         self._wave_monitoring_task = None
         self._ws_task = None
+
+        # Composite strategy lifecycle manager (set via set_lifecycle_manager)
+        self.lifecycle_manager: SignalLifecycleManager = None
 
         # Wave tracking (как в старом SignalProcessor)
         self.processed_waves = {}  # {wave_timestamp: {'signal_ids': set(), 'count': int}}
@@ -746,6 +752,52 @@ class WebSocketSignalProcessor:
             'execution_details': execution_details
         }
 
+    def set_lifecycle_manager(self, lifecycle_manager: SignalLifecycleManager):
+        """Set lifecycle manager for composite strategy delegation."""
+        self.lifecycle_manager = lifecycle_manager
+        logger.info("✅ Lifecycle manager set on signal processor")
+
+    async def _delegate_to_lifecycle(self, signals: List[Dict]) -> List[Dict]:
+        """
+        Pre-filter: delegate signals matching composite strategy to lifecycle manager.
+        
+        Returns list of signals NOT handled by lifecycle (for old pipeline).
+        """
+        if not self.lifecycle_manager:
+            return signals
+
+        remaining = []
+        for signal in signals:
+            score = float(signal.get('total_score', signal.get('score_week', 0)))
+            rsi = float(signal.get('rsi', 0))
+            vol_zscore = float(signal.get('volume_zscore', signal.get('vol_zscore', 0)))
+            oi_delta = float(signal.get('oi_delta_pct', signal.get('oi_delta', 0)))
+
+            # Check if composite strategy has a rule for this signal (§2.2: all filters)
+            params = self.lifecycle_manager.composite_strategy.match_signal(
+                score, rsi=rsi, vol_zscore=vol_zscore, oi_delta=oi_delta
+            )
+            if params:
+                symbol = signal.get('symbol', '')
+                logger.info(
+                    f"🎯 Signal {symbol} score={score} rsi={rsi:.0f} "
+                    f"vol={vol_zscore:.1f} oi={oi_delta:.1f} → composite strategy, "
+                    f"delegating to lifecycle manager"
+                )
+                try:
+                    await self.lifecycle_manager.on_signal_received(signal, matched_params=params)
+                except Exception as e:
+                    logger.error(f"Lifecycle manager error for {symbol}: {e}")
+            else:
+                remaining.append(signal)
+
+        if len(signals) != len(remaining):
+            logger.info(
+                f"Lifecycle delegation: {len(signals) - len(remaining)} delegated, "
+                f"{len(remaining)} remaining for wave pipeline"
+            )
+        return remaining
+
     async def _process_wave_per_exchange(
         self,
         wave_signals: List[Dict],
@@ -756,10 +808,11 @@ class WebSocketSignalProcessor:
         Process wave signals with per-exchange logic
 
         Uses WaveSignalProcessor for filtering and validation:
-        1. Sort signals by combined score
-        2. Select top signals with buffer
-        3. Apply filters (OI, volume, duplicates) via WaveSignalProcessor
-        4. Execute validated signals until target reached
+        1. Delegate composite-matched signals to lifecycle manager
+        2. Sort remaining signals by combined score
+        3. Select top signals with buffer
+        4. Apply filters (OI, volume, duplicates) via WaveSignalProcessor
+        5. Execute validated signals until target reached
 
         Args:
             wave_signals: All signals in wave
@@ -770,6 +823,9 @@ class WebSocketSignalProcessor:
             Dict with results per exchange and totals
         """
         logger.info(f"🌊 Processing wave {wave_timestamp} with WaveSignalProcessor")
+
+        # Pre-filter: delegate composite strategy signals to lifecycle manager
+        wave_signals = await self._delegate_to_lifecycle(wave_signals)
 
         # Group signals by exchange
         signals_by_exchange = self._group_signals_by_exchange(wave_signals)
@@ -854,7 +910,7 @@ class WebSocketSignalProcessor:
             # 5. Сортируем ОТФИЛЬТРОВАННЫЕ по score
             sorted_filtered = sorted(
                 filtered_signals,
-                key=lambda s: (s.get('score_week', 0) + s.get('score_month', 0)),
+                key=lambda s: s.get('total_score', 0) or (s.get('score_week', 0) + s.get('score_month', 0)),
                 reverse=True
             )
 

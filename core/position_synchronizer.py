@@ -12,23 +12,7 @@ from core.event_logger import get_event_logger, EventType
 logger = logging.getLogger(__name__)
 
 
-def normalize_symbol(symbol: str) -> str:
-    """
-    Normalize symbol format for consistent comparison
-
-    Converts exchange format 'HIGH/USDT:USDT' to database format 'HIGHUSDT'
-
-    Args:
-        symbol: Symbol in any format
-
-    Returns:
-        Normalized symbol (database format)
-    """
-    if '/' in symbol and ':' in symbol:
-        # Exchange format: 'HIGH/USDT:USDT' -> 'HIGHUSDT'
-        base_quote = symbol.split(':')[0]  # 'HIGH/USDT'
-        return base_quote.replace('/', '')  # 'HIGHUSDT'
-    return symbol  # Already normalized (database format)
+from utils.symbol_helpers import normalize_symbol
 
 
 class PositionSynchronizer:
@@ -304,7 +288,16 @@ class PositionSynchronizer:
                         )
                         continue
 
-
+                # Bybit: Check size in raw response
+                elif exchange_name == 'bybit':
+                    size_val = float(info.get('size', 0))
+                    if abs(size_val) <= 0:
+                        filtered_count += 1
+                        logger.debug(
+                            f"    Filtered {pos.get('symbol')}: "
+                            f"contracts={contracts} but size={size_val}"
+                        )
+                        continue
 
                 # ✅ Position passed all filters
                 active_positions.append(pos)
@@ -445,7 +438,8 @@ class PositionSynchronizer:
                 'exchange': exchange_name,
                 'side': side,
                 'quantity': abs(contracts),
-                'entry_price': entry_price
+                'entry_price': entry_price,
+                'exchange_order_id': exchange_order_id,
             }
 
             # Use open_position method

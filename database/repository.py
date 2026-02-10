@@ -212,13 +212,8 @@ class Repository:
         Uses pg_advisory_xact_lock to ensure only one transaction can create
         a position for given symbol+exchange at a time.
         """
-        import logging
-        logger = logging.getLogger(__name__)
-
         symbol = position_data['symbol']
         exchange = position_data['exchange']
-
-        logger.info(f"🔍 REPO DEBUG: create_position() called for {symbol}")
 
         # Generate lock ID for this symbol+exchange
         lock_id = self._get_position_lock_id(symbol, exchange)
@@ -235,7 +230,7 @@ class Repository:
         """
 
         async with self.pool.acquire() as conn:
-            logger.info(f"🔍 REPO DEBUG: Got connection from pool for {symbol}")
+
 
             # CRITICAL: Use transaction with advisory lock
             async with conn.transaction():
@@ -262,7 +257,7 @@ class Repository:
                     return existing['id']
 
                 # Position doesn't exist - safe to create
-                logger.info(f"🔍 REPO DEBUG: Executing INSERT for {symbol}, quantity={position_data['quantity']}")
+
 
                 try:
                     position_id = await conn.fetchval(
@@ -277,7 +272,7 @@ class Repository:
                         position_data.get('signal_stop_loss_percent')  # NEW: Option 2
                     )
 
-                    logger.info(f"🔍 REPO DEBUG: INSERT completed, returned position_id={position_id} for {symbol}")
+
                     return position_id
 
                 except Exception as e:
@@ -471,7 +466,7 @@ class Repository:
         query = """
             SELECT EXTRACT(EPOCH FROM (NOW() - opened_at)) / 3600 as age_hours
             FROM monitoring.positions
-            WHERE symbol = $1 AND exchange = $2 AND status = 'OPEN'
+            WHERE symbol = $1 AND exchange = $2 AND status = 'active'
         """
 
         async with self.pool.acquire() as conn:
@@ -500,8 +495,7 @@ class Repository:
 
     async def acquire_position_lock(self, symbol: str, exchange: str) -> bool:
         """Acquire advisory lock for position"""
-        lock_key = f"{exchange}_{symbol}"
-        lock_id = hash(lock_key) % 2147483647
+        lock_id = self._get_position_lock_id(symbol, exchange)
 
         async with self.pool.acquire() as conn:
             result = await conn.fetchval(
@@ -512,8 +506,7 @@ class Repository:
 
     async def release_position_lock(self, symbol: str, exchange: str):
         """Release advisory lock for position"""
-        lock_key = f"{exchange}_{symbol}"
-        lock_id = hash(lock_key) % 2147483647
+        lock_id = self._get_position_lock_id(symbol, exchange)
 
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -715,9 +708,7 @@ class Repository:
         """Get daily stats"""
         return {}
     
-    async def create_risk_violation(self, violation: Any) -> bool:
-        """Create risk violation"""
-        return True
+    # REMOVED: duplicate stub create_risk_violation — real implementation at L135
 
 
     # ============================================================
@@ -1371,6 +1362,101 @@ class Repository:
             except Exception as e:
                 logger.error(f"Failed to get aged statistics: {e}")
                 return {}
+
+    # ============== Signal Lifecycle Persistence (§4.1) ==============
+
+    async def save_lifecycle(self, lifecycle_data: Dict) -> int:
+        """
+        Save or update lifecycle state (upsert by symbol+exchange).
+        Called after position open/close and state transitions.
+        """
+        query = """
+            INSERT INTO monitoring.signal_lifecycles (
+                symbol, exchange, signal_id, state, strategy_params,
+                signal_start_ts, entry_price, max_price, position_entry_ts,
+                in_position, trade_count, total_score,
+                last_exit_ts, last_exit_price, last_exit_reason,
+                ts_activated, cumulative_pnl, trades, position_id,
+                updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5::jsonb,
+                $6, $7, $8, $9,
+                $10, $11, $12,
+                $13, $14, $15,
+                $16, $17, $18::jsonb, $19,
+                NOW()
+            )
+            ON CONFLICT (symbol, exchange) DO UPDATE SET
+                state = EXCLUDED.state,
+                strategy_params = EXCLUDED.strategy_params,
+                entry_price = EXCLUDED.entry_price,
+                max_price = EXCLUDED.max_price,
+                position_entry_ts = EXCLUDED.position_entry_ts,
+                in_position = EXCLUDED.in_position,
+                trade_count = EXCLUDED.trade_count,
+                last_exit_ts = EXCLUDED.last_exit_ts,
+                last_exit_price = EXCLUDED.last_exit_price,
+                last_exit_reason = EXCLUDED.last_exit_reason,
+                ts_activated = EXCLUDED.ts_activated,
+                cumulative_pnl = EXCLUDED.cumulative_pnl,
+                trades = EXCLUDED.trades,
+                position_id = EXCLUDED.position_id,
+                updated_at = NOW()
+            RETURNING id
+        """
+        import json
+        
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(
+                query,
+                lifecycle_data['symbol'],
+                lifecycle_data['exchange'],
+                lifecycle_data.get('signal_id', 0),
+                lifecycle_data['state'],
+                json.dumps(lifecycle_data.get('strategy_params', {})),
+                lifecycle_data['signal_start_ts'],
+                lifecycle_data.get('entry_price', 0),
+                lifecycle_data.get('max_price', 0),
+                lifecycle_data.get('position_entry_ts', 0),
+                lifecycle_data.get('in_position', False),
+                lifecycle_data.get('trade_count', 0),
+                lifecycle_data.get('total_score', 0),
+                lifecycle_data.get('last_exit_ts', 0),
+                lifecycle_data.get('last_exit_price', 0),
+                lifecycle_data.get('last_exit_reason', ''),
+                lifecycle_data.get('ts_activated', False),
+                lifecycle_data.get('cumulative_pnl', 0),
+                json.dumps(lifecycle_data.get('trades', [])),
+                lifecycle_data.get('position_id'),
+            )
+
+    async def delete_lifecycle(self, symbol: str, exchange: str):
+        """Delete lifecycle record on finalization."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                DELETE FROM monitoring.signal_lifecycles
+                WHERE symbol = $1 AND exchange = $2
+            """, symbol, exchange)
+
+    async def get_active_lifecycles(self) -> list:
+        """Get all non-finalized lifecycles for restart recovery."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM monitoring.signal_lifecycles
+                WHERE state != 'finalized'
+                ORDER BY created_at
+            """)
+            result = []
+            for row in rows:
+                d = dict(row)
+                # Parse JSONB fields
+                import json
+                if isinstance(d.get('strategy_params'), str):
+                    d['strategy_params'] = json.loads(d['strategy_params'])
+                if isinstance(d.get('trades'), str):
+                    d['trades'] = json.loads(d['trades'])
+                result.append(d)
+            return result
 
 # Add alias for compatibility
 TradingRepository = Repository

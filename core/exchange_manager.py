@@ -27,23 +27,7 @@ from config.settings import config
 
 logger = logging.getLogger(__name__)
 
-
-def normalize_symbol(symbol: str) -> str:
-    """
-    Normalize symbol format for consistent comparison
-    Converts exchange format 'HIGH/USDT:USDT' to database format 'HIGHUSDT'
-
-    Args:
-        symbol: Symbol in any format
-
-    Returns:
-        Normalized symbol (e.g., 'BLASTUSDT')
-    """
-    if '/' in symbol and ':' in symbol:
-        # Exchange format: 'HIGH/USDT:USDT' -> 'HIGHUSDT'
-        base_quote = symbol.split(':')[0]  # 'HIGH/USDT'
-        return base_quote.replace('/', '')  # 'HIGHUSDT'
-    return symbol
+from utils.symbol_helpers import normalize_symbol
 
 
 @dataclass
@@ -1520,7 +1504,7 @@ class ExchangeManager:
 
         # If not found with exact match, try normalized comparison
         if not position:
-            from core.position_manager import normalize_symbol
+            from utils.symbol_helpers import normalize_symbol
             normalized_symbol = normalize_symbol(symbol)
             for pos in all_positions:
                 if normalize_symbol(pos.get('symbol')) == normalized_symbol:

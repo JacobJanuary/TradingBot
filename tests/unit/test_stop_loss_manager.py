@@ -229,7 +229,7 @@ class TestStopLossManagerTSAwareness:
         )
 
         # Should proceed to create SL order (using ALGO API)
-        assert result['status'] == 'success'
+        assert result['status'] == 'created'
 
         # Should have called fapiPrivatePostAlgoOrder (Algo API) NOT create_order
         mock_exchange.fapiPrivatePostAlgoOrder.assert_called_once()
