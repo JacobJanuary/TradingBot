@@ -1,0 +1,327 @@
+{
+  "version": "3.0",
+  "description": "Risk-adjusted composite strategy (3-expert consensus scoring)",
+  "scoring": {
+    "alpha_hunter": "PnL/trade \u00d7 WR_adj \u00d7 sample_confidence (Sortino-like)",
+    "risk_manager": "\u221aPnL \u00d7 WR_penalty \u00d7 concentration_penalty \u00d7 timeout_penalty",
+    "quant": "Wilson_lower_bound(WR) \u00d7 log(PnL) (Bayesian skepticism)",
+    "consensus": "geometric_mean(AH, RM, QT)"
+  },
+  "rules": [
+    {
+      "priority": 1,
+      "score_range": "100-150",
+      "consensus_score": 21.16,
+      "expert_scores": {
+        "alpha_hunter": 14.65,
+        "risk_manager": 32.06,
+        "quant": 20.16
+      },
+      "filter": {
+        "score_min": 100,
+        "score_max": 150,
+        "rsi_min": 80,
+        "vol_min": 0,
+        "oi_min": 13
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 5,
+        "delta_window": 3600,
+        "threshold_mult": 1.0,
+        "base_activation": 10.0,
+        "base_callback": 3.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 600,
+        "max_reentry_hours": 4,
+        "max_position_hours": 24
+      },
+      "metrics": {
+        "total_pnl": 1028.0,
+        "pnl_per_trade": 25.7,
+        "win_rate": 0.325,
+        "total_trades": 40,
+        "ts_wins": 13,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 24
+      }
+    },
+    {
+      "priority": 2,
+      "score_range": "150-200",
+      "consensus_score": 23.32,
+      "expert_scores": {
+        "alpha_hunter": 15.94,
+        "risk_manager": 29.82,
+        "quant": 26.68
+      },
+      "filter": {
+        "score_min": 150,
+        "score_max": 200,
+        "rsi_min": 60,
+        "vol_min": 15,
+        "oi_min": 11
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 3,
+        "delta_window": 1800,
+        "threshold_mult": 1.0,
+        "base_activation": 6.0,
+        "base_callback": 2.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 300,
+        "max_reentry_hours": 4,
+        "max_position_hours": 6
+      },
+      "metrics": {
+        "total_pnl": 889.0,
+        "pnl_per_trade": 24.69,
+        "win_rate": 0.4167,
+        "total_trades": 36,
+        "ts_wins": 15,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 13
+      }
+    },
+    {
+      "priority": 3,
+      "score_range": "200-250",
+      "consensus_score": 20.43,
+      "expert_scores": {
+        "alpha_hunter": 22.95,
+        "risk_manager": 14.49,
+        "quant": 25.65
+      },
+      "filter": {
+        "score_min": 200,
+        "score_max": 250,
+        "rsi_min": 80,
+        "vol_min": 8,
+        "oi_min": 0
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 3,
+        "delta_window": 600,
+        "threshold_mult": 1.0,
+        "base_activation": 6.0,
+        "base_callback": 2.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 300,
+        "max_reentry_hours": 4,
+        "max_position_hours": 24
+      },
+      "metrics": {
+        "total_pnl": 436.7,
+        "pnl_per_trade": 33.59,
+        "win_rate": 0.5385,
+        "total_trades": 13,
+        "ts_wins": 7,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 8
+      }
+    },
+    {
+      "priority": 4,
+      "score_range": "250-300",
+      "consensus_score": 29.19,
+      "expert_scores": {
+        "alpha_hunter": 53.31,
+        "risk_manager": 32.7,
+        "quant": 14.27
+      },
+      "filter": {
+        "score_min": 250,
+        "score_max": 300,
+        "rsi_min": 70,
+        "vol_min": 10,
+        "oi_min": 3
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 10,
+        "delta_window": 300,
+        "threshold_mult": 1.0,
+        "base_activation": 20.0,
+        "base_callback": 7.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 300,
+        "max_reentry_hours": 24,
+        "max_position_hours": 24
+      },
+      "metrics": {
+        "total_pnl": 1671.2,
+        "pnl_per_trade": 98.31,
+        "win_rate": 0.2941,
+        "total_trades": 17,
+        "ts_wins": 5,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 10
+      }
+    },
+    {
+      "priority": 5,
+      "score_range": "300-350",
+      "consensus_score": 16.3,
+      "expert_scores": {
+        "alpha_hunter": 16.68,
+        "risk_manager": 25.41,
+        "quant": 10.23
+      },
+      "filter": {
+        "score_min": 300,
+        "score_max": 350,
+        "rsi_min": 75,
+        "vol_min": 5,
+        "oi_min": 0
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 3,
+        "delta_window": 3600,
+        "threshold_mult": 1.0,
+        "base_activation": 15.0,
+        "base_callback": 7.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 60,
+        "max_reentry_hours": 4,
+        "max_position_hours": 24
+      },
+      "metrics": {
+        "total_pnl": 1008.7,
+        "pnl_per_trade": 36.02,
+        "win_rate": 0.2143,
+        "total_trades": 28,
+        "ts_wins": 6,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 14
+      }
+    },
+    {
+      "priority": 6,
+      "score_range": "350-400",
+      "consensus_score": 33.65,
+      "expert_scores": {
+        "alpha_hunter": 62.14,
+        "risk_manager": 40.93,
+        "quant": 14.98
+      },
+      "filter": {
+        "score_min": 350,
+        "score_max": 400,
+        "rsi_min": 80,
+        "vol_min": 0,
+        "oi_min": 8
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 10,
+        "delta_window": 300,
+        "threshold_mult": 1.0,
+        "base_activation": 20.0,
+        "base_callback": 7.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 60,
+        "max_reentry_hours": 24,
+        "max_position_hours": 24
+      },
+      "metrics": {
+        "total_pnl": 2617.7,
+        "pnl_per_trade": 118.99,
+        "win_rate": 0.2727,
+        "total_trades": 22,
+        "ts_wins": 6,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 13
+      }
+    },
+    {
+      "priority": 7,
+      "score_range": "400-450",
+      "consensus_score": 16.72,
+      "expert_scores": {
+        "alpha_hunter": 19.4,
+        "risk_manager": 21.44,
+        "quant": 11.24
+      },
+      "filter": {
+        "score_min": 400,
+        "score_max": 450,
+        "rsi_min": 65,
+        "vol_min": 0,
+        "oi_min": 8
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 7,
+        "delta_window": 300,
+        "threshold_mult": 1.0,
+        "base_activation": 15.0,
+        "base_callback": 3.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 60,
+        "max_reentry_hours": 24,
+        "max_position_hours": 24
+      },
+      "metrics": {
+        "total_pnl": 718.5,
+        "pnl_per_trade": 37.82,
+        "win_rate": 0.2632,
+        "total_trades": 19,
+        "ts_wins": 5,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 7
+      }
+    },
+    {
+      "priority": 8,
+      "score_range": "450-500",
+      "consensus_score": 10.56,
+      "expert_scores": {
+        "alpha_hunter": 15.01,
+        "risk_manager": 5.68,
+        "quant": 13.82
+      },
+      "filter": {
+        "score_min": 450,
+        "score_max": 500,
+        "rsi_min": 10,
+        "vol_min": 0,
+        "oi_min": 0
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 3,
+        "delta_window": 3600,
+        "threshold_mult": 1.0,
+        "base_activation": 6.0,
+        "base_callback": 2.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 300,
+        "max_reentry_hours": 12,
+        "max_position_hours": 24
+      },
+      "metrics": {
+        "total_pnl": 290.7,
+        "pnl_per_trade": 29.07,
+        "win_rate": 0.4,
+        "total_trades": 10,
+        "ts_wins": 4,
+        "sl_exits": 0,
+        "timeout_exits": 0,
+        "signal_count": 4
+      }
+    }
+  ],
+  "total_expected_pnl": 8660.5,
+  "avg_win_rate": 0.3406,
+  "avg_pnl_per_trade": 50.52
+}
