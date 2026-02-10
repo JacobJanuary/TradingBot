@@ -221,11 +221,12 @@ class Repository:
         query = """
             INSERT INTO monitoring.positions (
                 symbol, exchange, side, quantity,
-                entry_price, status, has_trailing_stop,
+                entry_price, current_price, status, has_trailing_stop,
                 trailing_activation_percent,
                 trailing_callback_percent,
-                signal_stop_loss_percent
-            ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE, $6, $7, $8)
+                signal_id, leverage, exchange_order_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, 'active', TRUE, $7, $8,
+                      $9, $10, $11)
             RETURNING id
         """
 
@@ -267,9 +268,12 @@ class Repository:
                         position_data['side'],
                         position_data['quantity'],
                         position_data['entry_price'],
+                        position_data.get('current_price', position_data['entry_price']),
                         position_data.get('trailing_activation_percent'),
                         position_data.get('trailing_callback_percent'),
-                        position_data.get('signal_stop_loss_percent')  # NEW: Option 2
+                        position_data.get('signal_id'),
+                        position_data.get('leverage', 1.0),
+                        position_data.get('exchange_order_id'),
                     )
 
 

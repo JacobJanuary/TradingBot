@@ -678,7 +678,8 @@ class AtomicPositionManager:
                     'exchange_order_id': entry_order.id,
                     'trailing_activation_percent': trailing_activation_percent,
                     'trailing_callback_percent': trailing_callback_percent,
-                    # signal_stop_loss_percent removed 2026-01-03 - all from .env
+                    'signal_id': signal_id,
+                    'leverage': int(sp.get('leverage', self.config.leverage if self.config else 1)),
                 }
 
                 position_id = await self.repository.create_position(position_data)
