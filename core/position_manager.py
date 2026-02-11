@@ -2392,18 +2392,21 @@ class PositionManager:
                     float(position.current_price)
                 )
 
-            position.unrealized_pnl = data.get('unrealized_pnl', 0)
-
-            # Calculate PnL percent
+            # Calculate PnL from our own DB entry price (not from WS cache which may differ)
             if position.entry_price > 0:
                 if position.side == 'long':
-                    position.unrealized_pnl_percent = (
-                            (float(position.current_price) - float(position.entry_price)) / float(position.entry_price) * 100
-                    )
+                    pnl_pct = (float(position.current_price) - float(position.entry_price)) / float(position.entry_price) * 100
                 else:
-                    position.unrealized_pnl_percent = (
-                            (float(position.entry_price) - float(position.current_price)) / float(position.entry_price) * 100
-                    )
+                    pnl_pct = (float(position.entry_price) - float(position.current_price)) / float(position.entry_price) * 100
+
+                position.unrealized_pnl_percent = pnl_pct
+
+                # Calculate USD PnL from our entry_price + quantity (consistent with pnl%)
+                qty = float(position.quantity) if position.quantity else 0
+                if position.side == 'long':
+                    position.unrealized_pnl = (float(position.current_price) - float(position.entry_price)) * qty
+                else:
+                    position.unrealized_pnl = (float(position.entry_price) - float(position.current_price)) * qty
 
                 # Persist price and PnL to database
                 logger.info(
