@@ -514,11 +514,9 @@ class SignalLifecycleManager:
         
         # Condition A: Activation
         # §6.5: activation is a LATCH — once activated, stays activated
-        # Only check threshold for initial activation, not for deactivation
-        if pnl_from_entry < lc.strategy.base_activation:
-            return False
-
         if not lc.ts_activated:
+            if pnl_from_entry < lc.strategy.base_activation:
+                return False
             lc.ts_activated = True
             logger.info(
                 f"📈 Trailing stop ACTIVATED for {lc.symbol}: "
@@ -528,6 +526,11 @@ class SignalLifecycleManager:
         # Condition B: Callback (drawdown from peak)
         drawdown = calculate_drawdown_from_max(lc.max_price, bar.price)
         if drawdown < lc.strategy.base_callback:
+            if lc.ts_activated:
+                logger.debug(
+                    f"TS {lc.symbol}: drawdown={drawdown:.2f}% < {lc.strategy.base_callback}% "
+                    f"(pnl={pnl_from_entry:.2f}%, peak={lc.max_price})"
+                )
             return False
 
         # Condition C: Delta momentum filter (§6.6)
@@ -539,9 +542,9 @@ class SignalLifecycleManager:
             rolling_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window)
 
             if rolling_delta > 0:
-                logger.debug(
-                    f"Trailing stop HELD for {lc.symbol}: "
-                    f"delta={rolling_delta:.0f} > 0 (positive momentum)"
+                logger.info(
+                    f"⏳ TS HELD {lc.symbol}: B✅ drawdown={drawdown:.2f}%, "
+                    f"C❌ delta={rolling_delta:.0f} > 0 (waiting for sellers)"
                 )
                 return False
 
