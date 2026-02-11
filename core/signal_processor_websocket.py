@@ -947,24 +947,12 @@ class WebSocketSignalProcessor:
                         # Create position request
                         from decimal import Decimal
 
-                        # Get signal direction - CRITICAL: must be explicit
-                        side = signal_data.get('signal_type') or signal_data.get('recommended_action') or signal_data.get('action')
-                        if not side:
-                            logger.error(f"❌ Signal has no direction/side field: {signal_data}")
-                            failed += 1
-                            continue  # Skip this signal - cannot open position without direction
-
-                        # Normalize side to BUY/SELL
+                        # Get signal direction — default to BUY (bot is Long-only)
+                        side = signal_data.get('signal_type') or signal_data.get('recommended_action') or signal_data.get('action') or 'BUY'
                         side = side.upper()
-                        if side not in ['BUY', 'SELL', 'LONG', 'SHORT']:
-                            logger.error(f"❌ Unknown signal direction: {side} for signal: {signal_data}")
-                            failed += 1
-                            continue
-
-                        # Convert LONG/SHORT to BUY/SELL
-                        if side == 'LONG':
+                        if side in ('LONG',):
                             side = 'BUY'
-                        elif side == 'SHORT':
+                        elif side in ('SHORT',):
                             side = 'SELL'
 
                         # Get symbol and exchange
