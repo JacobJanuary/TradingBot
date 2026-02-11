@@ -1099,6 +1099,10 @@ class BinanceHybridStream:
         """
         logger.warning("🔄 [USER] Forcing restart of User Data Stream task...")
         
+        # 0. Reset heartbeat state BEFORE restart to prevent re-triggering
+        self.user_connected = False
+        self.last_user_message_time = 0.0
+        
         # 1. Cancel existing task
         if self.user_task and not self.user_task.done():
             self.user_task.cancel()
