@@ -252,6 +252,9 @@ class PositionManager:
         self.total_exposure = Decimal('0')
         self.position_count = 0
 
+        # FIX #3: Lifecycle manager reference for external closure notifications
+        self.lifecycle_manager = None  # Set via set_lifecycle_manager()
+
         # Statistics
         self.stats = {
             'positions_opened': 0,
@@ -294,6 +297,11 @@ class PositionManager:
         for name, ts_manager in self.trailing_managers.items():
             ts_manager.set_delta_stream(aggtrades_stream, window_sec, threshold_mult)
             logger.info(f"✅ {name}: Delta filter connected to TS manager")
+
+    def set_lifecycle_manager(self, lifecycle_manager):
+        """Set lifecycle manager for external closure notifications."""
+        self.lifecycle_manager = lifecycle_manager
+        logger.info("✅ Lifecycle manager set on position manager")
 
 
     async def synchronize_with_exchanges(self):
@@ -2294,9 +2302,17 @@ class PositionManager:
                 if symbol in self.positions:
                     try:
                         position = self.positions[symbol]
+                        # FIX #2: Prefer fill_price (from ORDER_TRADE_UPDATE) over mark_price
+                        fill_price = data.get('fill_price')
+                        if fill_price:
+                            close_price = float(fill_price)
+                            logger.info(f"💰 Using fill price for {symbol} exit: ${close_price}")
+                        else:
+                            close_price = float(data.get('mark_price', position.current_price))
+                            logger.warning(f"⚠️ No fill price for {symbol}, using mark_price: ${close_price}")
                         await self.close_position(
                             symbol=symbol,
-                            close_price=float(data.get('mark_price', position.current_price)),
+                            close_price=close_price,
                             realized_pnl=float(data.get('unrealized_pnl', position.unrealized_pnl)),
                             reason='websocket_closure'
                         )
@@ -2819,6 +2835,17 @@ class PositionManager:
                     f"Position closed: {symbol} {reason} "
                     f"PnL: ${realized_pnl:.2f} ({realized_pnl_percent:.2f}%)"
                 )
+
+                # FIX #3: Notify lifecycle manager of external closure
+                if reason == 'websocket_closure' and self.lifecycle_manager:
+                    try:
+                        await self.lifecycle_manager.on_position_closed_externally(
+                            symbol=symbol,
+                            exit_price=float(exit_price),
+                            reason="EXCHANGE_SL"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to notify lifecycle of {symbol} closure: {e}")
 
                 # Log position closed event
                 event_logger = get_event_logger()

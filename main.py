@@ -376,6 +376,9 @@ class TradingBot:
                     # Wire into signal processor
                     self.signal_processor.set_lifecycle_manager(lifecycle_manager)
 
+                    # FIX #3: Wire into position manager for external closure notifications
+                    self.position_manager.set_lifecycle_manager(lifecycle_manager)
+
                     # Hook aggTrades to feed bar aggregators (FIX N-5: proper callback)
                     if self.aggtrades_stream:
                         def _lifecycle_trade_handler(data):

@@ -472,7 +472,7 @@ class StopLossManager:
             'triggerPrice': str(final_stop_price),  # ← CCXT precision applied
             'quantity': str(float(amount)),  # ← Will be validated by exchange
             'reduceOnly': 'true',  # String, not boolean
-            'workingType': 'CONTRACT_PRICE',  # Trigger based on contract price
+            'workingType': 'MARK_PRICE',  # Trigger based on mark price (resistant to wicks)
             'priceProtect': 'FALSE',  # String, not boolean
 
             'timeInForce': 'GTC',  # Good Till Cancel

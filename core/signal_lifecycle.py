@@ -931,6 +931,82 @@ class SignalLifecycleManager:
             # Persist state to DB (§4.1)
             await self._persist_lifecycle(lc)
 
+    async def on_position_closed_externally(self, symbol: str, exit_price: float, reason: str = "EXCHANGE_SL"):
+        """
+        Handle position closed externally (exchange SL trigger, manual close, etc.)
+        
+        Called by PositionManager when it detects a WebSocket closure for a symbol
+        that has an active lifecycle. This prevents the lifecycle from trying to
+        close an already-closed position on its next on_bar tick.
+        
+        Args:
+            symbol: Symbol that was closed (e.g. "ACEUSDT")
+            exit_price: Actual fill price from the exchange
+            reason: Closure reason (default: "EXCHANGE_SL")
+        """
+        lc = self.active.get(symbol)
+        if not lc:
+            return
+        
+        if lc.state != SignalState.IN_POSITION:
+            logger.info(f"ℹ️ External close for {symbol} but state={lc.state.value}, ignoring")
+            return
+        
+        # Calculate PnL using the actual fill price
+        pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, exit_price)
+        pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+        
+        logger.info(
+            f"🔔 EXTERNAL CLOSE {lc.symbol}: reason={reason}, "
+            f"fill_price={exit_price}, pnl_from_entry={pnl_from_entry:.3f}%, "
+            f"realized={pnl:.2f}%"
+        )
+        
+        # Record trade (same as _close_position but skip PM.close_position call)
+        trade = TradeRecord(
+            trade_idx=lc.trade_count,
+            entry_price=lc.entry_price,
+            exit_price=exit_price,
+            entry_ts=lc.position_entry_ts,
+            exit_ts=int(time.time()),
+            reason=reason,
+            pnl_pct=pnl,
+            is_reentry=lc.trade_count > 1,
+        )
+        lc.trades.append(trade)
+        lc.cumulative_pnl += pnl
+
+        logger.info(
+            f"📊 CLOSED {lc.symbol}: reason={reason}, pnl={pnl:.2f}%, "
+            f"cumulative={lc.cumulative_pnl:.2f}%, trade #{lc.trade_count}"
+        )
+
+        # Update lifecycle state (skip PM.close_position — already closed!)
+        lc.in_position = False
+        lc.last_exit_ts = int(time.time())
+        lc.last_exit_price = exit_price
+        lc.last_exit_reason = reason
+
+        if reason == "TRAILING":
+            lc.max_price = exit_price
+
+        self.total_positions_closed += 1
+
+        # Decide next state (§6.7)
+        if reason in ("LIQUIDATED", "LIQ+TIMEOUT"):
+            await self._finalize_lifecycle(lc, f"closed_{reason.lower()}")
+        elif self._is_reentry_expired(lc, int(time.time())):
+            await self._finalize_lifecycle(lc, "reentry_window_expired")
+        else:
+            lc.state = SignalState.REENTRY_WAIT
+            logger.info(
+                f"🔄 {lc.symbol} → REENTRY_WAIT: "
+                f"cooldown={lc.strategy.base_cooldown}s, "
+                f"drop_needed={lc.strategy.base_reentry_drop}%, "
+                f"window={lc.derived.max_reentry_seconds}s"
+            )
+            await self._persist_lifecycle(lc)
+
     # ========================================================================
     # Lifecycle Cleanup
     # ========================================================================
