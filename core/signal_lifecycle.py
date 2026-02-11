@@ -106,6 +106,9 @@ class SignalLifecycle:
     # Signal metadata for DB tracking
     total_score: float = 0.0
 
+    # Diagnostic logging throttle
+    _last_reentry_log_ts: int = 0
+
 
 # ==============================================================================
 # Lifecycle Manager
@@ -580,24 +583,42 @@ class SignalLifecycleManager:
         """
         elapsed_since_exit = bar.ts - lc.last_exit_ts
 
+        # Calculate all conditions for diagnostic logging
+        cooldown_ok = elapsed_since_exit >= lc.strategy.base_cooldown
+        drop_pct = (lc.max_price - bar.price) / lc.max_price * 100 if lc.max_price > 0 else 0
+        drop_ok = lc.max_price > 0 and drop_pct >= lc.strategy.base_reentry_drop
+        delta_ok = bar.delta > 0
+        large_ok = bar.large_buy_count > bar.large_sell_count
+
+        # Remaining window time
+        window_remaining = (lc.signal_start_ts + lc.derived.max_reentry_seconds) - bar.ts
+
+        # Periodic diagnostic log (every 60s)
+        if bar.ts - lc._last_reentry_log_ts >= 60:
+            lc._last_reentry_log_ts = bar.ts
+            logger.info(
+                f"📊 REENTRY CHECK {lc.symbol}: "
+                f"cooldown={elapsed_since_exit}/{lc.strategy.base_cooldown}s {'✅' if cooldown_ok else '❌'}, "
+                f"drop={drop_pct:.1f}/{lc.strategy.base_reentry_drop}% {'✅' if drop_ok else '❌'}, "
+                f"delta={bar.delta:.0f} {'✅' if delta_ok else '❌'}, "
+                f"buys={bar.large_buy_count}/sells={bar.large_sell_count} {'✅' if large_ok else '❌'}, "
+                f"window_remaining={window_remaining}s ({window_remaining//3600}h{(window_remaining%3600)//60}m)"
+            )
+
         # 1. Cooldown check
-        if elapsed_since_exit < lc.strategy.base_cooldown:
+        if not cooldown_ok:
             return False
 
         # 2. Drop check — price must have dropped from MAX_PRICE (§7.1)
-        if lc.max_price <= 0:
-            return False
-        
-        drop_pct = (lc.max_price - bar.price) / lc.max_price * 100
-        if drop_pct < lc.strategy.base_reentry_drop:
+        if not drop_ok:
             return False
 
         # 3. Delta > 0 — current bar, per spec §7.1
-        if bar.delta <= 0:
+        if not delta_ok:
             return False
 
         # 4. Large trades — current bar, per spec §7.1
-        if bar.large_buy_count <= bar.large_sell_count:
+        if not large_ok:
             return False
 
         # All conditions met → re-enter
