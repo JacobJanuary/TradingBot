@@ -850,6 +850,58 @@ class SignalLifecycleManager:
                 ))
             return False
 
+    async def _cancel_exchange_sl(self, lc: SignalLifecycle):
+        """
+        Cancel exchange Algo SL order before lifecycle-initiated market close.
+        
+        CRITICAL: Without this, both lifecycle SL and exchange Algo SL can fire
+        within 1s, and the second SELL opens a phantom SHORT position.
+        """
+        try:
+            exchange_name = lc.exchange or 'binance'
+            exchange = self.position_manager.exchanges.get(exchange_name)
+            if not exchange:
+                logger.warning(f"No exchange found for {lc.symbol}, skipping SL cancel")
+                return
+
+            ex = exchange.exchange  # CCXT instance
+            binance_symbol = lc.symbol.replace('/', '')
+
+            # Fetch open Algo orders
+            algo_orders = []
+            try:
+                algo_orders = await ex.fapiPrivateGetOpenAlgoOrders({'symbol': binance_symbol})
+            except AttributeError:
+                try:
+                    algo_orders = await ex.fapiprivate_get_openalgoorders({'symbol': binance_symbol})
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"Failed to fetch algo orders for {lc.symbol}: {e}")
+
+            if not algo_orders:
+                return
+
+            # Cancel all CONDITIONAL (SL) algo orders for this symbol
+            for order in algo_orders:
+                if order.get('algoType') == 'CONDITIONAL' and order.get('algoStatus') in ('NEW', 'WORKING'):
+                    algo_id = order.get('algoId')
+                    try:
+                        await ex.fapiPrivateDeleteAlgo({'algoId': algo_id})
+                        logger.info(f"✅ Cancelled Algo SL for {lc.symbol}: algoId={algo_id}")
+                    except AttributeError:
+                        try:
+                            await ex.fapiprivate_delete_algo({'algoId': algo_id})
+                            logger.info(f"✅ Cancelled Algo SL for {lc.symbol}: algoId={algo_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel Algo SL {algo_id} for {lc.symbol}: {e}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cancel Algo SL {algo_id} for {lc.symbol}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error cancelling exchange SL for {lc.symbol}: {e}")
+            # Don't raise — we still want to try closing the position
+
     async def _close_position(
         self,
         lc: SignalLifecycle,
@@ -886,6 +938,10 @@ class SignalLifecycleManager:
         # Close via position_manager
         if self.position_manager:
             try:
+                # CRITICAL: Cancel exchange Algo SL BEFORE market close to prevent
+                # race condition (both lifecycle SL and exchange SL firing → phantom SHORT)
+                await self._cancel_exchange_sl(lc)
+
                 # §8: Don't pass realized_pnl — PM calculates from entry/exit prices in USD
                 # Our pnl is leveraged %, PM expects USD — let PM do the math
                 await self.position_manager.close_position(
