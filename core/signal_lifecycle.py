@@ -303,7 +303,7 @@ class SignalLifecycleManager:
 
         # 7. Subscribe to aggTrades for this symbol
         if self.aggtrades_stream:
-            self.aggtrades_stream.subscribe(symbol)
+            await self.aggtrades_stream.subscribe(symbol)
             logger.info(f"Subscribed to aggTrades for {symbol}")
 
         # 7b. Load historical lookback bars (§1.2, §9.4)
@@ -908,7 +908,7 @@ class SignalLifecycleManager:
 
         # Unsubscribe from aggTrades
         if self.aggtrades_stream:
-            self.aggtrades_stream.unsubscribe(lc.symbol)
+            await self.aggtrades_stream.unsubscribe(lc.symbol)
 
         # Remove from active
         self.active.pop(lc.symbol, None)
