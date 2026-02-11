@@ -759,7 +759,7 @@ class SignalLifecycleManager:
             from core.position_manager import PositionRequest
             from decimal import Decimal
 
-            # Get current price (prefer bar aggregator, fallback to signal_price)
+            # Get current price (prefer bar aggregator, fallback to signal_price, then exchange ticker)
             current_price = 0.0
             if lc.bar_aggregator and lc.bar_aggregator.bar_count > 0:
                 current_price = lc.bar_aggregator.get_latest_bar().price
@@ -767,6 +767,23 @@ class SignalLifecycleManager:
             if current_price <= 0:
                 current_price = signal_price
             
+            # FIX: fallback to exchange ticker if signal has no price (mirrors legacy pipeline)
+            if current_price <= 0 and self.position_manager:
+                try:
+                    exchange_mgr = self.position_manager.exchanges.get(lc.exchange)
+                    if exchange_mgr:
+                        ticker = await exchange_mgr.fetch_ticker(lc.symbol)
+                        fetched = ticker.get('last') or ticker.get('close')
+                        if fetched and float(fetched) > 0:
+                            current_price = float(fetched)
+                            logger.info(f"Fetched market price for {lc.symbol}: {current_price}")
+                        else:
+                            logger.warning(f"fetch_ticker returned no valid price for {lc.symbol}: {ticker}")
+                    else:
+                        logger.warning(f"Exchange '{lc.exchange}' not in position_manager.exchanges")
+                except Exception as e:
+                    logger.warning(f"Error fetching market price for {lc.symbol}: {e}")
+
             if current_price <= 0:
                 logger.error(f"No valid price for {lc.symbol}, cannot open position")
                 return False
