@@ -18,6 +18,7 @@ import asyncio
 import logging
 import time
 import aiohttp
+from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional, Any, Callable, List
@@ -277,6 +278,9 @@ class SignalLifecycleManager:
         # 6. Create lifecycle
         # §5.1: signal_start_ts = signal's entry_time, not current time
         entry_time = signal.get('entry_time', signal.get('timestamp', int(time.time())))
+        # FIX: signal_adapter returns 'timestamp' as datetime.datetime — convert to epoch int
+        if isinstance(entry_time, datetime):
+            entry_time = int(entry_time.timestamp())
         lc = SignalLifecycle(
             signal_id=signal_id or 0,
             symbol=symbol,
