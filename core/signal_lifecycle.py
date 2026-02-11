@@ -1074,6 +1074,34 @@ class SignalLifecycleManager:
         """Finalize and clean up a signal lifecycle."""
         lc.state = SignalState.FINALIZED
 
+        # SAFETY NET: If position is still open on exchange, close it before cleanup
+        # This handles edge cases like state desynchronization after bot restart
+        if lc.in_position and self.position_manager:
+            logger.warning(
+                f"⚠️ FINALIZE {lc.symbol}: position still OPEN! "
+                f"reason={reason}, closing before cleanup..."
+            )
+            try:
+                # Cancel Algo SL first to prevent phantom SHORT
+                await self._cancel_exchange_sl(lc)
+
+                # Get current price for PnL calculation
+                current_price = 0.0
+                if lc.bar_aggregator and lc.bar_aggregator.bar_count > 0:
+                    current_price = lc.bar_aggregator.get_latest_bar().price
+                if current_price <= 0:
+                    current_price = lc.entry_price  # fallback
+
+                await self.position_manager.close_position(
+                    symbol=lc.symbol,
+                    reason=f"lifecycle_finalize_{reason}",
+                    close_price=current_price,
+                )
+                lc.in_position = False
+                logger.info(f"✅ {lc.symbol}: Position closed during finalize")
+            except Exception as e:
+                logger.error(f"❌ Failed to close {lc.symbol} during finalize: {e}")
+
         trades_summary = ", ".join(
             f"#{t.trade_idx}:{t.reason}={t.pnl_pct:.1f}%" for t in lc.trades
         ) or "no trades"
@@ -1301,6 +1329,27 @@ class SignalLifecycleManager:
                 bar_agg.on_bar_callback = lambda bar, s=symbol: asyncio.create_task(
                     self._on_bar_safe(s, bar)
                 )
+
+                # CRITICAL: Cross-check with exchange on restore
+                # If exchange has open position but lifecycle says reentry_wait,
+                # fix the state to in_position so exit checks run
+                if state == SignalState.REENTRY_WAIT and self.position_manager:
+                    try:
+                        has_pos = await self.position_manager.has_open_position(
+                            symbol, exchange
+                        )
+                        if has_pos:
+                            logger.warning(
+                                f"⚠️ {symbol}: DB says reentry_wait but exchange "
+                                f"has OPEN position! Forcing state=IN_POSITION"
+                            )
+                            lc.state = SignalState.IN_POSITION
+                            lc.in_position = True
+                            state_str = "in_position (force-corrected)"
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to cross-check {symbol} with exchange: {e}"
+                        )
 
                 restored += 1
                 logger.info(
