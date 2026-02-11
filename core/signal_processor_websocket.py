@@ -788,6 +788,13 @@ class WebSocketSignalProcessor:
                     await self.lifecycle_manager.on_signal_received(signal, matched_params=params)
                 except Exception as e:
                     logger.error(f"Lifecycle manager error for {symbol}: {e}")
+                    event_logger = get_event_logger()
+                    if event_logger:
+                        asyncio.create_task(event_logger.log_event(
+                            EventType.ERROR_OCCURRED,
+                            {'symbol': symbol, 'error': str(e), 'context': 'lifecycle_manager', 'score': score},
+                            symbol=symbol, severity='ERROR'
+                        ))
             else:
                 remaining.append(signal)
 
@@ -1019,6 +1026,13 @@ class WebSocketSignalProcessor:
                     except Exception as e:
                         logger.error(f"Error executing signal: {e}")
                         failed += 1
+                        event_logger = get_event_logger()
+                        if event_logger:
+                            asyncio.create_task(event_logger.log_event(
+                                EventType.SIGNAL_EXECUTION_FAILED,
+                                {'symbol': signal_data.get('symbol', ''), 'error': str(e), 'context': 'wave_pipeline'},
+                                symbol=signal_data.get('symbol', ''), exchange=exchange_name, severity='ERROR'
+                            ))
 
             # Статистика уже собрана в filter_reasons из filter phase
             results_by_exchange[exchange_id] = {
@@ -1275,6 +1289,13 @@ class WebSocketSignalProcessor:
 
         except Exception as e:
             logger.error(f"❌ Error executing signal #{signal_id}: {e}", exc_info=True)
+            event_logger = get_event_logger()
+            if event_logger:
+                asyncio.create_task(event_logger.log_event(
+                    EventType.SIGNAL_EXECUTION_FAILED,
+                    {'signal_id': signal_id, 'symbol': symbol, 'error': str(e), 'context': 'execute_signal'},
+                    symbol=symbol, exchange=exchange, severity='ERROR'
+                ))
             return False
 
 

@@ -19,6 +19,7 @@ import logging
 import time
 import aiohttp
 from datetime import datetime
+from core.event_logger import get_event_logger, EventType
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional, Any, Callable, List
@@ -300,6 +301,13 @@ class SignalLifecycleManager:
         success = await self._open_position(lc, is_reentry=False, signal_price=signal_price)
         if not success:
             logger.error(f"Failed to open initial position for {symbol}, removing lifecycle")
+            event_logger = get_event_logger()
+            if event_logger:
+                asyncio.create_task(event_logger.log_event(
+                    EventType.POSITION_CREATION_FAILED,
+                    {'symbol': symbol, 'error': 'initial_position_open_failed', 'score': score, 'context': 'lifecycle_init'},
+                    symbol=symbol, severity='ERROR'
+                ))
             await self._cleanup_lifecycle(lc)
             return False
 
@@ -341,6 +349,13 @@ class SignalLifecycleManager:
             await self.on_bar(symbol, bar)
         except Exception as e:
             logger.error(f"Error in on_bar for {symbol}: {e}", exc_info=True)
+            event_logger = get_event_logger()
+            if event_logger:
+                asyncio.create_task(event_logger.log_event(
+                    EventType.ERROR_OCCURRED,
+                    {'symbol': symbol, 'error': str(e), 'context': 'on_bar'},
+                    symbol=symbol, severity='ERROR'
+                ))
 
     async def on_bar(self, symbol: str, bar: OneSecondBar):
         """
@@ -806,6 +821,13 @@ class SignalLifecycleManager:
 
         except Exception as e:
             logger.error(f"Exception opening position for {lc.symbol}: {e}", exc_info=True)
+            event_logger = get_event_logger()
+            if event_logger:
+                asyncio.create_task(event_logger.log_event(
+                    EventType.POSITION_CREATION_FAILED,
+                    {'symbol': lc.symbol, 'error': str(e), 'context': 'open_position', 'is_reentry': 'unknown'},
+                    symbol=lc.symbol, severity='ERROR'
+                ))
             return False
 
     async def _close_position(
@@ -853,6 +875,13 @@ class SignalLifecycleManager:
                 )
             except Exception as e:
                 logger.error(f"Error closing position for {lc.symbol}: {e}")
+                event_logger = get_event_logger()
+                if event_logger:
+                    asyncio.create_task(event_logger.log_event(
+                        EventType.POSITION_ERROR,
+                        {'symbol': lc.symbol, 'error': str(e), 'context': 'close_position', 'reason': reason},
+                        symbol=lc.symbol, severity='ERROR'
+                    ))
 
         # Update lifecycle state
         lc.in_position = False
