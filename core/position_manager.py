@@ -2028,6 +2028,10 @@ class PositionManager:
         logger.debug(f"  Entry price: ${price}")
         logger.debug(f"  Raw quantity: {quantity}")
 
+        # Phase 3: Use config tolerance instead of hardcoded 1.1
+        from config.settings import config as global_config
+        tolerance_factor = 1 + (float(global_config.safety.POSITION_SIZE_TOLERANCE_PERCENT) / 100)
+
         # Check minimum amount BEFORE formatting
         min_amount = exchange.get_min_amount(symbol)
         adjusted_quantity = quantity
@@ -2036,9 +2040,6 @@ class PositionManager:
         if to_decimal(quantity) < to_decimal(min_amount):
             # Fallback: check if we can use minimum quantity
             min_cost = float(min_amount) * float(price)
-            # Phase 3: Use config tolerance instead of hardcoded 1.1
-            from config.settings import config as global_config
-            tolerance_factor = 1 + (float(global_config.safety.POSITION_SIZE_TOLERANCE_PERCENT) / 100)
             tolerance: Decimal = size_usd * Decimal(str(tolerance_factor))  # 10% over budget allowed
 
             if min_cost <= tolerance:
