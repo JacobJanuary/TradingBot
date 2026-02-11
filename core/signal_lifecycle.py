@@ -253,7 +253,7 @@ class SignalLifecycleManager:
             return False
 
         # 3. Check if position already exists via position_manager
-        if self.position_manager and self.position_manager.has_open_position(symbol, exchange):
+        if self.position_manager and await self.position_manager.has_open_position(symbol, exchange):
             logger.info(f"Position already exists for {symbol} on {exchange}, skipping")
             return False
 
