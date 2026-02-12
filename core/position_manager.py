@@ -1151,6 +1151,21 @@ class PositionManager:
                 # Fixed sizing - use config value
                 position_size_usd = self.config.position_size_usd
                 logger.info(f"📍 Using FIXED position size: ${position_size_usd}")
+
+            # Auto-adjust if below exchange min_cost (e.g., $2 < $5 minNotional)
+            try:
+                exchange_symbol = exchange.find_exchange_symbol(symbol) or symbol
+                if exchange_symbol in exchange.markets:
+                    min_cost = exchange.markets[exchange_symbol].get('limits', {}).get('cost', {}).get('min')
+                    if min_cost and position_size_usd < min_cost:
+                        adjusted = min_cost * 1.1
+                        logger.warning(
+                            f"⬆️ {symbol}: position_size_usd ${position_size_usd} < min_cost ${min_cost}, "
+                            f"auto-bumped to ${adjusted:.2f}"
+                        )
+                        position_size_usd = adjusted
+            except Exception as e:
+                logger.debug(f"Could not check min_cost for {symbol}: {e}")
                 
             quantity = await self._calculate_position_size(
                 exchange, symbol, Decimal(str(request.entry_price)), Decimal(str(position_size_usd))

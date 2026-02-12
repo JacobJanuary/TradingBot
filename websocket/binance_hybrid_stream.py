@@ -1284,6 +1284,8 @@ class BinanceHybridStream:
     async def _subscribe_mark_price(self, symbol: str):
         """Subscribe to mark price stream for symbol"""
         if symbol in self.subscribed_symbols:
+            # Already subscribed — clear from pending to prevent infinite retry loop
+            self.pending_subscriptions.discard(symbol)
             logger.debug(f"[MARK] Already subscribed to {symbol}")
             return
 
@@ -1306,6 +1308,11 @@ class BinanceHybridStream:
             self.subscribed_symbols.add(symbol)
             self.pending_subscriptions.discard(symbol)  # Clear from pending after successful subscription
             self.next_request_id += 1
+
+            # Initialize timestamp so REST fallback doesn't report bogus WS gaps
+            ts_key = f"{symbol}_timestamp"
+            if ts_key not in self.mark_prices:
+                self.mark_prices[ts_key] = asyncio.get_event_loop().time()
 
             logger.info(f"✅ [MARK] Subscribed to {symbol} (pending cleared)")
 

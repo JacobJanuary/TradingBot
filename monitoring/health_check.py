@@ -576,13 +576,26 @@ class HealthChecker:
             # Check if TS count matches open positions
             positions_count = len(await self.repository.get_open_positions())
 
-            if total_ts == 0 and positions_count > 0:
+            # Exclude lifecycle-managed positions (they use internal TS, not legacy SmartTrailingStop)
+            lifecycle_count = 0
+            try:
+                lc_row = await self.repository.pool.fetchrow(
+                    "SELECT COUNT(*) as cnt FROM monitoring.signal_lifecycles WHERE in_position = TRUE"
+                )
+                lifecycle_count = lc_row['cnt'] or 0
+            except Exception:
+                pass  # If table doesn't exist or query fails, assume 0
+
+            # Only non-lifecycle positions need legacy TS coverage
+            legacy_positions_count = positions_count - lifecycle_count
+
+            if legacy_positions_count > 0 and total_ts == 0:
                 status = HealthStatus.UNHEALTHY
-                error_message = f"{positions_count} positions but 0 trailing stops!"
-            elif total_ts < positions_count * 0.95:  # Less than 95% coverage
+                error_message = f"{legacy_positions_count} legacy positions but 0 trailing stops! ({lifecycle_count} lifecycle-managed excluded)"
+            elif legacy_positions_count > 0 and total_ts < legacy_positions_count * 0.95:
                 status = HealthStatus.DEGRADED
-                coverage = (total_ts / positions_count * 100) if positions_count > 0 else 0
-                error_message = f"Low TS coverage: {coverage:.1f}% ({total_ts}/{positions_count})"
+                coverage = (total_ts / legacy_positions_count * 100) if legacy_positions_count > 0 else 0
+                error_message = f"Low TS coverage: {coverage:.1f}% ({total_ts}/{legacy_positions_count}, {lifecycle_count} lifecycle-managed excluded)"
 
             return ComponentHealth(
                 name="Trailing Stop System",
@@ -598,7 +611,9 @@ class HealthChecker:
                     'updates_last_hour': updates_last_hour,
                     'avg_updates_per_ts': round(avg_updates, 2),
                     'open_positions': positions_count,
-                    'coverage_percent': round((total_ts / positions_count * 100) if positions_count > 0 else 0, 1)
+                    'lifecycle_managed_positions': lifecycle_count,
+                    'legacy_positions': legacy_positions_count,
+                    'coverage_percent': round((total_ts / legacy_positions_count * 100) if legacy_positions_count > 0 else 100, 1)
                 }
             )
 

@@ -1862,8 +1862,12 @@ class ExchangeManager:
                                         return False, f"Would exceed max notional: ${new_total:.2f} > ${max_notional:.2f}"
                             break
                 except Exception as e:
-                    # Log warning but don't block
-                    logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
+                    # "Invalid symbol" is expected for some pairs (ME, 0G, LINEA, etc.)
+                    error_str = str(e)
+                    if 'Invalid symbol' in error_str:
+                        logger.debug(f"maxNotionalValue check skipped for {symbol}: not available on API")
+                    else:
+                        logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
 
             return True, "OK"
 
