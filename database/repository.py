@@ -330,9 +330,10 @@ class Repository:
             UPDATE monitoring.positions
             SET current_price = $1,
                 unrealized_pnl = $2,
+                pnl_percentage = $3,
                 updated_at = NOW()
-            WHERE symbol = $3
-                AND exchange = $4
+            WHERE symbol = $4
+                AND exchange = $5
                 AND status = 'active'
         """
 
@@ -342,6 +343,7 @@ class Repository:
                     query,
                     position_update['current_price'],
                     position_update.get('unrealized_pnl', 0),
+                    position_update.get('pnl_percentage'),
                     position_update['symbol'],
                     position_update['exchange']
                 )
@@ -367,15 +369,19 @@ class Repository:
     async def update_position_trailing_stop(self, position_id: int,
                                             activation_price: float,
                                             callback_rate: float):
-        """Update position trailing stop"""
+        """Update position trailing stop parameters in DB"""
         query = """
             UPDATE monitoring.positions
-            SET updated_at = NOW()
+            SET trailing_activation_percent = $2,
+                trailing_callback_percent = $3,
+                has_trailing_stop = TRUE,
+                updated_at = NOW()
             WHERE id = $1
         """
 
         async with self.pool.acquire() as conn:
-            await conn.execute(query, position_id)
+            await conn.execute(query, position_id, activation_price, callback_rate)
+            logger.info(f"🔍 DB: updated position {position_id} TS: activation={activation_price}%, callback={callback_rate}%")
 
     async def close_position(self, position_id: int,
                             close_price: Optional[float] = None,

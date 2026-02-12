@@ -106,6 +106,9 @@ class SignalLifecycle:
     # Signal metadata for DB tracking
     total_score: float = 0.0
 
+    # Position ID for DB linkage
+    position_id: Optional[int] = None
+
     # Diagnostic logging throttle
     _last_reentry_log_ts: int = 0
 
@@ -866,6 +869,7 @@ class SignalLifecycleManager:
                 lc.in_position = True
                 lc.trade_count += 1
                 lc.ts_activated = False
+                lc.position_id = int(result.id) if result.id and str(result.id) != 'pending' else None
 
                 prefix = "RE-ENTRY" if is_reentry else "ENTRY"
                 logger.info(
@@ -1246,6 +1250,7 @@ class SignalLifecycleManager:
             'last_exit_reason': lc.last_exit_reason,
             'ts_activated': lc.ts_activated,
             'cumulative_pnl': lc.cumulative_pnl,
+            'position_id': lc.position_id,
             'trades': [
                 {
                     'trade_idx': t.trade_idx,

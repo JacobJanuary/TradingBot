@@ -2564,7 +2564,8 @@ class PositionManager:
                     'current_price': position.current_price,
                     'mark_price': position.current_price,
                     'unrealized_pnl': position.unrealized_pnl,
-                    'unrealized_pnl_percent': position.unrealized_pnl_percent
+                    'unrealized_pnl_percent': position.unrealized_pnl_percent,
+                    'pnl_percentage': position.unrealized_pnl_percent,
                 })
 
                 # Log successful position update
