@@ -580,8 +580,17 @@ class SignalLifecycleManager:
         2. Drop: price dropped base_reentry_drop% from max_price
         3. Delta: current bar delta > 0  (§7.1)
         4. Large trades: current bar large_buy_count > large_sell_count (§7.1)
+        
+        Large trade threshold is dynamically calibrated per-symbol using
+        P90 of accumulated trade volumes (calibrated once after cooldown).
         """
         elapsed_since_exit = bar.ts - lc.last_exit_ts
+
+        # Calibrate dynamic large trade threshold once after cooldown passes
+        if (lc.bar_aggregator and
+            not lc.bar_aggregator._threshold_calibrated and
+            elapsed_since_exit >= lc.strategy.base_cooldown):
+            lc.bar_aggregator.calibrate_dynamic_threshold()
 
         # Calculate all conditions for diagnostic logging
         cooldown_ok = elapsed_since_exit >= lc.strategy.base_cooldown
@@ -593,6 +602,9 @@ class SignalLifecycleManager:
         # Remaining window time
         window_remaining = (lc.signal_start_ts + lc.derived.max_reentry_seconds) - bar.ts
 
+        # Current threshold for diagnostics
+        threshold = lc.bar_aggregator.large_trade_threshold if lc.bar_aggregator else 10000
+
         # Periodic diagnostic log (every 60s)
         if bar.ts - lc._last_reentry_log_ts >= 60:
             lc._last_reentry_log_ts = bar.ts
@@ -602,6 +614,7 @@ class SignalLifecycleManager:
                 f"drop={drop_pct:.1f}/{lc.strategy.base_reentry_drop}% {'✅' if drop_ok else '❌'}, "
                 f"delta={bar.delta:.0f} {'✅' if delta_ok else '❌'}, "
                 f"buys={bar.large_buy_count}/sells={bar.large_sell_count} {'✅' if large_ok else '❌'}, "
+                f"threshold=${threshold:.0f}, "
                 f"window_remaining={window_remaining}s ({window_remaining//3600}h{(window_remaining%3600)//60}m)"
             )
 
@@ -626,7 +639,8 @@ class SignalLifecycleManager:
             f"🔄 RE-ENTRY triggered for {lc.symbol}: "
             f"cooldown={elapsed_since_exit}s, "
             f"drop={drop_pct:.2f}% >= {lc.strategy.base_reentry_drop}%, "
-            f"bar.delta={bar.delta:.0f}, buy={bar.large_buy_count}/sell={bar.large_sell_count}"
+            f"bar.delta={bar.delta:.0f}, buy={bar.large_buy_count}/sell={bar.large_sell_count}, "
+            f"threshold=${threshold:.0f}"
         )
 
         success = await self._open_position(lc, is_reentry=True)

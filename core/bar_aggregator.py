@@ -19,8 +19,13 @@ from typing import Optional, Deque, Callable
 
 logger = logging.getLogger(__name__)
 
-# Large trade threshold in USD
+# Default large trade threshold (fallback before dynamic calibration)
 LARGE_TRADE_THRESHOLD_USD = 10_000
+
+# Dynamic threshold settings
+DYNAMIC_THRESHOLD_PERCENTILE = 90   # P90 = top 10% of trades are "large"
+DYNAMIC_MIN_SAMPLES = 500           # Min trades before calibration
+TRADE_VOLUME_BUFFER_SIZE = 10_000   # Rolling buffer of trade volumes
 
 
 @dataclass
@@ -80,6 +85,11 @@ class BarAggregator:
         self._current_large_sell: int = 0
         self._has_trades: bool = False
 
+        # Dynamic large trade threshold (per-symbol)
+        self.large_trade_threshold: float = LARGE_TRADE_THRESHOLD_USD
+        self._trade_volumes: Deque[float] = deque(maxlen=TRADE_VOLUME_BUFFER_SIZE)
+        self._threshold_calibrated: bool = False
+
         # Callback when new bar is completed
         self.on_bar_callback: Optional[Callable] = None
 
@@ -110,15 +120,18 @@ class BarAggregator:
         volume_usd = price * qty
         self._current_price = price  # last price = close
 
+        # Store individual trade volume for dynamic threshold calibration
+        self._trade_volumes.append(volume_usd)
+
         if is_buyer_maker:
             # Buyer is maker → trade initiated by seller → sell volume
             self._current_delta -= volume_usd
-            if volume_usd >= LARGE_TRADE_THRESHOLD_USD:
+            if volume_usd >= self.large_trade_threshold:
                 self._current_large_sell += 1
         else:
             # Seller is maker → trade initiated by buyer → buy volume
             self._current_delta += volume_usd
-            if volume_usd >= LARGE_TRADE_THRESHOLD_USD:
+            if volume_usd >= self.large_trade_threshold:
                 self._current_large_buy += 1
 
     def flush_bar(self) -> Optional[OneSecondBar]:
@@ -254,6 +267,46 @@ class BarAggregator:
         effective_lookback = min(lookback, n)
         total = self.cumsum_abs_delta[-1] - self.cumsum_abs_delta[-(effective_lookback + 1)]
         return total / effective_lookback
+
+    def calibrate_dynamic_threshold(self, percentile: float = DYNAMIC_THRESHOLD_PERCENTILE) -> float:
+        """
+        Compute and apply a dynamic 'large trade' threshold from recent trade volumes.
+        
+        Uses the P90 (or specified percentile) of accumulated trade volumes.
+        Trades above this threshold are considered "large" for re-entry analysis.
+        
+        Args:
+            percentile: Percentile cutoff (default: 90 = top 10% are "large")
+            
+        Returns:
+            The new threshold value in USD
+        """
+        n = len(self._trade_volumes)
+        if n < DYNAMIC_MIN_SAMPLES:
+            logger.info(
+                f"📏 {self.symbol}: Not enough trades for calibration "
+                f"({n}/{DYNAMIC_MIN_SAMPLES}), keeping threshold=${self.large_trade_threshold:.0f}"
+            )
+            return self.large_trade_threshold
+
+        sorted_volumes = sorted(self._trade_volumes)
+        idx = int(n * percentile / 100)
+        idx = min(idx, n - 1)
+        new_threshold = sorted_volumes[idx]
+
+        # Ensure minimum threshold of $50 to avoid noise
+        new_threshold = max(new_threshold, 50.0)
+
+        old_threshold = self.large_trade_threshold
+        self.large_trade_threshold = new_threshold
+        self._threshold_calibrated = True
+
+        logger.info(
+            f"📏 {self.symbol}: Dynamic threshold calibrated: "
+            f"${old_threshold:.0f} → ${new_threshold:.0f} "
+            f"(P{percentile:.0f} of {n} trades)"
+        )
+        return new_threshold
 
     def get_latest_bar(self) -> Optional[OneSecondBar]:
         """Get the most recently completed bar."""
