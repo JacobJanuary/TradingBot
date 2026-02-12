@@ -484,10 +484,9 @@ class PositionManager:
                     stop_loss_price=pos['stop_loss'],
                     has_trailing_stop=pos['has_trailing_stop'] or False,
                     trailing_activated=pos['trailing_activated'] or False,
-                    # ALWAYS use current ENV params, even for restored positions
-                    trailing_activation_percent=float(self.config.trailing_activation_percent),
-                    trailing_callback_percent=float(self.config.trailing_callback_percent),
-                    # signal_stop_loss_percent removed 2026-01-03
+                    # FIX 2026-02-12: Use per-position params from DB, .env as fallback
+                    trailing_activation_percent=float(pos.get('trailing_activation_percent') or self.config.trailing_activation_percent),
+                    trailing_callback_percent=float(pos.get('trailing_callback_percent') or self.config.trailing_callback_percent),
                     leverage=int(pos.get('leverage', 10) or 10),
                     opened_at=opened_at,
                     age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
@@ -558,10 +557,11 @@ class PositionManager:
                             current_price = ticker.get('last') if ticker else position.current_price
 
                             # Calculate stop loss price
-                            # FIXED: ALWAYS use ENV config, not DB values
-                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            # FIX 2026-02-12: Use per-position SL from DB, .env as fallback
+                            db_sl = pos.get('signal_stop_loss_percent')
+                            stop_loss_percent = to_decimal(db_sl) if db_sl else to_decimal(self.config.stop_loss_percent)
                             logger.info(
-                                f"📊 {position.symbol}: Using stop_loss from ENV: {stop_loss_percent}%"
+                                f"📊 {position.symbol}: Using stop_loss from {'DB' if db_sl else '.env'}: {stop_loss_percent}%"
                             )
 
                             stop_loss_price = calculate_stop_loss(
@@ -687,10 +687,9 @@ class PositionManager:
                                 logger.info(f"✅ {symbol}: TS state restored from DB")
                             else:
                                 # No state in DB - create new trailing stop
-                                # FIXED: ALWAYS use ENV config, not DB values
-                                # This ensures consistency after restart
-                                pos_activation = float(self.config.trailing_activation_percent)
-                                pos_callback = float(self.config.trailing_callback_percent)
+                                # FIX 2026-02-12: Use per-position params from DB, .env as fallback
+                                pos_activation = float(pos.get('trailing_activation_percent') or self.config.trailing_activation_percent)
+                                pos_callback = float(pos.get('trailing_callback_percent') or self.config.trailing_callback_percent)
 
                                 await asyncio.wait_for(
                                     trailing_manager.create_trailing_stop(
@@ -745,7 +744,9 @@ class PositionManager:
 
             logger.info(f"🔄 Syncing positions from {exchange_name}...")
 
-            # Use trailing params from config (DB params removed 2026-01-03)
+            # FIX 2026-02-12: .env fallback is intentional for NEW synced positions
+            # (discovered on exchange without a matching DB record = no strategy context).
+            # For restored positions from DB, per-position params are used in FIX 6 above.
             trailing_activation_percent = float(self.config.trailing_activation_percent)
             trailing_callback_percent = float(self.config.trailing_callback_percent)
 
@@ -905,11 +906,11 @@ class PositionManager:
 
                         # Check if stop loss needs to be set
                         if not position_state.has_stop_loss:
-                            # REMOVED DB PARAMS FETCH 2026-01-02
-                            # Use .env config directly
-                            stop_loss_percent = to_decimal(self.config.stop_loss_percent)
+                            # FIX 2026-02-12: Use per-position SL from DB, .env as fallback
+                            db_sl = db_position.get('signal_stop_loss_percent') if db_position else None
+                            stop_loss_percent = to_decimal(db_sl) if db_sl else to_decimal(self.config.stop_loss_percent)
                             logger.debug(
-                                f"📊 {symbol}: Using stop_loss_percent from .env: {stop_loss_percent}%"
+                                f"📊 {symbol}: Using stop_loss_percent from {'DB' if db_sl else '.env'}: {stop_loss_percent}%"
                             )
 
                             stop_loss_price = calculate_stop_loss(
@@ -978,8 +979,8 @@ class PositionManager:
                                 logger.error(f"❌ Failed to initialize TS for synced {symbol}: {e}")
                                 # ВОПРОС: Закрыть позицию или оставить с Protection SL?
 
-                        # Set stop loss for new position
-                        # REMOVED DB PARAMS FETCH 2026-01-02
+                        # Set stop loss for new synced position
+                        # FIX 2026-02-12: .env fallback is intentional here (new synced position = no strategy context)
                         stop_loss_percent = to_decimal(self.config.stop_loss_percent)
 
 
@@ -1568,10 +1569,10 @@ class PositionManager:
             if position.id is not None and hasattr(position, 'has_stop_loss') and position.has_stop_loss:
                 logger.info(f"✅ Stop loss already set atomically for {symbol}")
             else:
-                # Use stop loss from .env config ALWAYS (signal params ignored 2026-01-03)
-                # FIX: Signal params were overriding .env config incorrectly
-                stop_loss_percent_val = to_decimal(self.config.stop_loss_percent)
-                logger.info(f"📊 Using SL from .env: {stop_loss_percent_val}%")
+                # FIX 2026-02-12: Use stop_loss_percent from strategy_params (computed at L1257)
+                # Previously this line overrode strategy SL with .env — that was a bug
+                stop_loss_percent_val = stop_loss_percent  # Reuse value from sp.get() at L1257
+                logger.info(f"📊 Using SL from strategy: {stop_loss_percent_val}%")
 
                 stop_loss_price_val: Decimal = calculate_stop_loss(
                     to_decimal(position.entry_price), position.side, stop_loss_percent_val

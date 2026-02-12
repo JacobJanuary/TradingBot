@@ -224,9 +224,10 @@ class Repository:
                 entry_price, current_price, status, has_trailing_stop,
                 trailing_activation_percent,
                 trailing_callback_percent,
-                signal_id, leverage, exchange_order_id
+                signal_id, leverage, exchange_order_id,
+                signal_stop_loss_percent
             ) VALUES ($1, $2, $3, $4, $5, $6, 'active', TRUE, $7, $8,
-                      $9, $10, $11)
+                      $9, $10, $11, $12)
             RETURNING id
         """
 
@@ -274,6 +275,7 @@ class Repository:
                         position_data.get('signal_id'),
                         position_data.get('leverage', 1.0),
                         position_data.get('exchange_order_id'),
+                        position_data.get('stop_loss_percent'),  # FIX 2026-02-12: Save strategy SL%
                     )
 
 

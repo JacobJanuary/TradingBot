@@ -678,6 +678,7 @@ class AtomicPositionManager:
                     'exchange_order_id': entry_order.id,
                     'trailing_activation_percent': trailing_activation_percent,
                     'trailing_callback_percent': trailing_callback_percent,
+                    'stop_loss_percent': stop_loss_percent,  # FIX 2026-02-12: Save for restart persistence
                     'signal_id': signal_id,
                     'leverage': int(sp.get('leverage', self.config.leverage if self.config else 1)),
                 }
