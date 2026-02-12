@@ -2460,12 +2460,14 @@ class PositionManager:
                 # Apply leverage to PnL%
                 position.unrealized_pnl_percent = pnl_pct * leverage
 
-                # Calculate USD PnL from our entry_price + quantity × leverage
+                # Calculate USD PnL from entry_price + quantity
+                # NOTE: qty is the FULL position size (not margin), so NO leverage multiplier
+                # Leverage only applies to PnL% (return on margin)
                 qty = float(position.quantity) if position.quantity else 0
                 if position.side == 'long':
-                    position.unrealized_pnl = (float(position.current_price) - float(position.entry_price)) * qty * leverage
+                    position.unrealized_pnl = (float(position.current_price) - float(position.entry_price)) * qty
                 else:
-                    position.unrealized_pnl = (float(position.entry_price) - float(position.current_price)) * qty * leverage
+                    position.unrealized_pnl = (float(position.entry_price) - float(position.current_price)) * qty
 
                 # Persist price and PnL to database
                 logger.info(
