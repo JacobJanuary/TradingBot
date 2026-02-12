@@ -24,7 +24,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Optional, Any, Callable, List
 
-from core.composite_strategy import CompositeStrategy, StrategyParams, DerivedConstants
+from core.composite_strategy import (
+    CompositeStrategy, StrategyParams, DerivedConstants,
+    SMART_TIMEOUT_THRESHOLD, SMART_TIMEOUT_EXTENSION_SEC,
+    SMART_TIMEOUT_MAX_EXTENSIONS, SMART_TIMEOUT_RECHECK_SEC,
+    SMART_TIMEOUT_RSI_OVERSOLD, SMART_TIMEOUT_RSI_OVERBOUGHT,
+    SMART_TIMEOUT_VOL_ZSCORE_MIN, SMART_TIMEOUT_PAIR_DUMP_PCT,
+)
 from core.bar_aggregator import BarAggregator, OneSecondBar
 from core.pnl_calculator import (
     calculate_pnl_from_entry,
@@ -111,6 +117,12 @@ class SignalLifecycle:
 
     # Diagnostic logging throttle
     _last_reentry_log_ts: int = 0
+
+    # Smart Timeout v2.0 — extension mode tracking (2026-02-12)
+    in_extension_mode: bool = False
+    timeout_extensions_used: int = 0
+    extension_start_ts: int = 0
+    last_strength_check_ts: int = 0
 
 
 # ==============================================================================
@@ -435,12 +447,18 @@ class SignalLifecycleManager:
 
     async def _check_timeout(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
         """
-        Check position timeout (§6.2).
+        Check position timeout (§6.2) with Smart Timeout v2.0.
         
-        Close if: now - position_entry_ts >= max_position_seconds
-        PnL: leveraged PnL at current price (clamped to -100%)
-        If PnL <= -liq_threshold → count as liquidation
+        Original behavior: close if elapsed >= max_position_seconds.
+        v2.0 addition: if in loss but recoverable, compute strength score.
+        If score >= threshold → enter extension mode with per-second
+        breakeven monitoring.
         """
+        # ── EXTENSION MODE: per-second PnL monitoring ──
+        if lc.in_extension_mode:
+            return await self._check_timeout_extension(lc, bar)
+
+        # ── NORMAL: original timeout check ──
         elapsed = bar.ts - lc.position_entry_ts
         if elapsed < lc.derived.max_position_seconds:
             return False
@@ -448,19 +466,225 @@ class SignalLifecycleManager:
         pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, bar.price)
         liq_threshold = get_liquidation_threshold(lc.strategy.leverage)
 
+        # Safety first: near-liquidation → always close
         if pnl_from_entry <= -liq_threshold:
             reason = "LIQ+TIMEOUT"
-        else:
+            pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+            logger.info(
+                f"⏰ TIMEOUT {lc.symbol}: {elapsed}s >= {lc.derived.max_position_seconds}s, "
+                f"pnl={pnl:.2f}% reason={reason}"
+            )
+            await self._close_position(lc, reason, pnl, bar.price)
+            return True
+
+        # Profitable → close immediately (lock profit)
+        if pnl_from_entry > 0:
             reason = "TIMEOUT"
+            pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+            logger.info(
+                f"⏰ TIMEOUT {lc.symbol}: {elapsed}s >= {lc.derived.max_position_seconds}s, "
+                f"pnl={pnl:.2f}% reason={reason}"
+            )
+            await self._close_position(lc, reason, pnl, bar.price)
+            return True
 
+        # In loss — check if too deep for extension
+        pnl_floor = -(lc.strategy.sl_pct * 0.8)
+        if pnl_from_entry <= pnl_floor:
+            reason = "TIMEOUT"
+            pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+            logger.info(
+                f"⏰ TIMEOUT {lc.symbol}: {elapsed}s, "
+                f"pnl={pnl:.2f}% too deep (floor={pnl_floor:.2f}%), closing"
+            )
+            await self._close_position(lc, reason, pnl, bar.price)
+            return True
+
+        # In loss but recoverable — check market strength
+        score = self._compute_strength_score(lc, bar)
+        if score >= SMART_TIMEOUT_THRESHOLD:
+            # ENTER EXTENSION MODE — monitor PnL every second
+            lc.in_extension_mode = True
+            lc.timeout_extensions_used = 1
+            lc.extension_start_ts = bar.ts
+            lc.last_strength_check_ts = bar.ts
+            pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, "TIMEOUT")
+            logger.info(
+                f"⏳ Smart Timeout EXTEND {lc.symbol}: "
+                f"score={score}/10 pnl={pnl:.2f}% "
+                f"(extension #1, waiting for breakeven)"
+            )
+            return False  # Don't close — continue monitoring
+
+        # No strength → standard timeout close
+        reason = "TIMEOUT"
         pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
-
         logger.info(
             f"⏰ TIMEOUT {lc.symbol}: {elapsed}s >= {lc.derived.max_position_seconds}s, "
-            f"pnl={pnl:.2f}% reason={reason}"
+            f"pnl={pnl:.2f}% score={score}/10 (below threshold={SMART_TIMEOUT_THRESHOLD})"
         )
         await self._close_position(lc, reason, pnl, bar.price)
         return True
+
+    async def _check_timeout_extension(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
+        """
+        Smart Timeout v2.0: Per-second monitoring during extension mode.
+        
+        Priority order:
+        1. PnL >= 0%         → TIMEOUT_BREAKEVEN (every second)
+        2. PnL <= floor       → TIMEOUT_FLOOR (every second)
+        3. Score < threshold  → TIMEOUT_WEAK (every 5min)
+        4. Extension expired  → Renew or TIMEOUT_HARDCAP (every 30min)
+        """
+        pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, bar.price)
+        pnl_floor = -(lc.strategy.sl_pct * 0.8)
+
+        # Priority 1: BREAKEVEN — check every second!
+        if pnl_from_entry >= 0:
+            reason = "TIMEOUT_BREAKEVEN"
+            pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+            logger.info(
+                f"💰 BREAKEVEN {lc.symbol}: pnl={pnl:.2f}% "
+                f"after {lc.timeout_extensions_used} extension(s)"
+            )
+            await self._close_position(lc, reason, pnl, bar.price)
+            return True
+
+        # Priority 2: PnL floor hit
+        if pnl_from_entry <= pnl_floor:
+            reason = "TIMEOUT_FLOOR"
+            pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+            logger.info(
+                f"🔴 FLOOR HIT {lc.symbol}: pnl={pnl:.2f}% <= floor={pnl_floor:.2f}%"
+            )
+            await self._close_position(lc, reason, pnl, bar.price)
+            return True
+
+        # Priority 3: Strength recheck (every 5min)
+        time_since_check = bar.ts - lc.last_strength_check_ts
+        if time_since_check >= SMART_TIMEOUT_RECHECK_SEC:
+            score = self._compute_strength_score(lc, bar)
+            lc.last_strength_check_ts = bar.ts
+            if score < SMART_TIMEOUT_THRESHOLD:
+                reason = "TIMEOUT_WEAK"
+                pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+                logger.info(
+                    f"🟡 STRENGTH LOST {lc.symbol}: score={score}/10 "
+                    f"< {SMART_TIMEOUT_THRESHOLD}, pnl={pnl:.2f}%"
+                )
+                await self._close_position(lc, reason, pnl, bar.price)
+                return True
+            logger.info(
+                f"📊 Strength OK {lc.symbol}: score={score}/10, "
+                f"pnl_entry={pnl_from_entry:.3f}%, continuing"
+            )
+
+        # Priority 4: Extension period expired (30min)
+        ext_elapsed = bar.ts - lc.extension_start_ts
+        if ext_elapsed >= SMART_TIMEOUT_EXTENSION_SEC:
+            if lc.timeout_extensions_used >= SMART_TIMEOUT_MAX_EXTENSIONS:
+                reason = "TIMEOUT_HARDCAP"
+                pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+                logger.info(
+                    f"🔴 HARD CAP {lc.symbol}: {lc.timeout_extensions_used} extensions used, "
+                    f"pnl={pnl:.2f}%"
+                )
+                await self._close_position(lc, reason, pnl, bar.price)
+                return True
+
+            # Try to renew extension
+            score = self._compute_strength_score(lc, bar)
+            if score >= SMART_TIMEOUT_THRESHOLD:
+                lc.timeout_extensions_used += 1
+                lc.extension_start_ts = bar.ts
+                lc.last_strength_check_ts = bar.ts
+                pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, "TIMEOUT")
+                logger.info(
+                    f"⏳ Extension RENEWED {lc.symbol}: "
+                    f"#{lc.timeout_extensions_used}/{SMART_TIMEOUT_MAX_EXTENSIONS} "
+                    f"score={score}/10 pnl={pnl:.2f}%"
+                )
+                return False  # Continue monitoring
+            else:
+                reason = "TIMEOUT_EXTENDED"
+                pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, reason)
+                logger.info(
+                    f"⏰ Extension EXPIRED {lc.symbol}: "
+                    f"score={score}/10 < {SMART_TIMEOUT_THRESHOLD}, pnl={pnl:.2f}%"
+                )
+                await self._close_position(lc, reason, pnl, bar.price)
+                return True
+
+        return False  # Continue waiting for breakeven
+
+    def _compute_strength_score(self, lc: SignalLifecycle, bar: OneSecondBar) -> int:
+        """
+        Smart Timeout v2.0: Compute market strength score for timeout extension.
+        
+        Score 0-10. Uses ONLY data from BarAggregator (0 API calls).
+        
+        Scoring:
+            +3: Delta > 0 (net buy pressure)
+            +2: Large buys >= sells × 1.2 (institutional flow)
+            +2: RSI(14min) < 30 (oversold)
+            +1: Volume Z-score > 2.0 with delta > 0 (capitulation buy)
+            +1: Price near 1h low (< 15th percentile)
+            +1: Pair 15min change < -2% (recent dump = reversal potential)
+        
+        Veto (score → 0):
+            - RSI(14min) > 70 (overbought)
+        """
+        agg = lc.bar_aggregator
+        if not agg or agg.bar_count < 100:
+            return 0  # Not enough data → default to timeout
+
+        score = 0
+
+        # Tier 1: Instant flow
+        rolling_delta = agg.get_rolling_delta(min(lc.strategy.delta_window, 60))
+        if rolling_delta > 0:
+            score += 3
+
+        # Large trades: use 60s window from bars
+        recent_bars = list(agg.bars)[-60:] if agg.bar_count >= 60 else list(agg.bars)
+        large_buys = sum(b.large_buy_count for b in recent_bars)
+        large_sells = sum(b.large_sell_count for b in recent_bars)
+        if large_buys >= large_sells * 1.2 and large_buys > 0:
+            score += 2
+
+        # Tier 2: Pair context indicators
+        rsi = agg.compute_rsi()
+
+        # Veto: overbought
+        if rsi > SMART_TIMEOUT_RSI_OVERBOUGHT:
+            logger.info(
+                f"🚫 Strength VETO {lc.symbol}: RSI={rsi:.1f} > {SMART_TIMEOUT_RSI_OVERBOUGHT}"
+            )
+            return 0
+
+        if rsi < SMART_TIMEOUT_RSI_OVERSOLD:
+            score += 2
+
+        vol_zscore = agg.compute_volume_zscore()
+        if vol_zscore > SMART_TIMEOUT_VOL_ZSCORE_MIN and rolling_delta > 0:
+            score += 1
+
+        extremes = agg.compute_extremes()
+        if extremes['near_low']:
+            score += 1
+
+        momentum_15m = agg.compute_pair_momentum(900)
+        if momentum_15m < SMART_TIMEOUT_PAIR_DUMP_PCT:
+            score += 1
+
+        logger.info(
+            f"📊 Strength {lc.symbol}: score={score}/10 "
+            f"[delta={'✅' if rolling_delta > 0 else '❌'}({rolling_delta:.0f}) "
+            f"large_trades={large_buys}B/{large_sells}S "
+            f"RSI={rsi:.1f} vol_z={vol_zscore:.1f} "
+            f"extremes={extremes['position']:.2f} mom15m={momentum_15m:.2f}%]"
+        )
+        return score
 
     async def _check_liquidation(self, lc: SignalLifecycle, bar: OneSecondBar) -> bool:
         """
@@ -871,6 +1095,11 @@ class SignalLifecycleManager:
                 lc.in_position = True
                 lc.trade_count += 1
                 lc.ts_activated = False
+                # Reset Smart Timeout v2.0 extension state
+                lc.in_extension_mode = False
+                lc.timeout_extensions_used = 0
+                lc.extension_start_ts = 0
+                lc.last_strength_check_ts = 0
                 lc.position_id = int(result.id) if result.id and str(result.id) != 'pending' else None
 
                 prefix = "RE-ENTRY" if is_reentry else "ENTRY"
@@ -1283,6 +1512,11 @@ class SignalLifecycleManager:
             'ts_activated': lc.ts_activated,
             'cumulative_pnl': lc.cumulative_pnl,
             'position_id': lc.position_id,
+            # Smart Timeout v2.0
+            'in_extension_mode': lc.in_extension_mode,
+            'timeout_extensions_used': lc.timeout_extensions_used,
+            'extension_start_ts': lc.extension_start_ts,
+            'last_strength_check_ts': lc.last_strength_check_ts,
             'trades': [
                 {
                     'trade_idx': t.trade_idx,

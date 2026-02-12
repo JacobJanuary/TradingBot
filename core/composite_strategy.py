@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 # Commission rate (taker fee)
 COMMISSION_PCT = 0.04  # 0.04%
 
+# Smart Timeout v2.0 constants (2026-02-12)
+SMART_TIMEOUT_THRESHOLD = 5          # Min score to extend (out of 10)
+SMART_TIMEOUT_EXTENSION_SEC = 1800   # 30 minutes per extension
+SMART_TIMEOUT_MAX_EXTENSIONS = 3     # Hard cap = 1.5h total
+SMART_TIMEOUT_RECHECK_SEC = 300      # Strength recheck interval (5min)
+SMART_TIMEOUT_RSI_OVERSOLD = 30      # RSI below = oversold (+2 pts)
+SMART_TIMEOUT_RSI_OVERBOUGHT = 70    # RSI above = overbought (veto)
+SMART_TIMEOUT_VOL_ZSCORE_MIN = 2.0   # Volume z-score threshold (+1 pt)
+SMART_TIMEOUT_PAIR_DUMP_PCT = -2.0   # 15min dump threshold (+1 pt)
+
 
 @dataclass
 class ScoreFilter:

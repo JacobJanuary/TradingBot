@@ -321,3 +321,111 @@ class BarAggregator:
     def ready_for_trading(self) -> bool:
         """Whether we have enough data for delta calculations."""
         return len(self.bars) >= 100  # Minimum for avg_abs_delta
+
+    # ==================================================================
+    # Smart Timeout v2.0 — Indicator Methods (2026-02-12)
+    # ==================================================================
+
+    def compute_rsi(self, period: int = 840) -> float:
+        """
+        RSI from 1-second bars.
+
+        Default period=840 = 14 minutes (14 × 60 seconds).
+        Uses standard Wilder RSI formula.
+
+        Returns:
+            RSI value 0-100, or 50.0 (neutral) if insufficient data.
+        """
+        n = len(self.bars)
+        if n < period + 1:
+            return 50.0  # Neutral — not enough data
+
+        gains = 0.0
+        losses = 0.0
+        for i in range(n - period, n):
+            change = self.bars[i].price - self.bars[i - 1].price
+            if change > 0:
+                gains += change
+            else:
+                losses -= change  # Make positive
+
+        avg_gain = gains / period
+        avg_loss = losses / period
+
+        if avg_loss == 0:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    def compute_volume_zscore(self, window: int = 3600, recent_window: int = 60) -> float:
+        """
+        Volume Z-score: current minute volume vs rolling hourly average.
+
+        Uses |delta| as volume proxy (buy+sell pressure magnitude).
+
+        Args:
+            window: Full lookback for mean/std (default 3600s = 1h)
+            recent_window: Recent period to compare (default 60s = 1min)
+
+        Returns:
+            Z-score (positive = above average volume). 0.0 if insufficient data.
+        """
+        n = len(self.bars)
+        if n < window:
+            return 0.0
+
+        volumes = [abs(self.bars[i].delta) for i in range(n - window, n)]
+        recent_avg = sum(volumes[-recent_window:]) / recent_window
+        mean = sum(volumes) / len(volumes)
+
+        variance = sum((v - mean) ** 2 for v in volumes) / len(volumes)
+        std = variance ** 0.5
+
+        if std == 0:
+            return 0.0
+        return (recent_avg - mean) / std
+
+    def compute_pair_momentum(self, window_sec: int) -> float:
+        """
+        Price change percentage over window.
+
+        Args:
+            window_sec: Lookback window in seconds
+
+        Returns:
+            Price change as percentage (e.g., -2.5 = -2.5% drop). 0.0 if insufficient data.
+        """
+        n = len(self.bars)
+        if n < window_sec or window_sec <= 0:
+            return 0.0
+        old_price = self.bars[n - window_sec].price
+        if old_price <= 0:
+            return 0.0
+        return ((self.bars[-1].price - old_price) / old_price) * 100.0
+
+    def compute_extremes(self, window_sec: int = 3600) -> dict:
+        """
+        Position of current price relative to hour high/low.
+
+        Returns:
+            dict with:
+                'position': 0.0 (at low) to 1.0 (at high)
+                'near_low': True if within bottom 15%
+                'near_high': True if within top 15%
+        """
+        n = len(self.bars)
+        actual_window = min(window_sec, n)
+        if actual_window < 10:
+            return {'position': 0.5, 'near_low': False, 'near_high': False}
+
+        prices = [self.bars[n - actual_window + i].price for i in range(actual_window)]
+        low = min(prices)
+        high = max(prices)
+        rng = high - low
+
+        if rng == 0:
+            return {'position': 0.5, 'near_low': False, 'near_high': False}
+
+        pos = (self.bars[-1].price - low) / rng
+        return {'position': pos, 'near_low': pos < 0.15, 'near_high': pos > 0.85}
+
