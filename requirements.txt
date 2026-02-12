@@ -3,6 +3,7 @@ asyncpg
 python-binance
 aiohttp
 websockets
+orjson
 pandas
 numpy
 python-dotenv

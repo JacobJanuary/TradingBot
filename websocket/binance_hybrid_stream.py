@@ -12,11 +12,22 @@ Date: 2025-10-25
 
 import asyncio
 import aiohttp
-import json
 import logging
 import random
 from typing import Dict, Callable, Optional, Set
 from datetime import datetime
+
+try:
+    import orjson
+    def _json_loads(s): return orjson.loads(s)
+    def _json_dumps(obj): return orjson.dumps(obj).decode()
+except ImportError:
+    import json
+    _json_loads = json.loads
+    _json_dumps = json.dumps
+
+from websocket.mark_price_pool import MarkPriceConnectionPool
+from websocket.symbol_state import SymbolStateManager, SymbolState
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +80,7 @@ class BinanceHybridStream:
         else:
             self.rest_url = "https://fapi.binance.com/fapi/v1"
             self.user_ws_url = "wss://fstream.binance.com/ws"
-            self.mark_ws_url = "wss://fstream.binance.com/ws"
+            self.mark_ws_url = "wss://fstream.binance.com/ws"  # Dynamic SUBSCRIBE endpoint
 
         # Listen key management
         self.listen_key = None
@@ -86,14 +97,20 @@ class BinanceHybridStream:
         self.mark_connected = False
         self.running = False
 
-        # Hybrid state
-        self.positions: Dict[str, Dict] = {}  # {symbol: position_data}
-        self.mark_prices: Dict[str, str] = {}  # {symbol: latest_mark_price}
-        self.subscribed_symbols: Set[str] = set()  # Active mark price subscriptions
-        self.pending_subscriptions: Set[str] = set()  # Symbols awaiting subscription (survives reconnects)
+        # ==================== NEW ARCHITECTURE (Expert Panel 2026-02-12) ====================
+        # MarkPriceConnectionPool: URL-based combined streams, replaces dynamic SUBSCRIBE
+        self.mark_price_pool = MarkPriceConnectionPool(
+            on_price_update=self._on_pool_price_update,
+            frequency="1s",
+        )
+        # SymbolStateManager: single source of truth, replaces 4 overlapping sets
+        self.symbol_state = SymbolStateManager(stale_threshold=3.0)
 
-        # Subscription management
-        self.subscription_queue = asyncio.Queue()
+        # Legacy state (kept for backward compatibility during transition)
+        # These are now populated FROM SymbolStateManager
+        self.subscribed_symbols: Set[str] = set()  # Mirror of symbol_state.subscribed_symbols
+        self.pending_subscriptions: Set[str] = set()  # Mirror of symbol_state.pending_symbols
+        self.subscription_queue = asyncio.Queue()  # Still used by _subscription_manager
         self.next_request_id = 1
 
         # PHASE 4: WebSocket heartbeat monitoring
@@ -105,14 +122,14 @@ class BinanceHybridStream:
 
         # Tasks
         self.user_task = None
-        self.mark_task = None
+        self.mark_task = None  # Legacy: kept but now managed by pool
         self.keepalive_task = None
         self.subscription_task = None
-        self.reconnection_task = None  # ✅ PHASE 2: Periodic reconnection
-        self.health_check_task = None  # Subscription health verification
-        self.heartbeat_task = None  # PHASE 4: WebSocket heartbeat monitoring
-        self.pending_processor_task = None  # ✅ FIX #3: Periodic pending processor
-        self.rest_fallback_task = None  # REST price fallback when WS stale
+        self.reconnection_task = None
+        self.health_check_task = None
+        self.heartbeat_task = None
+        self.pending_processor_task = None
+        self.rest_fallback_task = None
 
         # FIX: Cache fill prices from ORDER_TRADE_UPDATE for accurate exit price
         self.last_fill_prices: Dict[str, float] = {}  # {symbol: last_fill_price}
@@ -121,21 +138,18 @@ class BinanceHybridStream:
         self.rest_fallback_count = 0
         self.rest_fallback_active = set()  # Symbols currently being polled via REST
 
-        logger.info(f"BinanceHybridStream initialized (testnet={testnet})")
+        logger.info(f"BinanceHybridStream initialized (testnet={testnet}, pool=ON, state_machine=ON)")
 
     @property
     def connected(self) -> bool:
         """
         Check if hybrid stream is fully connected.
 
-        Returns True only when BOTH WebSockets are connected:
+        Returns True only when BOTH streams are connected:
         - User Data Stream (position lifecycle)
-        - Mark Price Stream (price updates)
-
-        This ensures health check passes only when full hybrid functionality
-        is available.
+        - Mark Price Pool (price updates via URL-based connections)
         """
-        return self.user_connected and self.mark_connected
+        return self.user_connected and self.mark_price_pool.connected
 
     async def start(self):
         """Start both WebSocket streams"""
@@ -155,31 +169,36 @@ class BinanceHybridStream:
             self.running = False
             return
 
-        # Start both streams concurrently
+        # Start User Data Stream (unchanged)
         self.user_task = asyncio.create_task(self._run_user_stream())
-        self.mark_task = asyncio.create_task(self._run_mark_stream())
         self.keepalive_task = asyncio.create_task(self._keep_alive_loop())
-        self.subscription_task = asyncio.create_task(self._subscription_manager())
 
-        # ❌ DISABLED: Periodic reconnection causes 72s data gap every 10 minutes
-        # Relying on automatic _reconnect_loop() for real connection issues
-        # self.reconnection_task = asyncio.create_task(
-        #     self._periodic_reconnection_task(interval_seconds=600)
+        # ==================== NEW: Pool-based Mark Price Stream ====================
+        # The MarkPriceConnectionPool replaces:
+        #   - self.mark_task (_run_mark_stream)
+        #   - self.subscription_task (_subscription_manager)
+        #   - self.pending_processor_task (_process_pending_subscriptions_task)
+        #   - self.reconnection_task (_periodic_reconnection_task)
+        # Pool handles its own connections, reconnects, and heartbeats internally.
+        # Symbols are added/removed via pool.set_symbols() when positions change.
+        # =========================================================================
+
+        # Legacy mark stream task — replaced by pool, kept as None
+        # self.mark_task = asyncio.create_task(self._run_mark_stream())
+        # self.subscription_task = asyncio.create_task(self._subscription_manager())
+        # self.pending_processor_task = asyncio.create_task(
+        #     self._process_pending_subscriptions_task(check_interval=120)
         # )
 
-        # Periodic subscription health check (every 2 minutes)
+        # Periodic subscription health check (monitors SymbolStateManager)
         self.health_check_task = asyncio.create_task(
             self._periodic_health_check_task(interval_seconds=120)
         )
 
-        # PHASE 4: WebSocket heartbeat monitoring (detects frozen connections)
+        # PHASE 4: WebSocket heartbeat monitoring (now only monitors User Stream;
+        # Mark stream heartbeat is handled by pool connections internally)
         self.heartbeat_task = asyncio.create_task(
             self._heartbeat_monitoring_task(check_interval=30, mark_timeout=45, user_timeout=300)
-        )
-
-        # ✅ FIX #3: Periodic pending processor (processes pending every 2 minutes)
-        self.pending_processor_task = asyncio.create_task(
-            self._process_pending_subscriptions_task(check_interval=120)
         )
 
         # REST price fallback: polls via API when WS data is stale >3s
@@ -187,7 +206,13 @@ class BinanceHybridStream:
             self._rest_price_fallback_task()
         )
 
-        logger.info("✅ Binance Hybrid WebSocket started")
+        # Initialize pool with any existing position symbols
+        if self.positions:
+            initial_symbols = {self._normalize_symbol(s) for s in self.positions.keys()}
+            await self.mark_price_pool.set_symbols(initial_symbols)
+            logger.info(f"📊 [POOL] Initialized with {len(initial_symbols)} symbols from existing positions")
+
+        logger.info("✅ Binance Hybrid WebSocket started (pool-based mark stream)")
 
     async def stop(self):
         """Stop both WebSocket streams"""
@@ -198,31 +223,33 @@ class BinanceHybridStream:
 
         self.running = False
 
-        # Close WebSocket connections
+        # Stop mark price pool (handles all mark stream connections)
+        await self.mark_price_pool.stop()
+
+        # Close User WebSocket connection
         if self.user_ws and not self.user_ws.closed:
             await self.user_ws.close()
 
-        if self.mark_ws and not self.mark_ws.closed:
-            await self.mark_ws.close()
-
-        # Close aiohttp sessions
+        # Close aiohttp sessions (User stream only; mark stream uses websockets via pool)
         if self.user_session and not self.user_session.closed:
             await self.user_session.close()
 
+        # Legacy mark session cleanup (may exist from before pool migration)
         if self.mark_session and not self.mark_session.closed:
             await self.mark_session.close()
 
-        # Cancel tasks
+        # Cancel remaining tasks
         for task in [
             self.user_task,
-            self.mark_task,
             self.keepalive_task,
+            self.health_check_task,
+            self.heartbeat_task,
+            self.rest_fallback_task,
+            # Legacy tasks (should be None but safe to check)
+            self.mark_task,
             self.subscription_task,
-            self.reconnection_task,  # ✅ PHASE 2
-            self.health_check_task,  # Subscription health verification
-            self.heartbeat_task,  # PHASE 4: WebSocket heartbeat monitoring
-            self.pending_processor_task,  # ✅ FIX #3: Periodic pending processor
-            self.rest_fallback_task  # REST price fallback
+            self.reconnection_task,
+            self.pending_processor_task,
         ]:
             if task and not task.done():
                 task.cancel()
@@ -369,7 +396,16 @@ class BinanceHybridStream:
 
                 logger.info("⏰ 30 minutes elapsed - refreshing listenKey...")
                 if self.running and self.listen_key:
-                    await self._refresh_listen_key()
+                    success = await self._refresh_listen_key()
+                    if not success:
+                        logger.warning("⚠️ Listen key refresh failed, recreating...")
+                        await self._delete_listen_key()
+                        created = await self._create_listen_key()
+                        if created:
+                            logger.info("🔑 Listen key recreated, restarting User stream...")
+                            await self._restart_user_stream()
+                        else:
+                            logger.error("❌ Failed to recreate listen key!")
 
             except asyncio.CancelledError:
                 break
@@ -733,9 +769,9 @@ class BinanceHybridStream:
 
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         try:
-                            data = json.loads(msg.data)
+                            data = _json_loads(msg.data)
                             await self._handle_user_message(data)
-                        except json.JSONDecodeError as e:
+                        except (ValueError, Exception) as e:
                             logger.error(f"[USER] JSON decode error: {e}")
                         except Exception as e:
                             logger.error(f"[USER] Message handling error: {e}")
@@ -980,7 +1016,8 @@ class BinanceHybridStream:
                 }
                 
                 # Ensure mark price subscription is active
-                if symbol not in self.subscribed_symbols:
+                entry = self.symbol_state.get_entry(symbol)
+                if not entry or entry.state not in (SymbolState.SUBSCRIBED, SymbolState.SUBSCRIBING):
                     logger.info(f"➕ [USER] Found missing subscription for {symbol} in snapshot")
                     await self._request_mark_subscription(symbol, subscribe=True)
                 
@@ -1030,9 +1067,9 @@ class BinanceHybridStream:
 
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         try:
-                            data = json.loads(msg.data)
+                            data = _json_loads(msg.data)
                             await self._handle_mark_message(data)
-                        except json.JSONDecodeError as e:
+                        except (ValueError, Exception) as e:
                             logger.error(f"[MARK] JSON decode error: {e}")
                         except Exception as e:
                             logger.error(f"[MARK] Message handling error: {e}")
@@ -1122,8 +1159,44 @@ class BinanceHybridStream:
         self.user_task = asyncio.create_task(self._run_user_stream())
         logger.info("✅ [USER] User Data Stream task restarted")
 
+    # ==================== POOL CALLBACK BRIDGE ====================
+
+    async def _on_pool_price_update(self, data: Dict):
+        """
+        Callback from MarkPriceConnectionPool.
+        
+        Bridges the pool's raw markPriceUpdate data into the existing
+        pipeline (_on_mark_price_update, reentry callbacks, etc.).
+        
+        This is the ONLY entry point for mark price data in the new architecture.
+        """
+        # Update legacy heartbeat timestamp (used by _heartbeat_monitoring_task)
+        self.last_mark_message_time = asyncio.get_event_loop().time()
+        
+        # Route to the existing handler
+        event_type = data.get('e')
+        if event_type == 'markPriceUpdate':
+            symbol = data.get('s')
+            price = data.get('p')
+            
+            # Update SymbolStateManager
+            if symbol and price:
+                self.symbol_state.record_ws_update(symbol, price)
+                # Sync legacy sets for backward compatibility
+                self.subscribed_symbols = self.symbol_state.subscribed_symbols
+                self.pending_subscriptions = self.symbol_state.pending_symbols
+                # Update legacy mark_connected flag
+                self.mark_connected = True
+
+            await self._on_mark_price_update(data)
+
     async def _handle_mark_message(self, data: Dict):
-        """Handle Mark Price Stream message"""
+        """
+        Handle Mark Price Stream message (LEGACY — kept for backward compatibility).
+        
+        In the new architecture, mark data flows through _on_pool_price_update().
+        This method is only used if the old _run_mark_stream() is still active.
+        """
         # PHASE 4: Update heartbeat timestamp
         self.last_mark_message_time = asyncio.get_event_loop().time()
 
@@ -1272,14 +1345,36 @@ class BinanceHybridStream:
         await self._request_mark_subscription(symbol)
 
     async def _request_mark_subscription(self, symbol: str, subscribe: bool = True):
-        """Queue mark price subscription request"""
+        """
+        Request mark price subscription/unsubscription via connection pool.
+        
+        NEW ARCHITECTURE: Routes through MarkPriceConnectionPool.add_symbol/remove_symbol
+        and SymbolStateManager instead of the old subscription queue.
+        """
         # Normalize symbol to ensure consistency (handle unified symbols)
         symbol = self._normalize_symbol(symbol)
         
-        # NOTE: pending_subscriptions управляется в _subscription_manager()
-        # Здесь только добавляем в queue для обработки
-        await self.subscription_queue.put((symbol, subscribe))
-        logger.debug(f"[MARK] Queued subscription request: {symbol} (subscribe={subscribe})")
+        if subscribe:
+            # Add to state manager
+            self.symbol_state.add(symbol)
+            self.symbol_state.mark_subscribing(symbol)
+            
+            # Add to pool (triggers URL rebuild if needed)
+            await self.mark_price_pool.add_symbol(symbol)
+            
+            logger.debug(f"[POOL] Subscription added: {symbol}")
+        else:
+            # Remove from state manager
+            self.symbol_state.remove(symbol)
+            
+            # Remove from pool
+            await self.mark_price_pool.remove_symbol(symbol)
+            
+            logger.debug(f"[POOL] Subscription removed: {symbol}")
+        
+        # Sync legacy sets
+        self.subscribed_symbols = self.symbol_state.subscribed_symbols
+        self.pending_subscriptions = self.symbol_state.pending_symbols
 
     async def _subscribe_mark_price(self, symbol: str):
         """Subscribe to mark price stream for symbol"""
@@ -1301,7 +1396,7 @@ class BinanceHybridStream:
 
             # Add timeout to prevent hanging on send
             await asyncio.wait_for(
-                self.mark_ws.send_str(json.dumps(message)),
+                self.mark_ws.send_str(_json_dumps(message)),
                 timeout=5.0
             )
 
@@ -1359,10 +1454,13 @@ class BinanceHybridStream:
         self.subscribed_symbols.clear()
         self.pending_subscriptions.clear()
 
-        # CRITICAL FIX: Clear old price data to ensure verification checks FRESH data
-        # Without this, _verify_all_subscriptions_active() incorrectly validates against stale prices
-        self.mark_prices.clear()
-        logger.debug(f"[MARK] Cleared old price data for {total_symbols} symbols")
+        # FIX 1.3: Don't destroy price data on reconnect! Mark timestamps as stale.
+        # Trailing stops and REST fallback need SOME price to work with during 90s warmup.
+        # Fresh WS data will overwrite stale values once streams resume.
+        for key in list(self.mark_prices.keys()):
+            if key.endswith('_timestamp'):
+                self.mark_prices[key] = 0  # Mark as stale — REST fallback will kick in
+        logger.debug(f"[MARK] Marked {total_symbols} symbols as stale (prices preserved)")
 
         # PHASE 1: OPTIMISTIC SUBSCRIPTIONS (all symbols, fast)
         logger.info(f"📤 [MARK] Sending {total_symbols} OPTIMISTIC subscriptions...")
@@ -1720,7 +1818,7 @@ class BinanceHybridStream:
                 "id": self.next_request_id
             }
 
-            await self.mark_ws.send_str(json.dumps(message))
+            await self.mark_ws.send_str(_json_dumps(message))
 
             self.subscribed_symbols.discard(symbol)
             self.next_request_id += 1
@@ -1878,15 +1976,21 @@ class BinanceHybridStream:
 
     def get_status(self) -> Dict:
         """Get hybrid stream status"""
+        pool_status = self.mark_price_pool.get_status()
+        state_status = self.symbol_state.get_status()
+        
         return {
             'running': self.running,
             'user_connected': self.user_connected,
-            'mark_connected': self.mark_connected,
+            'mark_connected': self.mark_price_pool.connected,
             'active_positions': len(self.positions),
-            'subscribed_symbols': len(self.subscribed_symbols),
+            'subscribed_symbols': state_status.get('subscribed', 0),
             'positions': list(self.positions.keys()),
             'mark_prices': list(self.mark_prices.keys()),
             'listen_key': self.listen_key[:10] + '...' if self.listen_key else None,
             'rest_fallback_count': self.rest_fallback_count,
             'rest_fallback_active': list(self.rest_fallback_active),
+            # NEW: Pool and state machine status
+            'pool': pool_status,
+            'symbol_state': state_status,
         }
