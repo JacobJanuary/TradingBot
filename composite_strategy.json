@@ -283,7 +283,7 @@
     },
     {
       "priority": 8,
-      "score_range": "450+",
+      "score_range": "450-999",
       "consensus_score": 10.56,
       "expert_scores": {
         "alpha_hunter": 15.01,
@@ -292,7 +292,7 @@
       },
       "filter": {
         "score_min": 450,
-        "score_max": 9999,
+        "score_max": 500,
         "rsi_min": 10,
         "vol_min": 0,
         "oi_min": 0
