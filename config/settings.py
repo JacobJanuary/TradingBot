@@ -66,13 +66,8 @@ class TradingConfig:
     trailing_min_improvement_percent: Decimal = Decimal('0.01')  # Update only if >= 0.01% improvement
     trailing_alert_if_unprotected_window_ms: int = 300  # Alert if unprotected window > 300ms
 
-    # Aged positions
-    max_position_age_hours: int = 3
-    aged_grace_period_hours: int = 3
-    aged_loss_step_percent: Decimal = Decimal('0.5')
-    aged_max_loss_percent: Decimal = Decimal('10.0')
-    aged_acceleration_factor: Decimal = Decimal('1.2')
-    aged_check_interval_minutes: int = 60
+    # NOTE: Aged position config removed 2026-02-12
+    # Timeout logic handled by Smart Timeout v2.0 in signal_lifecycle.py
     commission_percent: Decimal = Decimal('0.05')
 
     # Signal filtering
@@ -245,19 +240,7 @@ class Config:
         if val := os.getenv('AUTO_SET_LEVERAGE'):
             config.auto_set_leverage = val.lower() == 'true'
 
-        # Aged positions
-        if val := os.getenv('MAX_POSITION_AGE_HOURS'):
-            config.max_position_age_hours = int(val)
-        if val := os.getenv('AGED_GRACE_PERIOD_HOURS'):
-            config.aged_grace_period_hours = int(val)
-        if val := os.getenv('AGED_LOSS_STEP_PERCENT'):
-            config.aged_loss_step_percent = Decimal(val)
-        if val := os.getenv('AGED_MAX_LOSS_PERCENT'):
-            config.aged_max_loss_percent = Decimal(val)
-        if val := os.getenv('AGED_ACCELERATION_FACTOR'):
-            config.aged_acceleration_factor = Decimal(val)
-        if val := os.getenv('AGED_CHECK_INTERVAL_MINUTES'):
-            config.aged_check_interval_minutes = int(val)
+        # NOTE: Aged position env vars removed 2026-02-12
         if val := os.getenv('COMMISSION_PERCENT'):
             config.commission_percent = Decimal(val)
 

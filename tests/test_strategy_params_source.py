@@ -54,12 +54,6 @@ class MockTradingConfig:
     leverage: int = 1
     max_leverage: int = 2
     auto_set_leverage: bool = True
-    max_position_age_hours: int = 3
-    aged_grace_period_hours: int = 3
-    aged_loss_step_percent: Decimal = Decimal('0.5')
-    aged_max_loss_percent: Decimal = Decimal('10.0')
-    aged_acceleration_factor: Decimal = Decimal('1.2')
-    aged_check_interval_minutes: int = 60
     commission_percent: Decimal = Decimal('0.05')
     max_spread_percent: Decimal = Decimal('0.5')
     signal_time_window_minutes: int = 10

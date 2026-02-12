@@ -35,7 +35,7 @@ from database.repository import Repository as TradingRepository
 from websocket.event_router import EventRouter
 from protection.trailing_stop import SmartTrailingStopManager, TrailingStopConfig
 
-from core.position_manager_unified_patch import start_periodic_aged_scan, start_websocket_health_monitor
+
 from monitoring.health_check import HealthChecker, HealthStatus
 from monitoring.performance import PerformanceTracker
 import core.stop_loss_manager
@@ -317,21 +317,8 @@ class TradingBot:
                 logger.info(f"✅ Delta filter connected (window={delta_window}s, threshold={delta_threshold}x)")
 
 
-            # Aged position management handled by Unified Protection V2
-            use_unified_protection = os.getenv('USE_UNIFIED_PROTECTION', 'false').lower() == 'true'
-            if not use_unified_protection:
-                logger.warning("⚠️ USE_UNIFIED_PROTECTION=false — no aged position management active")
-            else:
-                # Recover aged positions state from database
-                if self.position_manager.unified_protection:
-                    from core.position_manager_unified_patch import (
-                        recover_aged_positions_state,
-                        start_periodic_aged_scan,
-                        start_websocket_health_monitor
-                    )
-
-                    recovered = await recover_aged_positions_state(self.position_manager.unified_protection)
-                    logger.info(f"🔄 Aged positions recovery: {recovered} position(s) restored from database")
+            # NOTE: Aged position management removed 2026-02-12
+            # Timeout logic handled by Smart Timeout v2.0 in signal_lifecycle.py
 
             # Initialize WebSocket signal processor
             logger.info("Initializing WebSocket signal processor...")
@@ -572,23 +559,8 @@ class TradingBot:
                 await asyncio.sleep(3)
                 logger.info("✅ WebSocket connections established")
 
-                # ✅ CHANGE: NOW start periodic aged scan (with immediate first scan inside)
-                # WebSocket is connected, so immediate scan will have price data for verification
-                if self.position_manager.unified_protection:
-                    logger.info("🔍 Starting periodic aged scan task...")
-                    asyncio.create_task(start_periodic_aged_scan(
-                        self.position_manager.unified_protection,
-                        interval_minutes=5  # Scan every 5 minutes
-                    ))
-                    logger.info("✅ Periodic aged scan task started (interval: 5 minutes, immediate first scan enabled)")
-
-                    # Start WebSocket health monitor
-                    asyncio.create_task(start_websocket_health_monitor(
-                        unified_protection=self.position_manager.unified_protection,
-                        check_interval_seconds=60,
-                        position_manager=self.position_manager
-                    ))
-                    logger.info("✅ WebSocket health monitor started (interval: 60s, resubscription: enabled)")
+                # NOTE: Aged scan and WS health monitor removed 2026-02-12
+                # Timeout logic handled by Smart Timeout v2.0 in signal_lifecycle.py
 
             # Start monitoring
             monitor_task = asyncio.create_task(self._monitor_loop())

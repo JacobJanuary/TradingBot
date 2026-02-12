@@ -518,85 +518,8 @@ class EnhancedExchangeManager:
                 return 0.001
             return 0.01
 
-    def calculate_progressive_exit_price(
-        self,
-        entry_price: float,
-        side: str,
-        hours_open: float,
-        max_age_hours: float = 24
-    ) -> float:
-        """
-        Calculate progressive exit price for aged positions
-
-        NEW STRATEGY:
-        - Grace period (0-AGED_GRACE_PERIOD_HOURS): Breakeven only
-        - Progressive (after grace): Linear loss increase with acceleration
-        - Emergency (extremely old): Market price
-
-        Args:
-            entry_price: Position entry price
-            side: Position side ('long' or 'short')
-            hours_open: How many hours position has been open
-            max_age_hours: Maximum age before liquidation starts
-
-        Returns:
-            Target exit price
-
-        NOTE: This method is kept for backward compatibility.
-        New code should use Unified Protection V2 for aged position management.
-        """
-        # Phase 2: Use config instead of os.getenv() with defaults
-        from config.settings import config as global_config
-
-        # Load parameters from config
-        max_position_age = float(global_config.trading.max_position_age_hours if max_age_hours == 24 else max_age_hours)
-        grace_period = float(global_config.trading.aged_grace_period_hours)
-        loss_step = float(global_config.trading.aged_loss_step_percent)
-        max_loss = float(global_config.trading.aged_max_loss_percent)
-        acceleration = float(global_config.trading.aged_acceleration_factor)
-        commission = float(global_config.trading.commission_percent) / 100
-
-        # Calculate hours over limit
-        if hours_open < max_position_age:
-            # Position not aged yet
-            return entry_price * (1 + 2 * commission) if side == 'long' else entry_price * (1 - 2 * commission)
-
-        hours_over_limit = hours_open - max_position_age
-
-        if hours_over_limit <= grace_period:
-            # GRACE PERIOD: Strict breakeven
-            if side in ['long', 'buy']:
-                exit_price = entry_price * (1 + 2 * commission)
-            else:
-                exit_price = entry_price * (1 - 2 * commission)
-
-        else:
-            # PROGRESSIVE LIQUIDATION
-            hours_after_grace = hours_over_limit - grace_period
-
-            # Base loss calculation
-            loss_percent = hours_after_grace * loss_step
-
-            # Acceleration after 10 hours
-            if hours_after_grace > 10:
-                extra_hours = hours_after_grace - 10
-                loss_percent += extra_hours * loss_step * (acceleration - 1)
-
-            # Cap at maximum
-            loss_percent = min(loss_percent, max_loss)
-
-            # Apply loss
-            if side in ['long', 'buy']:
-                exit_price = entry_price * (1 - loss_percent / 100)
-            else:
-                exit_price = entry_price * (1 + loss_percent / 100)
-
-        logger.debug(
-            f"Progressive price: entry={entry_price:.2f}, "
-            f"age={hours_open:.1f}h, exit={exit_price:.2f}"
-        )
-
-        return exit_price
+    # NOTE: calculate_progressive_exit_price removed 2026-02-12
+    # Timeout logic handled by Smart Timeout v2.0 in signal_lifecycle.py
 
     def get_statistics(self) -> Dict:
         """Get manager statistics"""

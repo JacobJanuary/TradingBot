@@ -55,11 +55,10 @@ from core.event_logger import get_event_logger, EventType
 from core.atomic_position_manager import AtomicPositionManager, SymbolUnavailableError, MinimumOrderLimitError
 from utils.decimal_utils import to_decimal, calculate_stop_loss, calculate_pnl, calculate_quantity
 
-# UNIFIED PROTECTION PATCH (minimal integration)
+# UNIFIED PROTECTION PATCH (minimal integration — trailing stop only)
 from core.position_manager_unified_patch import (
     init_unified_protection,
     handle_unified_price_update,
-    check_and_register_aged_positions
 )
 
 # CRITICAL FIX: Import normalize_symbol for correct position verification
@@ -1038,9 +1037,8 @@ class PositionManager:
                 # CRITICAL FIX: Re-check SL protection after zombie cleanup
                 await self.check_positions_protection()
 
-                # Check aged positions for unified protection
-                if self.unified_protection:
-                    await check_and_register_aged_positions(self, self.unified_protection)
+                # NOTE: Aged position checks removed 2026-02-12
+                # Timeout logic handled by Smart Timeout v2.0 in signal_lifecycle.py
 
                 logger.info("✅ Periodic sync completed")
 
@@ -2671,37 +2669,7 @@ class PositionManager:
                         severity='ERROR'
                     )
 
-            # INSTANT AGED DETECTION - Fix for 2-minute delay
-            if self.unified_protection and symbol in self.positions:
-                position = self.positions[symbol]
 
-                # Skip if trailing stop is already active
-                if not (hasattr(position, 'trailing_activated') and position.trailing_activated):
-                    age_hours = self._calculate_position_age_hours(position)
-
-                    # Check if position just became aged
-                    if age_hours > self.max_position_age_hours:
-                        aged_monitor = self.unified_protection.get('aged_monitor')
-
-                        if aged_monitor:
-                            # Check if not already tracked
-                            if not hasattr(aged_monitor, 'aged_targets') or symbol not in aged_monitor.aged_targets:
-                                try:
-                                    # Add to monitoring immediately
-                                    await aged_monitor.add_aged_position(position)
-
-                                    logger.info(
-                                        f"⚡ INSTANT AGED DETECTION: {symbol} "
-                                        f"(age={age_hours:.1f}h) added to monitoring immediately"
-                                    )
-
-                                    # Track instant detection in stats
-                                    if not hasattr(self, 'instant_aged_detections'):
-                                        self.instant_aged_detections = 0
-                                    self.instant_aged_detections += 1
-
-                                except Exception as e:
-                                    logger.error(f"Failed to add aged position {symbol}: {e}")
 
     async def _on_order_filled(self, data: Dict):
         """Handle order filled event"""
@@ -3268,27 +3236,8 @@ class PositionManager:
             else:
                 logger.debug(f"⏭️ {symbol}: No trailing manager for {exchange_name}")
 
-        # ==================== STEP 3: Clean up aged position monitoring ====================
-        if not skip_aged_adapter:
-            if self.unified_protection:
-                aged_adapter = self.unified_protection.get('aged_adapter')
-                if aged_adapter:
-                    try:
-                        # Check if symbol is actually in aged monitoring
-                        if symbol in aged_adapter.monitoring_positions:
-                            await aged_adapter.remove_aged_position(symbol)
-                            result['aged_adapter_removed'] = True
-                            logger.info(f"✅ {symbol}: Removed from aged_adapter monitoring")
-                        else:
-                            logger.debug(f"⏭️ {symbol}: Not in aged monitoring")
-                    except Exception as e:
-                        error_msg = f"Failed to remove from aged adapter: {e}"
-                        result['errors'].append(error_msg)
-                        logger.warning(f"⚠️ {symbol}: {error_msg}")
-                else:
-                    logger.debug(f"⏭️ {symbol}: aged_adapter not available")
-            else:
-                logger.debug(f"⏭️ {symbol}: unified_protection not enabled")
+        # NOTE: Aged position adapter cleanup removed 2026-02-12
+        # Timeout logic handled by Smart Timeout v2.0 in signal_lifecycle.py
 
         # ==================== STEP 4: Log cleanup completion ====================
         if not skip_events:
@@ -3499,151 +3448,8 @@ class PositionManager:
             logger.warning(f"Falling back to market close for {symbol}")
             await self.close_position(symbol, f"{reason}_fallback")
 
-    async def check_position_age(self):
-        """Check and close positions that exceed max age with smart logic"""
-        from datetime import datetime, timezone, timedelta
-        from decimal import Decimal
-        
-        max_age_hours = self.config.max_position_age_hours
-        commission_percent = Decimal(str(self.config.commission_percent))  # Из конфигурации
-        
-        for symbol, position in list(self.positions.items()):
-            if position.opened_at:
-                # Handle timezone-aware datetimes properly
-                if position.opened_at.tzinfo:
-                    current_time = datetime.now(position.opened_at.tzinfo)
-                else:
-                    current_time = datetime.now(timezone.utc)
-                position_age = current_time - position.opened_at
-                position.age_hours = position_age.total_seconds() / 3600
-                
-                if position.age_hours >= max_age_hours:
-                    logger.warning(
-                        f"⏰ Position {symbol} exceeded max age: {position.age_hours:.1f} hours (max: {max_age_hours}h)"
-                    )
-
-                    # Log aged position detected event
-                    event_logger = get_event_logger()
-                    if event_logger:
-                        await event_logger.log_event(
-                            EventType.AGED_POSITION_DETECTED,
-                            {
-                                'symbol': symbol,
-                                'position_id': position.id,
-                                'age_hours': float(position.age_hours),
-                                'max_age_hours': float(max_age_hours),
-                                'entry_price': float(position.entry_price),
-                                'current_price': float(position.current_price),
-                                'side': position.side
-                            },
-                            position_id=position.id,
-                            symbol=symbol,
-                            exchange=position.exchange,
-                            severity='WARNING'
-                        )
-
-                    # CRITICAL FIX: Fetch real-time price before making decision
-                    exchange = self.exchanges.get(position.exchange)
-                    if not exchange:
-                        logger.error(f"Exchange {position.exchange} not available for {symbol}")
-                        continue
-
-                    try:
-                        # Fetch current market price from exchange
-                        ticker = await exchange.fetch_ticker(symbol)
-                        real_time_price = ticker.get('last') or ticker.get('markPrice')
-
-                        if real_time_price:
-                            old_cached_price = position.current_price
-                            position.current_price = real_time_price
-
-                            # Log price update for transparency
-                            price_diff_pct = ((real_time_price - old_cached_price) / old_cached_price * 100) if old_cached_price else 0
-                            logger.info(
-                                f"📊 Price check for {symbol}:\n"
-                                f"  Cached price: ${old_cached_price:.2f}\n"
-                                f"  Real-time:    ${real_time_price:.2f}\n"
-                                f"  Difference:   {price_diff_pct:+.2f}%"
-                            )
-                    except Exception as e:
-                        logger.error(f"Failed to fetch current price for {symbol}: {e}")
-                        logger.warning(f"Using cached price ${position.current_price:.2f} (may be outdated)")
-
-                        # Log exchange error for price fetch
-                        event_logger = get_event_logger()
-                        if event_logger:
-                            await event_logger.log_event(
-                                EventType.EXCHANGE_ERROR,
-                                {
-                                    'symbol': symbol,
-                                    'position_id': position.id,
-                                    'operation': 'fetch_ticker',
-                                    'error': str(e),
-                                    'cached_price': float(position.current_price)
-                                },
-                                position_id=position.id,
-                                symbol=symbol,
-                                exchange=position.exchange,
-                                severity='ERROR'
-                            )
-
-                    # Рассчитываем цену безубытка с учетом комиссий
-                    if position.side == 'long':
-                        breakeven_price = position.entry_price * (1 + commission_percent / 100)
-                        is_profitable = position.current_price >= breakeven_price
-                    else:  # short
-                        breakeven_price = position.entry_price * (1 - commission_percent / 100)
-                        is_profitable = position.current_price <= breakeven_price
-                    
-                    # Проверяем, есть ли уже pending ордер
-                    if position.pending_close_order:
-                        logger.info(
-                            f"Position {symbol} already has pending close order "
-                            f"(order_id: {position.pending_close_order['order_id']}, "
-                            f"price: {position.pending_close_order['price']})"
-                        )
-                        # Проверяем, не стала ли позиция прибыльной
-                        if is_profitable and position.pending_close_order['reason'].startswith('max_age_limit'):
-                            # Отменяем лимитный ордер и закрываем по рынку
-                            await self._cancel_pending_close_order(position)
-                            await self.close_position(symbol, f'max_age_market_{max_age_hours}h')
-                    else:
-                        # Always close expired positions immediately for safety
-                        # If position is WAY over max age (>2x), force close regardless of profit
-                        if position.age_hours >= max_age_hours * 2:
-                            logger.error(
-                                f"🚨 CRITICAL: Position {symbol} is {position.age_hours:.1f} hours old "
-                                f"(2x max age). Force closing immediately!"
-                            )
-                            await self.close_position(symbol, f'max_age_force_{position.age_hours:.0f}h')
-                        elif is_profitable:
-                            # Позиция в плюсе - закрываем по рынку
-                            logger.info(
-                                f"✅ Expired position {symbol} is profitable\n"
-                                f"  Entry:     ${position.entry_price:.2f}\n"
-                                f"  Current:   ${position.current_price:.2f}\n"
-                                f"  Breakeven: ${breakeven_price:.2f}\n"
-                                f"  Closing by market order."
-                            )
-                            await self.close_position(symbol, f'max_age_market_{max_age_hours}h')
-                        else:
-                            # For expired positions at loss, still close them but log the loss
-                            pnl_percent = position.unrealized_pnl_percent
-                            logger.warning(
-                                f"⚠️ Expired position {symbol} at {pnl_percent:.2f}% loss\n"
-                                f"  Entry:     ${position.entry_price:.2f}\n"
-                                f"  Current:   ${position.current_price:.2f}\n"
-                                f"  Breakeven: ${breakeven_price:.2f}\n"
-                                f"  Age:       {position.age_hours:.1f}h (max: {max_age_hours}h)\n"
-                                f"  Closing anyway due to age limit."
-                            )
-                            await self.close_position(symbol, f'max_age_expired_{max_age_hours}h')
-                        
-                elif position.age_hours >= max_age_hours * 0.8:
-                    # Warning when approaching max age
-                    logger.info(
-                        f"Position {symbol} approaching max age: {position.age_hours:.1f}/{max_age_hours} hours"
-                    )
+    # NOTE: check_position_age() method removed 2026-02-12
+    # Timeout logic handled by Smart Timeout v2.0 in signal_lifecycle.py
 
     async def check_positions_protection(self):
         """
