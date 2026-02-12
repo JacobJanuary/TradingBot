@@ -2457,8 +2457,8 @@ class PositionManager:
                 else:
                     pnl_pct = (float(position.entry_price) - float(position.current_price)) / float(position.entry_price) * 100
 
-                # Apply leverage to PnL%
-                position.unrealized_pnl_percent = pnl_pct * leverage
+                # Store raw price change % (no leverage) — matches exchange display
+                position.unrealized_pnl_percent = pnl_pct
 
                 # Calculate USD PnL from entry_price + quantity
                 # NOTE: qty is the FULL position size (not margin), so NO leverage multiplier
