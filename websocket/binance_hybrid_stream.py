@@ -132,6 +132,7 @@ class BinanceHybridStream:
         self.reconnection_task = None
         self.health_check_task = None
         self.heartbeat_task = None
+        self._last_listenkey_probe = 0.0  # Track when we last probed listenKey health
         self.pending_processor_task = None
         self.rest_fallback_task = None
 
@@ -641,19 +642,29 @@ class BinanceHybridStream:
                 # (Note: User stream doesn't track last_connected_check separately, 
                 #  but frozen detection below handles stuck connections)
                 
-                # C. Check for frozen User connection (connected but no data)
-                if self.user_connected and self.last_user_message_time > 0:
-                    user_silence = current_time - self.last_user_message_time
-                    # User Stream is mostly silent, so we use a much larger timeout (e.g. 5 mins)
-                    # and rely on aiohttp heartbeat for connection health
-                    if user_silence > user_timeout:
-                        logger.warning(
-                            f"💔 [HEARTBEAT] User stream frozen! "
-                            f"No messages for {user_silence:.1f}s (threshold: {user_timeout}s). "
-                            f"Forcing restart..."
-                        )
-                        # ✅ FIX: Active restart instead of just setting flag!
-                        await self._restart_user_stream()
+                # C. Check User stream health via listenKey PUT probe
+                # (Replaces user_silence check — User Stream is event-driven, silence is normal)
+                if self.user_connected and self.listen_key:
+                    time_since_probe = current_time - self._last_listenkey_probe
+                    # Probe every 5 minutes (listenKey PUT returns 200 if stream alive)
+                    if time_since_probe > 300:
+                        try:
+                            probe_success = await self._refresh_listen_key()
+                            self._last_listenkey_probe = current_time
+                            if not probe_success:
+                                logger.warning(
+                                    f"💔 [HEARTBEAT] listenKey probe FAILED! "
+                                    f"User stream may be dead. Forcing restart..."
+                                )
+                                await self._restart_user_stream()
+                            else:
+                                logger.debug("[HEARTBEAT] listenKey probe OK — User stream alive")
+                        except Exception as probe_err:
+                            logger.warning(
+                                f"💔 [HEARTBEAT] listenKey probe error: {probe_err}. "
+                                f"Forcing restart..."
+                            )
+                            await self._restart_user_stream()
 
             except asyncio.CancelledError:
                 logger.info("[HEARTBEAT] Heartbeat monitoring task cancelled")
@@ -1175,6 +1186,86 @@ class BinanceHybridStream:
         # 4. Start new task
         self.user_task = asyncio.create_task(self._run_user_stream())
         logger.info("✅ [USER] User Data Stream task restarted")
+
+        # 5. Post-reconnect position reconciliation (Binance best practice)
+        # Catches any events missed during the connection gap
+        asyncio.create_task(self._reconcile_positions_after_reconnect())
+
+    async def _reconcile_positions_after_reconnect(self):
+        """
+        REST-based position reconciliation after User Data Stream reconnect.
+
+        Binance best practice: after any reconnection, verify local state against
+        exchange via REST API to catch events missed during the gap.
+
+        Detects:
+        - Positions that closed (SL/liquidation) during the gap
+        - New positions opened externally
+        - Position size changes
+        """
+        await asyncio.sleep(3)  # Wait for WS to stabilize
+
+        if not self.exchange_manager:
+            logger.warning("[RECONCILE] No exchange_manager, skipping post-reconnect reconciliation")
+            return
+
+        try:
+            exchange = self.exchange_manager.exchange if hasattr(self.exchange_manager, 'exchange') else self.exchange_manager
+            positions = await exchange.fetch_positions()
+
+            # Build map of exchange positions (non-zero)
+            exchange_positions = {}
+            for pos in positions:
+                contracts = pos.get('contracts', 0)
+                if contracts and float(contracts) > 0:
+                    symbol = pos.get('symbol', '')
+                    exchange_positions[symbol] = pos
+
+            # Find positions that closed during the gap
+            closed_during_gap = []
+            for symbol in list(self.positions.keys()):
+                if symbol not in exchange_positions:
+                    closed_during_gap.append(symbol)
+
+            if closed_during_gap:
+                logger.warning(
+                    f"🚨 [RECONCILE] Found {len(closed_during_gap)} positions CLOSED during "
+                    f"User Stream gap: {closed_during_gap}"
+                )
+                for symbol in closed_during_gap:
+                    position_data = self.positions[symbol].copy()
+                    position_data['size'] = '0'
+                    position_data['position_amt'] = 0
+                    logger.info(f"[RECONCILE] Emitting closure for {symbol}")
+                    await self._emit_combined_event(symbol, position_data)
+                    del self.positions[symbol]
+
+            # Find new positions opened during gap
+            for symbol, pos in exchange_positions.items():
+                if symbol not in self.positions:
+                    side = pos.get('side', 'long').upper()
+                    self.positions[symbol] = {
+                        'symbol': symbol,
+                        'side': side,
+                        'size': str(pos.get('contracts', 0)),
+                        'entry_price': str(pos.get('entryPrice', 0)),
+                        'unrealized_pnl': str(pos.get('unrealizedPnl', 0)),
+                        'margin_type': pos.get('marginMode', 'cross'),
+                        'position_side': 'BOTH',
+                        'mark_price': self.mark_prices.get(symbol, '0')
+                    }
+                    logger.info(f"[RECONCILE] New position detected: {symbol} {side}")
+                    await self._request_mark_subscription(symbol, subscribe=True)
+                    await self._emit_combined_event(symbol, self.positions[symbol])
+
+            logger.info(
+                f"✅ [RECONCILE] Complete: {len(exchange_positions)} positions on exchange, "
+                f"{len(closed_during_gap)} closures detected, "
+                f"{len(self.positions)} positions tracked"
+            )
+
+        except Exception as e:
+            logger.error(f"❌ [RECONCILE] Post-reconnect reconciliation failed: {e}", exc_info=True)
 
     # ==================== POOL CALLBACK BRIDGE ====================
 

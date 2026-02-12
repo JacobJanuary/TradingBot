@@ -295,8 +295,8 @@ class StopLossManager:
                         f"🔄 Cancelling old SL and creating new one at {stop_price}"
                     )
 
-                    # Cancel the invalid SL
-                    await self._cancel_existing_sl(symbol, to_decimal(existing_sl))
+                    # Cancel the invalid SL (using Algo API)
+                    await self._cancel_existing_sl(symbol, to_decimal(existing_sl), algo_id=existing_algo_id)
 
                     # Fall through to create new SL below
 
@@ -947,45 +947,94 @@ class StopLossManager:
                     f"target {target_sl_price} ({diff_pct:.2f}% difference)"
                 )
 
-    async def _cancel_existing_sl(self, symbol: str, sl_price: Decimal):
+    async def _cancel_existing_sl(self, symbol: str, sl_price: Decimal, algo_id: str = None):
         """
-        CRITICAL FIX: Cancel existing (invalid) SL order
+        Cancel existing (invalid) SL order using Binance Algo API.
+
+        CRITICAL FIX (Feb 2026): Previous version used fetch_open_orders() which
+        only returns regular orders (GET /fapi/v1/openOrders). Our SLs are Algo Orders
+        (POST /fapi/v1/algoOrder) which live in a SEPARATE API namespace.
+        This caused "No matching SL found" → duplicate SL creation → phantom SHORTs.
+
+        Now uses DELETE /fapi/v1/algoOrder with algoId for precise cancellation.
 
         Args:
-            symbol: Trading symbol
-            sl_price: SL price to help identify order
+            symbol: Trading symbol (CCXT unified format)
+            sl_price: SL price (for logging/fallback matching)
+            algo_id: Specific Algo Order ID to cancel (preferred, precise)
 
         Raises:
             Exception if cancellation fails
         """
+        binance_symbol = symbol.replace('/', '').replace(':USDT', '')
+
         try:
-            # Fetch open orders
-            open_orders = await self.exchange.fetch_open_orders(symbol)
+            # Strategy 1: Cancel by algoId (precise, preferred)
+            if algo_id:
+                await self._cancel_algo_order_by_id(algo_id, symbol)
+                return
 
-            # Find and cancel stop orders matching the price
-            for order in open_orders:
-                order_type = order.get('type', '').lower()
-                is_stop = 'stop' in order_type or order_type in ['stop_market', 'stop_loss', 'stop_loss_limit']
+            # Strategy 2: Scan all Algo orders for this symbol and cancel matching ones
+            self.logger.info(f"🔍 No algoId provided, scanning Algo orders for {symbol}")
+            algo_orders = await self._fetch_algo_orders(binance_symbol)
 
-                if is_stop:
-                    # Check if this is the SL we want to cancel (match by price)
-                    order_stop_price = order.get('stopPrice', order.get('price'))
+            if not algo_orders:
+                self.logger.warning(f"No Algo orders found for {symbol} (price: {sl_price})")
+                return
 
-                    if order_stop_price:
-                        # Match by price (within 1% tolerance)
-                        from utils.decimal_utils import to_decimal
-                        price_diff = abs(to_decimal(order_stop_price) - sl_price) / sl_price
+            from utils.decimal_utils import to_decimal
+            cancelled = 0
+            for order in algo_orders:
+                if order.get('algoType') != 'CONDITIONAL':
+                    continue
+                if order.get('algoStatus') not in ('NEW', 'WORKING'):
+                    continue
 
-                        if price_diff < 0.01:  # Within 1%
-                            self.logger.info(f"Cancelling old SL order {order['id']} at {order_stop_price}")
-                            await self.exchange.cancel_order(order['id'], symbol)
-                            return
+                trigger_price = order.get('triggerPrice')
+                if trigger_price:
+                    price_diff = abs(to_decimal(trigger_price) - sl_price) / sl_price
+                    if price_diff < Decimal('0.01'):  # Within 1%
+                        order_algo_id = str(order.get('algoId'))
+                        await self._cancel_algo_order_by_id(order_algo_id, symbol)
+                        cancelled += 1
 
-            self.logger.warning(f"No matching SL order found to cancel (price: {sl_price})")
+            if cancelled == 0:
+                self.logger.warning(f"No matching Algo SL found for {symbol} (price: {sl_price})")
+            elif cancelled > 1:
+                self.logger.warning(f"⚠️ Cancelled {cancelled} duplicate Algo SLs for {symbol}!")
 
         except Exception as e:
-            self.logger.error(f"Error cancelling SL: {e}")
+            self.logger.error(f"Error cancelling Algo SL for {symbol}: {e}")
             raise
+
+    async def _cancel_algo_order_by_id(self, algo_id: str, symbol: str):
+        """Cancel a single Algo order by its algoId."""
+        cancel_method = None
+        for attr in ('fapiPrivateDeleteAlgoOrder', 'fapiprivate_delete_algoorder', 'fapi_private_delete_algo_order'):
+            try:
+                cancel_method = getattr(self.exchange, attr)
+                break
+            except AttributeError:
+                continue
+
+        if not cancel_method:
+            raise AttributeError("CCXT missing Algo Order cancel method (fapiPrivateDeleteAlgoOrder)")
+
+        response = await cancel_method({'algoId': int(algo_id)})
+        self.logger.info(f"✅ Cancelled Algo SL algoId={algo_id} for {symbol}")
+        return response
+
+    async def _fetch_algo_orders(self, binance_symbol: str) -> list:
+        """Fetch open Algo orders for a symbol (shared helper)."""
+        for attr in ('fapiPrivateGetOpenAlgoOrders', 'fapiprivate_get_openalgoorders', 'fapi_private_get_open_algo_orders'):
+            try:
+                method = getattr(self.exchange, attr)
+                return await method({'symbol': binance_symbol})
+            except AttributeError:
+                continue
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch algo orders via {attr}: {e}")
+        return []
 
     async def _is_trailing_stop_active(self, symbol: str) -> bool:
         """
