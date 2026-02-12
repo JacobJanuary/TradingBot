@@ -892,6 +892,12 @@ class StopLossManager:
         # Calculate difference percentage
         diff_pct = abs(existing_sl_price - target_sl_price) / target_sl_price * Decimal("100")
 
+        # Tick-size rounding tolerance: if difference < 0.1%, consider matching
+        # Binance rounds prices to tick size, e.g. 0.14012500 → 0.14013
+        # Without this, TS thinks SL is "invalid" and creates a duplicate
+        if diff_pct < Decimal("0.1"):
+            return True, f"SL matches target (within tick-size rounding: {diff_pct:.4f}%)"
+
         # Determine position side from order side
         # side='sell' means closing LONG position
         # side='buy' means closing SHORT position

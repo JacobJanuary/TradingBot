@@ -1429,6 +1429,9 @@ class SignalLifecycleManager:
                             lc.state = SignalState.IN_POSITION
                             lc.in_position = True
                             state_str = "in_position (force-corrected)"
+                            # Persist corrected state so next restart doesn't
+                            # need force-correction again
+                            await self._persist_lifecycle(lc)
                         elif state == SignalState.WAITING_DATA:
                             # No exchange position + waiting_data → should be REENTRY_WAIT
                             logger.warning(
@@ -1438,6 +1441,7 @@ class SignalLifecycleManager:
                             lc.state = SignalState.REENTRY_WAIT
                             lc.in_position = False
                             state_str = "reentry_wait (force-corrected from waiting_data)"
+                            await self._persist_lifecycle(lc)
                     except Exception as e:
                         logger.warning(
                             f"Failed to cross-check {symbol} with exchange: {e}"
