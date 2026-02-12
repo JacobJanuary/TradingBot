@@ -1384,22 +1384,30 @@ class SignalLifecycleManager:
                     self._on_bar_safe(s, bar)
                 )
 
-                # CRITICAL: Cross-check with exchange on restore
-                # If exchange has open position but lifecycle says reentry_wait,
-                # fix the state to in_position so exit checks run
-                if state == SignalState.REENTRY_WAIT and self.position_manager:
+                # CRITICAL: Cross-check ALL non-IN_POSITION states with exchange
+                # Fix waiting_data/reentry_wait by checking actual exchange state
+                if state != SignalState.IN_POSITION and self.position_manager:
                     try:
                         has_pos = await self.position_manager.has_open_position(
                             symbol, exchange
                         )
                         if has_pos:
                             logger.warning(
-                                f"⚠️ {symbol}: DB says reentry_wait but exchange "
+                                f"⚠️ {symbol}: DB says {state_str} but exchange "
                                 f"has OPEN position! Forcing state=IN_POSITION"
                             )
                             lc.state = SignalState.IN_POSITION
                             lc.in_position = True
                             state_str = "in_position (force-corrected)"
+                        elif state == SignalState.WAITING_DATA:
+                            # No exchange position + waiting_data → should be REENTRY_WAIT
+                            logger.warning(
+                                f"⚠️ {symbol}: DB says waiting_data, no exchange position. "
+                                f"Forcing state=REENTRY_WAIT so re-entry logic runs"
+                            )
+                            lc.state = SignalState.REENTRY_WAIT
+                            lc.in_position = False
+                            state_str = "reentry_wait (force-corrected from waiting_data)"
                     except Exception as e:
                         logger.warning(
                             f"Failed to cross-check {symbol} with exchange: {e}"
