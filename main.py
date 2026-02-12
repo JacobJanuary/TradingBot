@@ -34,7 +34,7 @@ from core.signal_processor_websocket import WebSocketSignalProcessor
 from database.repository import Repository as TradingRepository
 from websocket.event_router import EventRouter
 from protection.trailing_stop import SmartTrailingStopManager, TrailingStopConfig
-from core.aged_position_manager import AgedPositionManager
+
 from core.position_manager_unified_patch import start_periodic_aged_scan, start_websocket_health_monitor
 from monitoring.health_check import HealthChecker, HealthStatus
 from monitoring.performance import PerformanceTracker
@@ -70,7 +70,7 @@ class TradingBot:
         self.repository: Optional[TradingRepository] = None
         self.event_router = EventRouter()
         self.position_manager: Optional[PositionManager] = None
-        self.aged_position_manager: Optional[AgedPositionManager] = None
+
         self.signal_processor: Optional[WebSocketSignalProcessor] = None
         self.aggtrades_stream = None  # For delta calculation
         self.lifecycle_manager = None  # Composite strategy lifecycle (2026-02-09)
@@ -317,21 +317,12 @@ class TradingBot:
                 logger.info(f"✅ Delta filter connected (window={delta_window}s, threshold={delta_threshold}x)")
 
 
-            # Initialize aged position manager (only if unified protection is disabled)
+            # Aged position management handled by Unified Protection V2
             use_unified_protection = os.getenv('USE_UNIFIED_PROTECTION', 'false').lower() == 'true'
             if not use_unified_protection:
-                logger.info("Initializing aged position manager (legacy)...")
-                self.aged_position_manager = AgedPositionManager(
-                    settings.trading,
-                    self.position_manager,
-                    self.exchanges  # Pass exchanges dict directly
-                )
-                logger.info("✅ Aged position manager ready (legacy)")
+                logger.warning("⚠️ USE_UNIFIED_PROTECTION=false — no aged position management active")
             else:
-                logger.info("⚡ Aged position manager disabled - using Unified Protection V2")
-                self.aged_position_manager = None
-
-                # CRITICAL FIX: Recover aged positions state from database
+                # Recover aged positions state from database
                 if self.position_manager.unified_protection:
                     from core.position_manager_unified_patch import (
                         recover_aged_positions_state,
@@ -339,7 +330,6 @@ class TradingBot:
                         start_websocket_health_monitor
                     )
 
-                    # Recover existing aged positions from database
                     recovered = await recover_aged_positions_state(self.position_manager.unified_protection)
                     logger.info(f"🔄 Aged positions recovery: {recovered} position(s) restored from database")
 
@@ -657,14 +647,7 @@ class TradingBot:
                     except Exception as e:
                         logger.debug(f"Performance tracker update skipped: {e}")
 
-                # Check aged positions with smart liquidation
-                if self.aged_position_manager:
-                    aged_count = await self.aged_position_manager.check_and_process_aged_positions()
-                    if aged_count > 0:
-                        stats = self.aged_position_manager.get_statistics()
-                        logger.info(f"📊 Aged positions processed: {aged_count}, "
-                                  f"breakeven: {stats['breakeven_closes']}, "
-                                  f"liquidated: {stats['gradual_liquidations']}")
+
 
                 # Check positions have stop loss protection
                 if self.position_manager:

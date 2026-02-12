@@ -15,7 +15,6 @@ def test_no_magic_number_getenv_in_core():
     # Files that were updated in Phase 2
     files_to_check = [
         'core/aged_position_monitor_v2.py',
-        'core/aged_position_manager.py',
         'core/exchange_manager_enhanced.py',
         'core/position_manager.py',
     ]
@@ -58,7 +57,6 @@ def test_all_aged_params_use_config():
     try:
         # These should work after Phase 2 changes
         from core.aged_position_monitor_v2 import AgedPositionMonitorV2
-        from core.aged_position_manager import AgedPositionManager
 
         print("✅ All aged modules import successfully")
     except ImportError as e:

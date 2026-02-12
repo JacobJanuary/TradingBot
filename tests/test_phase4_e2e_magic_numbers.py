@@ -80,7 +80,6 @@ def test_all_modules_importable():
         from core.signal_processor_websocket import WebSocketSignalProcessor
         from core.position_manager import PositionManager
         from core.aged_position_monitor_v2 import AgedPositionMonitorV2
-        from core.aged_position_manager import AgedPositionManager
         from config.settings import config, TradingSafetyConstants
 
         print("✅ All modules importable")

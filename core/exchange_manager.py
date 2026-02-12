@@ -423,7 +423,7 @@ class ExchangeManager:
     async def create_order(self, symbol: str, type: str, side: str, amount: float,
                           price: Optional[float] = None, params: Optional[Dict] = None) -> Dict:
         """
-        Universal order creation method - REQUIRED for aged_position_manager
+        Universal order creation method - used by position management systems
 
         Args:
             symbol: Trading pair symbol

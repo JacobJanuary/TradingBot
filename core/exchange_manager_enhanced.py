@@ -543,7 +543,7 @@ class EnhancedExchangeManager:
             Target exit price
 
         NOTE: This method is kept for backward compatibility.
-        New code should use aged_position_manager directly.
+        New code should use Unified Protection V2 for aged position management.
         """
         # Phase 2: Use config instead of os.getenv() with defaults
         from config.settings import config as global_config

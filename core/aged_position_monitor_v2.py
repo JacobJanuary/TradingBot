@@ -1,7 +1,7 @@
 """
 Aged Position Monitor V2 - MINIMAL implementation
 Works through UnifiedPriceMonitor
-Does NOT replace existing aged_position_manager.py until tested
+Primary aged position management system (via Unified Protection V2)
 """
 
 import logging
