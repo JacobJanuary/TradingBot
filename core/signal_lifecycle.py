@@ -610,7 +610,7 @@ class SignalLifecycleManager:
             recent_bars = list(lc.bar_aggregator.bars)[-LARGE_TRADE_WINDOW:]
             rolling_buys = sum(b.large_buy_count for b in recent_bars)
             rolling_sells = sum(b.large_sell_count for b in recent_bars)
-        large_ok = rolling_buys > rolling_sells
+        large_ok = rolling_buys >= 3 and rolling_buys >= rolling_sells * 1.5
 
         # Remaining window time
         window_remaining = (lc.signal_start_ts + lc.derived.max_reentry_seconds) - bar.ts
