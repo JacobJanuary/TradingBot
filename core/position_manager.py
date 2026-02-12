@@ -248,6 +248,13 @@ class PositionManager:
         # Buffer for WebSocket updates for positions being created
         self.pending_updates = {}  # symbol -> list of updates
 
+        # FIX: Deferred closure pattern for accurate PNL
+        # Caches fill data from ORDER_TRADE_UPDATE(FILLED) to use when ACCOUNT_UPDATE(size=0) arrives
+        self._pending_fill_data: Dict[str, Dict] = {}  # {symbol: {fill_price, realized_profit}}
+        # Tracks closures deferred waiting for ORDER_TRADE_UPDATE fill data
+        self._deferred_closures: Dict[str, Dict] = {}  # {symbol: {data, mark_price, position}}
+        self._deferred_closure_tasks: Dict[str, asyncio.Task] = {}  # {symbol: timeout_task}
+
         # Risk management
         self.total_exposure = Decimal('0')
         self.position_count = 0
@@ -1051,6 +1058,10 @@ class PositionManager:
         async def handle_order_filled(data: Dict):
             await self._on_order_filled(data)
 
+        @self.event_router.on('order.update')
+        async def handle_order_update(data: Dict):
+            await self._on_order_fill_data(data)
+
         @self.event_router.on('stop_loss.triggered')
         async def handle_stop_loss(data: Dict):
             await self._on_stop_loss_triggered(data)
@@ -1321,51 +1332,54 @@ class PositionManager:
                         del self.pending_updates[symbol]
 
                     # 10. Initialize trailing stop (ATOMIC path)
-                    # §6.6: Skip legacy TS for lifecycle-managed positions
-                    # Lifecycle manages TS via _check_trailing_stop() with its own params
-                    if request.lifecycle_managed:
-                        logger.info(
-                            f"⏭️ Skipping legacy SmartTrailingStop for {symbol} — "
-                            f"lifecycle manages TS (act={trailing_activation_percent}%, cb={trailing_callback_percent}%)"
-                        )
-                    else:
-                        # Legacy TS — only for wave pipeline positions
-                        trailing_manager = self.trailing_managers.get(exchange_name)
-                        if trailing_manager:
-                            try:
-                                # FIX: Add timeout to prevent wave execution hanging
-                                await asyncio.wait_for(
-                                    trailing_manager.create_trailing_stop(
-                                        symbol=symbol,
-                                        side=position.side,
-                                        entry_price=position.entry_price,
-                                        quantity=position.quantity,
-                                        initial_stop=to_decimal(atomic_result['stop_loss_price']),  # TS manages SL from start
-                                        position_params={
-                                            'trailing_activation_percent': trailing_activation_percent,
-                                            'trailing_callback_percent': trailing_callback_percent
-                                        }
-                                    ),
-                                    timeout=10.0
-                                )
-                                position.has_trailing_stop = True
+                    # FIX: Always create TS in SmartTrailingStopManager for DB persistence
+                    # Even lifecycle-managed positions need TS registered for:
+                    # 1. DB persistence (_save_state is called by create_trailing_stop)
+                    # 2. TS_DEBUG logs showing correct symbols in memory
+                    # 3. Restart recovery (TS restored from DB immediately)
+                    # Note: lifecycle's _check_trailing_stop runs independently and doesn't conflict
+                    trailing_manager = self.trailing_managers.get(exchange_name)
+                    if trailing_manager:
+                        try:
+                            # FIX: Add timeout to prevent wave execution hanging
+                            await asyncio.wait_for(
+                                trailing_manager.create_trailing_stop(
+                                    symbol=symbol,
+                                    side=position.side,
+                                    entry_price=position.entry_price,
+                                    quantity=position.quantity,
+                                    initial_stop=to_decimal(atomic_result['stop_loss_price']),  # TS manages SL from start
+                                    position_params={
+                                        'trailing_activation_percent': trailing_activation_percent,
+                                        'trailing_callback_percent': trailing_callback_percent
+                                    }
+                                ),
+                                timeout=10.0
+                            )
+                            position.has_trailing_stop = True
 
-                                # Save has_trailing_stop to database for restart persistence
-                                await asyncio.wait_for(
-                                    self.repository.update_position(
-                                        position.id,
-                                        has_trailing_stop=True
-                                    ),
-                                    timeout=5.0
-                                )
+                            # Save has_trailing_stop to database for restart persistence
+                            await asyncio.wait_for(
+                                self.repository.update_position(
+                                    position.id,
+                                    has_trailing_stop=True
+                                ),
+                                timeout=5.0
+                            )
 
+                            if request.lifecycle_managed:
+                                logger.info(
+                                    f"✅ TS registered in manager for {symbol} (lifecycle-managed, "
+                                    f"act={trailing_activation_percent}%, cb={trailing_callback_percent}%)"
+                                )
+                            else:
                                 logger.info(f"✅ Trailing stop initialized for {symbol}")
-                            except asyncio.TimeoutError:
-                                logger.error(f"❌ Timeout creating trailing stop for {symbol} - continuing without TS")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to create trailing stop for {symbol}: {e} - continuing without TS")
-                        else:
-                            logger.warning(f"⚠️ No trailing manager for exchange {exchange_name}")
+                        except asyncio.TimeoutError:
+                            logger.error(f"❌ Timeout creating trailing stop for {symbol} - continuing without TS")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to create trailing stop for {symbol}: {e} - continuing without TS")
+                    else:
+                        logger.warning(f"⚠️ No trailing manager for exchange {exchange_name}")
 
                     # 11. Trigger explicit subscription to ensure we get price updates
                     # CRITICAL FIX: This must happen BEFORE returning, regardless of creation path
@@ -2318,21 +2332,46 @@ class PositionManager:
                 if symbol in self.positions:
                     try:
                         position = self.positions[symbol]
-                        # FIX #2: Prefer fill_price (from ORDER_TRADE_UPDATE) over mark_price
-                        fill_price = data.get('fill_price')
-                        if fill_price:
-                            close_price = float(fill_price)
-                            logger.info(f"💰 Using fill price for {symbol} exit: ${close_price}")
+
+                        # FIX: Deferred closure pattern — check for cached fill data first
+                        cached_fill = self._pending_fill_data.pop(symbol, None)
+                        fill_price_from_ws = data.get('fill_price')  # From BinanceHybridStream cache
+
+                        if cached_fill:
+                            # Best case: ORDER_TRADE_UPDATE(FILLED) arrived before ACCOUNT_UPDATE
+                            close_price = cached_fill['fill_price']
+                            realized_pnl = cached_fill['realized_profit']
+                            logger.info(f"💰 Using cached ORDER fill for {symbol}: price=${close_price}, rp=${realized_pnl}")
+                            await self.close_position(
+                                symbol=symbol,
+                                close_price=close_price,
+                                realized_pnl=realized_pnl,
+                                reason='websocket_closure'
+                            )
+                            logger.info(f"✅ Position {symbol} closed via WebSocket event (with fill data)")
+                        elif fill_price_from_ws:
+                            # Fill price from BinanceHybridStream cache (legacy path)
+                            close_price = float(fill_price_from_ws)
+                            logger.info(f"💰 Using BHS fill price for {symbol} exit: ${close_price}")
+                            # No realized_profit available — calculate from prices
+                            await self.close_position(
+                                symbol=symbol,
+                                close_price=close_price,
+                                reason='websocket_closure'
+                            )
+                            logger.info(f"✅ Position {symbol} closed via WebSocket event (BHS fill)")
                         else:
-                            close_price = float(data.get('mark_price', position.current_price))
-                            logger.warning(f"⚠️ No fill price for {symbol}, using mark_price: ${close_price}")
-                        await self.close_position(
-                            symbol=symbol,
-                            close_price=close_price,
-                            realized_pnl=float(data.get('unrealized_pnl', position.unrealized_pnl)),
-                            reason='websocket_closure'
-                        )
-                        logger.info(f"✅ Position {symbol} closed via WebSocket event")
+                            # No fill data yet — defer closure for up to 3s
+                            mark_price = float(data.get('mark_price', position.current_price))
+                            logger.info(f"⏳ Deferring closure for {symbol} (waiting for ORDER_TRADE FILLED, fallback mark=${mark_price})")
+                            self._deferred_closures[symbol] = {
+                                'data': data.copy(),
+                                'mark_price': mark_price,
+                                'position': position,
+                            }
+                            task = asyncio.create_task(self._finalize_deferred_closure(symbol, timeout=3.0))
+                            self._deferred_closure_tasks[symbol] = task
+
                     except Exception as e:
                         logger.error(f"Failed to process WebSocket closure for {symbol}: {e}", exc_info=True)
                 return
@@ -2684,6 +2723,141 @@ class PositionManager:
         if order_type in ['stop_market', 'stop', 'take_profit_market']:
             if symbol in self.positions:
                 await self.close_position(symbol, data.get('exit_reason', order_type))
+
+    async def _on_order_fill_data(self, data: Dict):
+        """
+        Handle ORDER_TRADE_UPDATE events from WebSocket.
+        
+        Caches fill_price and realized_profit from FILLED reduce-only orders.
+        If a deferred closure is waiting for this data, resolves it immediately.
+        """
+        status = data.get('status', '')
+        if status != 'FILLED':
+            return
+        
+        symbol = data.get('symbol', '')
+        average_price = data.get('average_price', 0)
+        realized_profit = data.get('realized_profit', 0)
+        is_reduce_only = data.get('is_reduce_only', False)
+        
+        # Only cache fill data for closing (reduce-only) orders
+        if not is_reduce_only and average_price > 0:
+            # Also check if it's a closing order by side vs position side
+            if symbol in self.positions:
+                position = self.positions[symbol]
+                side = data.get('side', '')
+                is_closing = (position.side == 'long' and side == 'SELL') or \
+                             (position.side == 'short' and side == 'BUY')
+                if not is_closing:
+                    return
+            else:
+                # Position might already be gone (closed), still cache
+                pass
+        
+        if average_price > 0:
+            self._pending_fill_data[symbol] = {
+                'fill_price': average_price,
+                'realized_profit': realized_profit,
+            }
+            logger.info(
+                f"📋 [FILL_CACHE] Cached fill data for {symbol}: "
+                f"price=${average_price}, rp=${realized_profit}"
+            )
+            
+            # Check if a deferred closure is waiting for this data
+            if symbol in self._deferred_closures:
+                await self._resolve_deferred_closure(symbol)
+
+    async def _resolve_deferred_closure(self, symbol: str):
+        """
+        Resolve a deferred closure when ORDER_TRADE_UPDATE(FILLED) arrives.
+        
+        Called when fill data arrives while a deferred closure is waiting.
+        Cancels the timeout task and closes with accurate fill data.
+        """
+        deferred = self._deferred_closures.pop(symbol, None)
+        if not deferred:
+            return
+        
+        # Cancel timeout task
+        timeout_task = self._deferred_closure_tasks.pop(symbol, None)
+        if timeout_task and not timeout_task.done():
+            timeout_task.cancel()
+        
+        # Use the cached fill data
+        cached_fill = self._pending_fill_data.pop(symbol, None)
+        if not cached_fill:
+            logger.warning(f"⚠️ _resolve_deferred_closure called for {symbol} but no fill data cached")
+            return
+        
+        close_price = cached_fill['fill_price']
+        realized_pnl = cached_fill['realized_profit']
+        
+        logger.info(
+            f"✅ Deferred closure RESOLVED for {symbol}: "
+            f"fill=${close_price}, rp=${realized_pnl} "
+            f"(ORDER_TRADE arrived while waiting)"
+        )
+        
+        try:
+            await self.close_position(
+                symbol=symbol,
+                close_price=close_price,
+                realized_pnl=realized_pnl,
+                reason='websocket_closure'
+            )
+            logger.info(f"✅ Position {symbol} closed via deferred resolution (with fill data)")
+        except Exception as e:
+            logger.error(f"Failed to close deferred position {symbol}: {e}", exc_info=True)
+
+    async def _finalize_deferred_closure(self, symbol: str, timeout: float = 3.0):
+        """
+        Timeout handler for deferred closure.
+        
+        If ORDER_TRADE_UPDATE(FILLED) doesn't arrive within timeout seconds,
+        close the position with calculated PNL from prices.
+        """
+        try:
+            await asyncio.sleep(timeout)
+        except asyncio.CancelledError:
+            # Resolved by _resolve_deferred_closure — normal path
+            return
+        
+        deferred = self._deferred_closures.pop(symbol, None)
+        self._deferred_closure_tasks.pop(symbol, None)
+        
+        if not deferred:
+            return
+        
+        # Check if fill data arrived during sleep (race-safe)
+        cached_fill = self._pending_fill_data.pop(symbol, None)
+        if cached_fill:
+            close_price = cached_fill['fill_price']
+            realized_pnl = cached_fill['realized_profit']
+            logger.info(
+                f"💰 Deferred closure for {symbol}: fill data arrived during timeout - "
+                f"price=${close_price}, rp=${realized_pnl}"
+            )
+        else:
+            # No fill data at all — calculate PNL from mark price
+            close_price = deferred['mark_price']
+            realized_pnl = None  # Let close_position() calculate from prices
+            logger.warning(
+                f"⏰ Deferred closure TIMEOUT for {symbol}: "
+                f"no ORDER_TRADE FILLED after {timeout}s, "
+                f"using mark_price=${close_price} (PNL calculated from prices)"
+            )
+        
+        try:
+            await self.close_position(
+                symbol=symbol,
+                close_price=close_price,
+                realized_pnl=realized_pnl,
+                reason='websocket_closure'
+            )
+            logger.info(f"✅ Position {symbol} closed via deferred timeout")
+        except Exception as e:
+            logger.error(f"Failed to close deferred-timeout position {symbol}: {e}", exc_info=True)
 
     async def _on_stop_loss_triggered(self, data: Dict):
         """Handle stop loss triggered event"""
