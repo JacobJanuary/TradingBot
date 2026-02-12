@@ -97,6 +97,10 @@ class BinanceHybridStream:
         self.mark_connected = False
         self.running = False
 
+        # Hybrid state
+        self.positions: Dict[str, Dict] = {}  # {symbol: position_data}
+        self.mark_prices: Dict[str, str] = {}  # {symbol: latest_mark_price}
+
         # ==================== NEW ARCHITECTURE (Expert Panel 2026-02-12) ====================
         # MarkPriceConnectionPool: URL-based combined streams, replaces dynamic SUBSCRIBE
         self.mark_price_pool = MarkPriceConnectionPool(
