@@ -917,38 +917,57 @@ class SignalLifecycleManager:
                 return
 
             ex = exchange.exchange  # CCXT instance
-            binance_symbol = lc.symbol.replace('/', '')
+            binance_symbol = lc.symbol.replace('/', '').replace(':USDT', '')
 
-            # Fetch open Algo orders
-            algo_orders = []
+            # Step 1: Cancel regular STOP_MARKET orders via fetch_open_orders
             try:
-                algo_orders = await ex.fapiPrivateGetOpenAlgoOrders({'symbol': binance_symbol})
-            except AttributeError:
-                try:
-                    algo_orders = await ex.fapiprivate_get_openalgoorders({'symbol': binance_symbol})
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning(f"Failed to fetch algo orders for {lc.symbol}: {e}")
-
-            if not algo_orders:
-                return
-
-            # Cancel all CONDITIONAL (SL) algo orders for this symbol
-            for order in algo_orders:
-                if order.get('algoType') == 'CONDITIONAL' and order.get('algoStatus') in ('NEW', 'WORKING'):
-                    algo_id = order.get('algoId')
-                    try:
-                        await ex.fapiPrivateDeleteAlgo({'algoId': algo_id})
-                        logger.info(f"✅ Cancelled Algo SL for {lc.symbol}: algoId={algo_id}")
-                    except AttributeError:
+                orders = await ex.fetch_open_orders(lc.symbol)
+                expected_side = 'sell'  # We're long, SL is sell
+                for order in orders:
+                    order_type = order.get('type', '').upper()
+                    order_side = order.get('side', '').lower()
+                    reduce_only = order.get('reduceOnly', False)
+                    if (order_type == 'STOP_MARKET' and
+                        order_side == expected_side and
+                        reduce_only):
                         try:
-                            await ex.fapiprivate_delete_algo({'algoId': algo_id})
-                            logger.info(f"✅ Cancelled Algo SL for {lc.symbol}: algoId={algo_id}")
+                            await ex.cancel_order(order['id'], lc.symbol)
+                            logger.info(f"✅ Cancelled SL order {order['id'][:8]}... for {lc.symbol}")
                         except Exception as e:
-                            logger.warning(f"Failed to cancel Algo SL {algo_id} for {lc.symbol}: {e}")
+                            logger.warning(f"Failed to cancel SL order {order['id']}: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch open orders for {lc.symbol}: {e}")
+
+            # Step 2: Cancel Algo orders via Algo API
+            # (This is the CRITICAL path — Algo SL orders are NOT visible in regular orders)
+            try:
+                algo_res = await ex.fapiPrivateGetOpenAlgoOrders({
+                    'symbol': binance_symbol,
+                    'algo_type': 'STOP_MARKET'
+                })
+
+                algo_orders = []
+                if isinstance(algo_res, dict) and 'orders' in algo_res:
+                    algo_orders = algo_res['orders']
+                elif isinstance(algo_res, list):
+                    algo_orders = algo_res
+
+                for ao in algo_orders:
+                    algo_id = ao.get('algoId')
+                    try:
+                        await ex.fapiPrivateDeleteAlgoOrder({
+                            'symbol': binance_symbol,
+                            'algoId': algo_id
+                        })
+                        logger.info(f"✅ Cancelled Algo SL for {lc.symbol}: algoId={algo_id}")
                     except Exception as e:
                         logger.warning(f"Failed to cancel Algo SL {algo_id} for {lc.symbol}: {e}")
+
+                if algo_orders:
+                    logger.info(f"🗑️ Cancelled {len(algo_orders)} Algo SL order(s) for {lc.symbol}")
+
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to check/cancel Algo Orders for {lc.symbol}: {e}")
 
         except Exception as e:
             logger.error(f"Error cancelling exchange SL for {lc.symbol}: {e}")
