@@ -1080,7 +1080,18 @@ class SignalLifecycleManager:
             return
         
         if lc.state != SignalState.IN_POSITION:
-            logger.info(f"ℹ️ External close for {symbol} but state={lc.state.value}, ignoring")
+            # If in REENTRY_WAIT and another close arrives (e.g. phantom SHORT
+            # closed manually, or duplicate exchange event), reset cooldown
+            # so we don't immediately re-enter
+            if lc.state == SignalState.REENTRY_WAIT:
+                lc.last_exit_ts = int(time.time())
+                logger.info(
+                    f"🔄 External close for {symbol} in REENTRY_WAIT — "
+                    f"cooldown reset to {lc.strategy.base_cooldown}s"
+                )
+                await self._persist_lifecycle(lc)
+            else:
+                logger.info(f"ℹ️ External close for {symbol} but state={lc.state.value}, ignoring")
             return
         
         # Calculate PnL using the actual fill price
