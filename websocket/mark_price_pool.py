@@ -301,6 +301,11 @@ class MarkPriceConnectionPool:
         self._current_symbols: Set[str] = set()
         self._rebuild_lock = asyncio.Lock()
 
+        # Debounce: coalesce rapid symbol changes into single rebuild
+        self._debounce_task: Optional[asyncio.Task] = None
+        self._debounce_delay: float = 0.5  # 500ms coalesce window
+        self._pending_symbols: Optional[Set[str]] = None
+
     @property
     def connected(self) -> bool:
         """True if at least one connection is active"""
@@ -318,21 +323,67 @@ class MarkPriceConnectionPool:
 
     async def set_symbols(self, symbols: Set[str]):
         """
-        Set the complete list of symbols to subscribe to.
+        Set the complete list of symbols to subscribe to (DEBOUNCED).
         
-        If the set changed, rebuild connections with new URLs.
-        Connections are rebuilt in parallel for speed.
+        Coalesces rapid changes within 500ms window into single rebuild.
+        For immediate rebuild (batch operations), use set_symbols_immediate().
         
         Args:
             symbols: Set of raw Binance symbols (e.g., 'BTCUSDT')
         """
+        if symbols == self._current_symbols and self._pending_symbols is None:
+            return
+
+        self._pending_symbols = symbols.copy()
+
+        # Cancel existing debounce timer
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+
+        # Start new debounce timer
+        self._debounce_task = asyncio.create_task(self._debounced_rebuild())
+
+    async def _debounced_rebuild(self):
+        """Wait for debounce window, then rebuild once."""
+        try:
+            await asyncio.sleep(self._debounce_delay)
+        except asyncio.CancelledError:
+            return  # New set_symbols() call will restart the timer
+
+        async with self._rebuild_lock:
+            if self._pending_symbols is None:
+                return
+
+            symbols = self._pending_symbols
+            self._pending_symbols = None
+
+            added = symbols - self._current_symbols
+            removed = self._current_symbols - symbols
+            if added:
+                logger.info(f"➕ [POOL] Adding streams: {added}")
+            if removed:
+                logger.info(f"➖ [POOL] Removing streams: {removed}")
+
+            self._current_symbols = symbols.copy()
+            await self._rebuild_connections()
+
+    async def set_symbols_immediate(self, symbols: Set[str]):
+        """
+        Force immediate rebuild (bypass debounce).
+        
+        Used for batch operations where all symbols are known upfront.
+        """
         if symbols == self._current_symbols:
             return
+
+        # Cancel any pending debounce
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+            self._pending_symbols = None
 
         async with self._rebuild_lock:
             added = symbols - self._current_symbols
             removed = self._current_symbols - symbols
-
             if added:
                 logger.info(f"➕ [POOL] Adding streams: {added}")
             if removed:
@@ -342,19 +393,24 @@ class MarkPriceConnectionPool:
             await self._rebuild_connections()
 
     async def add_symbol(self, symbol: str):
-        """Add a single symbol (convenience method)"""
+        """Add a single symbol (debounced)"""
         if symbol not in self._current_symbols:
-            new_symbols = self._current_symbols | {symbol}
-            await self.set_symbols(new_symbols)
+            pending = self._pending_symbols or self._current_symbols
+            await self.set_symbols(pending | {symbol})
 
     async def remove_symbol(self, symbol: str):
-        """Remove a single symbol (convenience method)"""
-        if symbol in self._current_symbols:
-            new_symbols = self._current_symbols - {symbol}
-            await self.set_symbols(new_symbols)
+        """Remove a single symbol (debounced)"""
+        pending = self._pending_symbols or self._current_symbols
+        if symbol in pending:
+            await self.set_symbols(pending - {symbol})
 
     async def stop(self):
         """Stop all connections"""
+        # Cancel debounce timer
+        if self._debounce_task and not self._debounce_task.done():
+            self._debounce_task.cancel()
+            self._pending_symbols = None
+
         logger.info(f"🛑 [POOL] Stopping {len(self._connections)} connections...")
         for conn in self._connections:
             await conn.stop()

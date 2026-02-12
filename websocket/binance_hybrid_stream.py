@@ -994,6 +994,8 @@ class BinanceHybridStream:
                 return
 
             synced_count = 0
+            symbols_to_subscribe = set()  # OPTIMIZATION: Batch collect
+            
             for pos in positions:
                 symbol = pos.get('symbol')
                 if not symbol:
@@ -1019,13 +1021,24 @@ class BinanceHybridStream:
                     'mark_price': self.mark_prices.get(symbol, '0')
                 }
                 
-                # Ensure mark price subscription is active
+                # Check if subscription is needed
                 entry = self.symbol_state.get_entry(symbol)
                 if not entry or entry.state not in (SymbolState.SUBSCRIBED, SymbolState.SUBSCRIBING):
-                    logger.info(f"➕ [USER] Found missing subscription for {symbol} in snapshot")
-                    await self._request_mark_subscription(symbol, subscribe=True)
+                    symbols_to_subscribe.add(symbol)
                 
                 synced_count += 1
+            
+            # BATCH: Single pool rebuild instead of N rebuilds
+            if symbols_to_subscribe:
+                logger.info(f"📦 [USER] Batch subscribing {len(symbols_to_subscribe)} symbols from snapshot")
+                for s in symbols_to_subscribe:
+                    self.symbol_state.add(s)
+                    self.symbol_state.mark_subscribing(s)
+                current = self.mark_price_pool.symbols
+                await self.mark_price_pool.set_symbols_immediate(current | symbols_to_subscribe)
+                # Sync legacy sets
+                self.subscribed_symbols = self.symbol_state.subscribed_symbols
+                self.pending_subscriptions = self.symbol_state.pending_symbols
                 
             logger.info(f"✅ [USER] Snapshot sync complete: {synced_count} positions synced")
             
