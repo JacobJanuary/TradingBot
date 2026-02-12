@@ -402,11 +402,12 @@ class SignalLifecycleManager:
                 lc.max_price = bar.price
 
             # Priority-ordered exit checks (§6)
+            # NOTE: _check_stop_loss REMOVED — exchange Algo SL handles SL.
+            # Having both caused race condition: two SELLs → phantom SHORT.
+            # Exchange SL closure arrives via on_position_closed_externally().
             if await self._check_timeout(lc, bar):
                 return
             if await self._check_liquidation(lc, bar):
-                return
-            if await self._check_stop_loss(lc, bar):
                 return
             if await self._check_trailing_stop(lc, bar):
                 return
