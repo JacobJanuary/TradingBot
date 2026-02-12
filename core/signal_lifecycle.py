@@ -703,7 +703,7 @@ class SignalLifecycleManager:
         
         all_trades = []
         current_start = start_time
-        max_pages = 5  # Safety limit: 5 × 1000 trades
+        max_pages = 20  # FIX C3-1: 20 × 1000 trades (covers active symbols)
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -743,6 +743,8 @@ class SignalLifecycleManager:
             return 0
         
         # Aggregate trades into 1-second bars
+        # FIX B2-1: Use dynamic threshold from aggregator instead of hardcoded $10K
+        large_threshold = lc.bar_aggregator.large_trade_threshold if lc.bar_aggregator else 10_000
         bars_by_second: Dict[int, dict] = {}
         
         for trade in all_trades:
@@ -765,11 +767,11 @@ class SignalLifecycleManager:
             
             if is_buyer_maker:
                 bar_data['delta'] -= volume_usd
-                if volume_usd >= 10_000:
+                if volume_usd >= large_threshold:
                     bar_data['large_sell'] += 1
             else:
                 bar_data['delta'] += volume_usd
-                if volume_usd >= 10_000:
+                if volume_usd >= large_threshold:
                     bar_data['large_buy'] += 1
         
         # Sort by timestamp and add to aggregator
@@ -1314,15 +1316,16 @@ class SignalLifecycleManager:
                 sp = row.get('strategy_params', {})
 
                 # Reconstruct StrategyParams (FIX N-4: include max_reentry/position_hours)
+                # FIX B3-1: Defaults aligned with StrategyParams class defaults
                 params = StrategyParams(
-                    leverage=sp.get('leverage', 1),
-                    sl_pct=sp.get('sl_pct', 2.0),
-                    base_activation=sp.get('base_activation', 1.0),
-                    base_callback=sp.get('base_callback', 0.5),
-                    base_cooldown=sp.get('base_cooldown', 60),
-                    base_reentry_drop=sp.get('base_reentry_drop', 0.5),
-                    delta_window=sp.get('delta_window', 20),
-                    threshold_mult=sp.get('threshold_mult', 1.5),
+                    leverage=sp.get('leverage', 10),
+                    sl_pct=sp.get('sl_pct', 3.0),
+                    base_activation=sp.get('base_activation', 10.0),
+                    base_callback=sp.get('base_callback', 3.0),
+                    base_cooldown=sp.get('base_cooldown', 300),
+                    base_reentry_drop=sp.get('base_reentry_drop', 5.0),
+                    delta_window=sp.get('delta_window', 3600),
+                    threshold_mult=sp.get('threshold_mult', 1.0),
                     max_reentry_hours=sp.get('max_reentry_hours', 4),
                     max_position_hours=sp.get('max_position_hours', 24),
                 )

@@ -1902,10 +1902,13 @@ class SmartTrailingStopManager:
 
         async with self.lock:
             ts = self.trailing_stops[symbol]
+
+            # FIX B5-1: Check state BEFORE overwriting to TRIGGERED
+            was_active = ts.state == TrailingStopState.ACTIVE
             ts.state = TrailingStopState.TRIGGERED
 
             # Update statistics
-            if ts.state == TrailingStopState.ACTIVE:
+            if was_active:
                 self.stats['total_triggered'] += 1
 
                 if realized_pnl:

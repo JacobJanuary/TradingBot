@@ -11,10 +11,10 @@
     {
       "priority": 1,
       "score_range": "100-150",
-      "consensus_score": 21.16,
+      "consensus_score": 20.04,
       "expert_scores": {
         "alpha_hunter": 14.65,
-        "risk_manager": 32.06,
+        "risk_manager": 27.25,
         "quant": 20.16
       },
       "filter": {
@@ -42,18 +42,18 @@
         "win_rate": 0.325,
         "total_trades": 40,
         "ts_wins": 13,
-        "sl_exits": 0,
-        "timeout_exits": 0,
+        "sl_exits": 21,
+        "timeout_exits": 6,
         "signal_count": 24
       }
     },
     {
       "priority": 2,
       "score_range": "150-200",
-      "consensus_score": 23.32,
+      "consensus_score": 21.94,
       "expert_scores": {
         "alpha_hunter": 15.94,
-        "risk_manager": 29.82,
+        "risk_manager": 24.85,
         "quant": 26.68
       },
       "filter": {
@@ -81,18 +81,18 @@
         "win_rate": 0.4167,
         "total_trades": 36,
         "ts_wins": 15,
-        "sl_exits": 0,
-        "timeout_exits": 0,
+        "sl_exits": 15,
+        "timeout_exits": 6,
         "signal_count": 13
       }
     },
     {
       "priority": 3,
       "score_range": "200-250",
-      "consensus_score": 20.43,
+      "consensus_score": 19.89,
       "expert_scores": {
         "alpha_hunter": 22.95,
-        "risk_manager": 14.49,
+        "risk_manager": 13.37,
         "quant": 25.65
       },
       "filter": {
@@ -120,18 +120,18 @@
         "win_rate": 0.5385,
         "total_trades": 13,
         "ts_wins": 7,
-        "sl_exits": 0,
-        "timeout_exits": 0,
+        "sl_exits": 5,
+        "timeout_exits": 1,
         "signal_count": 8
       }
     },
     {
       "priority": 4,
       "score_range": "250-300",
-      "consensus_score": 29.19,
+      "consensus_score": 23.61,
       "expert_scores": {
         "alpha_hunter": 53.31,
-        "risk_manager": 32.7,
+        "risk_manager": 17.31,
         "quant": 14.27
       },
       "filter": {
@@ -159,18 +159,18 @@
         "win_rate": 0.2941,
         "total_trades": 17,
         "ts_wins": 5,
-        "sl_exits": 0,
-        "timeout_exits": 0,
+        "sl_exits": 4,
+        "timeout_exits": 8,
         "signal_count": 10
       }
     },
     {
       "priority": 5,
       "score_range": "300-350",
-      "consensus_score": 16.3,
+      "consensus_score": 15.9,
       "expert_scores": {
         "alpha_hunter": 16.68,
-        "risk_manager": 25.41,
+        "risk_manager": 23.59,
         "quant": 10.23
       },
       "filter": {
@@ -198,57 +198,57 @@
         "win_rate": 0.2143,
         "total_trades": 28,
         "ts_wins": 6,
-        "sl_exits": 0,
-        "timeout_exits": 0,
+        "sl_exits": 20,
+        "timeout_exits": 2,
         "signal_count": 14
       }
     },
     {
       "priority": 6,
       "score_range": "350-400",
-      "consensus_score": 33.65,
+      "consensus_score": 31.85,
       "expert_scores": {
-        "alpha_hunter": 62.14,
-        "risk_manager": 40.93,
-        "quant": 14.98
+        "alpha_hunter": 59.55,
+        "risk_manager": 26.06,
+        "quant": 20.81
       },
       "filter": {
         "score_min": 350,
         "score_max": 400,
         "rsi_min": 80,
         "vol_min": 0,
-        "oi_min": 8
+        "oi_min": 12
       },
       "strategy": {
         "leverage": 10,
         "sl_pct": 10,
-        "delta_window": 300,
+        "delta_window": 60,
         "threshold_mult": 1.0,
         "base_activation": 20.0,
-        "base_callback": 7.0,
+        "base_callback": 5.0,
         "base_reentry_drop": 5.0,
-        "base_cooldown": 60,
+        "base_cooldown": 600,
         "max_reentry_hours": 24,
         "max_position_hours": 24
       },
       "metrics": {
-        "total_pnl": 2617.7,
-        "pnl_per_trade": 118.99,
-        "win_rate": 0.2727,
-        "total_trades": 22,
+        "total_pnl": 1412.3,
+        "pnl_per_trade": 94.15,
+        "win_rate": 0.4,
+        "total_trades": 15,
         "ts_wins": 6,
-        "sl_exits": 0,
-        "timeout_exits": 0,
-        "signal_count": 13
+        "sl_exits": 7,
+        "timeout_exits": 2,
+        "signal_count": 5
       }
     },
     {
       "priority": 7,
       "score_range": "400-450",
-      "consensus_score": 16.72,
+      "consensus_score": 15.1,
       "expert_scores": {
         "alpha_hunter": 19.4,
-        "risk_manager": 21.44,
+        "risk_manager": 15.8,
         "quant": 11.24
       },
       "filter": {
@@ -276,14 +276,14 @@
         "win_rate": 0.2632,
         "total_trades": 19,
         "ts_wins": 5,
-        "sl_exits": 0,
-        "timeout_exits": 0,
+        "sl_exits": 9,
+        "timeout_exits": 5,
         "signal_count": 7
       }
     },
     {
       "priority": 8,
-      "score_range": "450-500",
+      "score_range": "450+",
       "consensus_score": 10.56,
       "expert_scores": {
         "alpha_hunter": 15.01,
@@ -292,7 +292,7 @@
       },
       "filter": {
         "score_min": 450,
-        "score_max": 500,
+        "score_max": 9999,
         "rsi_min": 10,
         "vol_min": 0,
         "oi_min": 0
@@ -315,13 +315,13 @@
         "win_rate": 0.4,
         "total_trades": 10,
         "ts_wins": 4,
-        "sl_exits": 0,
+        "sl_exits": 6,
         "timeout_exits": 0,
         "signal_count": 4
       }
     }
   ],
-  "total_expected_pnl": 8660.5,
-  "avg_win_rate": 0.3406,
-  "avg_pnl_per_trade": 50.52
+  "total_expected_pnl": 7455.1,
+  "avg_win_rate": 0.3565,
+  "avg_pnl_per_trade": 47.42
 }
