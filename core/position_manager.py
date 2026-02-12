@@ -182,6 +182,8 @@ class PositionState:
     # NEW: WebSocket subscription health tracking
     last_price_update: Optional[datetime] = None  # Last mark price update from WebSocket
 
+    leverage: int = 10
+
     opened_at: Optional[datetime] = None
     age_hours: float = 0
 
@@ -486,6 +488,7 @@ class PositionManager:
                     trailing_activation_percent=float(self.config.trailing_activation_percent),
                     trailing_callback_percent=float(self.config.trailing_callback_percent),
                     # signal_stop_loss_percent removed 2026-01-03
+                    leverage=int(pos.get('leverage', 10) or 10),
                     opened_at=opened_at,
                     age_hours=self._calculate_age_hours(opened_at) if opened_at else 0
                 )
@@ -2448,19 +2451,21 @@ class PositionManager:
 
             # Calculate PnL from our own DB entry price (not from WS cache which may differ)
             if position.entry_price > 0:
+                leverage = position.leverage or 10
                 if position.side == 'long':
                     pnl_pct = (float(position.current_price) - float(position.entry_price)) / float(position.entry_price) * 100
                 else:
                     pnl_pct = (float(position.entry_price) - float(position.current_price)) / float(position.entry_price) * 100
 
-                position.unrealized_pnl_percent = pnl_pct
+                # Apply leverage to PnL%
+                position.unrealized_pnl_percent = pnl_pct * leverage
 
-                # Calculate USD PnL from our entry_price + quantity (consistent with pnl%)
+                # Calculate USD PnL from our entry_price + quantity × leverage
                 qty = float(position.quantity) if position.quantity else 0
                 if position.side == 'long':
-                    position.unrealized_pnl = (float(position.current_price) - float(position.entry_price)) * qty
+                    position.unrealized_pnl = (float(position.current_price) - float(position.entry_price)) * qty * leverage
                 else:
-                    position.unrealized_pnl = (float(position.entry_price) - float(position.current_price)) * qty
+                    position.unrealized_pnl = (float(position.entry_price) - float(position.current_price)) * qty * leverage
 
                 # Persist price and PnL to database
                 logger.info(
