@@ -579,10 +579,11 @@ class SignalLifecycleManager:
         1. Cooldown: elapsed since exit >= base_cooldown
         2. Drop: price dropped base_reentry_drop% from max_price
         3. Delta: current bar delta > 0  (§7.1)
-        4. Large trades: current bar large_buy_count > large_sell_count (§7.1)
+        4. Large trades: rolling 60s large_buy_count > large_sell_count (§7.1)
         
         Large trade threshold is dynamically calibrated per-symbol using
         P90 of accumulated trade volumes (calibrated once after cooldown).
+        Condition 4 uses 60s rolling window to capture institutional order flow.
         """
         elapsed_since_exit = bar.ts - lc.last_exit_ts
 
@@ -597,7 +598,16 @@ class SignalLifecycleManager:
         drop_pct = (lc.max_price - bar.price) / lc.max_price * 100 if lc.max_price > 0 else 0
         drop_ok = lc.max_price > 0 and drop_pct >= lc.strategy.base_reentry_drop
         delta_ok = bar.delta > 0
-        large_ok = bar.large_buy_count > bar.large_sell_count
+
+        # Condition 4: 60s rolling window for large trades
+        LARGE_TRADE_WINDOW = 60  # seconds
+        rolling_buys = 0
+        rolling_sells = 0
+        if lc.bar_aggregator and lc.bar_aggregator.bars:
+            recent_bars = list(lc.bar_aggregator.bars)[-LARGE_TRADE_WINDOW:]
+            rolling_buys = sum(b.large_buy_count for b in recent_bars)
+            rolling_sells = sum(b.large_sell_count for b in recent_bars)
+        large_ok = rolling_buys > rolling_sells
 
         # Remaining window time
         window_remaining = (lc.signal_start_ts + lc.derived.max_reentry_seconds) - bar.ts
@@ -613,7 +623,7 @@ class SignalLifecycleManager:
                 f"cooldown={elapsed_since_exit}/{lc.strategy.base_cooldown}s {'✅' if cooldown_ok else '❌'}, "
                 f"drop={drop_pct:.1f}/{lc.strategy.base_reentry_drop}% {'✅' if drop_ok else '❌'}, "
                 f"delta={bar.delta:.0f} {'✅' if delta_ok else '❌'}, "
-                f"buys={bar.large_buy_count}/sells={bar.large_sell_count} {'✅' if large_ok else '❌'}, "
+                f"large_buys={rolling_buys}/sells={rolling_sells}(60s) {'✅' if large_ok else '❌'}, "
                 f"threshold=${threshold:.0f}, "
                 f"window_remaining={window_remaining}s ({window_remaining//3600}h{(window_remaining%3600)//60}m)"
             )
@@ -630,7 +640,7 @@ class SignalLifecycleManager:
         if not delta_ok:
             return False
 
-        # 4. Large trades — current bar, per spec §7.1
+        # 4. Large trades — 60s rolling window
         if not large_ok:
             return False
 
@@ -639,7 +649,8 @@ class SignalLifecycleManager:
             f"🔄 RE-ENTRY triggered for {lc.symbol}: "
             f"cooldown={elapsed_since_exit}s, "
             f"drop={drop_pct:.2f}% >= {lc.strategy.base_reentry_drop}%, "
-            f"bar.delta={bar.delta:.0f}, buy={bar.large_buy_count}/sell={bar.large_sell_count}, "
+            f"bar.delta={bar.delta:.0f}, "
+            f"large_buys={rolling_buys}/sells={rolling_sells}(60s), "
             f"threshold=${threshold:.0f}"
         )
 
