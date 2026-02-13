@@ -329,7 +329,7 @@ class SignalLifecycleManager:
             await self._cleanup_lifecycle(lc)
             return False
 
-        lc.state = SignalState.IN_POSITION
+        # State already set inside _open_position() before DB persist
 
         # 7. Subscribe to aggTrades for this symbol
         if self.aggtrades_stream:
@@ -903,7 +903,7 @@ class SignalLifecycleManager:
 
         success = await self._open_position(lc, is_reentry=True)
         if success:
-            lc.state = SignalState.IN_POSITION
+            # State already set inside _open_position() before DB persist
             lc.last_exit_ts = 0  # §10: reset on re-entry
             return True
         return False
@@ -1112,6 +1112,7 @@ class SignalLifecycleManager:
                 lc.entry_price = float(result.entry_price)
                 lc.max_price = lc.entry_price
                 lc.position_entry_ts = int(time.time())
+                lc.state = SignalState.IN_POSITION  # FIX: set BEFORE persist (was after)
                 lc.in_position = True
                 lc.trade_count += 1
                 lc.ts_activated = False
