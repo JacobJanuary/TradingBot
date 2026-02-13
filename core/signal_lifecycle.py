@@ -87,6 +87,7 @@ class SignalLifecycle:
     max_price: float = 0.0              # Highest price since entry (for drawdown)
     position_entry_ts: int = 0          # When current position was opened
     in_position: bool = False
+    _closing: bool = False              # Guard: lifecycle-initiated close in progress
     trade_count: int = 0                # Total entries (incl. re-entries)
 
     # Re-entry tracking
@@ -1263,6 +1264,9 @@ class SignalLifecycleManager:
                 # race condition (both lifecycle SL and exchange SL firing → phantom SHORT)
                 await self._cancel_exchange_sl(lc)
 
+                # Guard: prevent WS closure from double-processing during await
+                lc._closing = True
+
                 # §8: Don't pass realized_pnl — PM calculates from entry/exit prices in USD
                 # Our pnl is leveraged %, PM expects USD — let PM do the math
                 await self.position_manager.close_position(
@@ -1273,6 +1277,7 @@ class SignalLifecycleManager:
             except Exception as e:
                 logger.error(f"Error closing position for {lc.symbol}: {e}")
                 event_logger = get_event_logger()
+                lc._closing = False  # Reset on error so external close can proceed
                 if event_logger:
                     asyncio.create_task(event_logger.log_event(
                         EventType.POSITION_ERROR,
@@ -1326,6 +1331,15 @@ class SignalLifecycleManager:
         """
         lc = self.active.get(symbol)
         if not lc:
+            return
+
+        # Guard: lifecycle-initiated close is already in progress
+        # (e.g. TIMEOUT sent SELL → WS ACCOUNT_UPDATE arrived during await)
+        if lc._closing:
+            logger.info(
+                f"ℹ️ Skipping external close for {symbol}: "
+                f"lifecycle close already in progress"
+            )
             return
         
         if lc.state != SignalState.IN_POSITION:
