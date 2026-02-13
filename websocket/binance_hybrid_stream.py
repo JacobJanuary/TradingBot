@@ -136,8 +136,6 @@ class BinanceHybridStream:
         self.pending_processor_task = None
         self.rest_fallback_task = None
 
-        # FIX: Cache fill prices from ORDER_TRADE_UPDATE for accurate exit price
-        self.last_fill_prices: Dict[str, float] = {}  # {symbol: last_fill_price}
 
         # REST fallback metrics
         self.rest_fallback_count = 0
@@ -879,11 +877,8 @@ class BinanceHybridStream:
                     position_data['size'] = '0'
                     position_data['position_amt'] = 0
 
-                    # FIX #2: Use cached fill price from ORDER_TRADE_UPDATE instead of mark_price
-                    if symbol in self.last_fill_prices:
-                        fill_price = self.last_fill_prices.pop(symbol)
-                        position_data['fill_price'] = str(fill_price)
-                        logger.info(f"💰 [USER] Using fill price for {symbol} exit: ${fill_price}")
+                    # NOTE: fill_price cache removed — PM's _pending_fill_data
+                    # handles exit price correctly with side filtering + deferred closure
 
                     # Emit closure event to position_manager
                     await self._emit_combined_event(symbol, position_data)
@@ -950,10 +945,8 @@ class BinanceHybridStream:
                 f"@ {order_info['average_price']}"
             )
 
-            # FIX #2: Cache fill price for accurate exit price recording
-            if order_info['average_price'] > 0:
-                self.last_fill_prices[symbol] = order_info['average_price']
-                logger.info(f"💰 [ORDER] Cached fill price for {symbol}: ${order_info['average_price']}")
+            # NOTE: fill price caching removed from BHS — PM's _pending_fill_data
+            # handles this correctly with side filtering (only closing orders)
 
             # Detect SL/TP triggers
             if order_type in ('STOP_MARKET', 'STOP'):

@@ -2337,7 +2337,6 @@ class PositionManager:
 
                         # FIX: Deferred closure pattern — check for cached fill data first
                         cached_fill = self._pending_fill_data.pop(symbol, None)
-                        fill_price_from_ws = data.get('fill_price')  # From BinanceHybridStream cache
 
                         if cached_fill:
                             # Best case: ORDER_TRADE_UPDATE(FILLED) arrived before ACCOUNT_UPDATE
@@ -2351,17 +2350,6 @@ class PositionManager:
                                 reason='websocket_closure'
                             )
                             logger.info(f"✅ Position {symbol} closed via WebSocket event (with fill data)")
-                        elif fill_price_from_ws:
-                            # Fill price from BinanceHybridStream cache (legacy path)
-                            close_price = float(fill_price_from_ws)
-                            logger.info(f"💰 Using BHS fill price for {symbol} exit: ${close_price}")
-                            # No realized_profit available — calculate from prices
-                            await self.close_position(
-                                symbol=symbol,
-                                close_price=close_price,
-                                reason='websocket_closure'
-                            )
-                            logger.info(f"✅ Position {symbol} closed via WebSocket event (BHS fill)")
                         else:
                             # No fill data yet — defer closure for up to 3s
                             mark_price = float(data.get('mark_price', position.current_price))
