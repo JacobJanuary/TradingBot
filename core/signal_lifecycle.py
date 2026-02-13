@@ -16,6 +16,7 @@ Date: 2026-02-09
 
 import asyncio
 import logging
+import os
 import time
 import aiohttp
 from datetime import datetime
@@ -169,6 +170,11 @@ class SignalLifecycleManager:
         self.repository = repository
         self.max_concurrent_signals = max_concurrent_signals
         self.bar_buffer_size = bar_buffer_size
+
+        # RE_ENTRY toggle (env-level kill switch)
+        self.reentry_enabled = os.getenv('RE_ENTRY', 'true').lower() == 'true'
+        if not self.reentry_enabled:
+            logger.warning("⚠️ RE_ENTRY is DISABLED — positions will finalize after close, no re-entries")
 
         # Active lifecycles: symbol → SignalLifecycle
         self.active: Dict[str, SignalLifecycle] = {}
@@ -425,6 +431,12 @@ class SignalLifecycleManager:
                 return
 
         elif lc.state == SignalState.REENTRY_WAIT:
+            # Defensive: finalize if re-entry was disabled (e.g. DB-restored lifecycle)
+            if not self.reentry_enabled:
+                logger.info(f"🚫 Re-entry disabled for {symbol}, finalizing")
+                await self._finalize_lifecycle(lc, "reentry_disabled")
+                return
+
             # §7.1: Track max_price upward during re-entry wait
             # so that drop% is calculated from the actual peak
             if bar.price > lc.max_price:
@@ -1303,6 +1315,8 @@ class SignalLifecycleManager:
         # TIMEOUT allows re-entry (user decision 2026-02-10)
         if reason in ("LIQUIDATED", "LIQ+TIMEOUT"):
             await self._finalize_lifecycle(lc, f"closed_{reason.lower()}")
+        elif not self.reentry_enabled:
+            await self._finalize_lifecycle(lc, "reentry_disabled")
         elif self._is_reentry_expired(lc, int(time.time())):
             await self._finalize_lifecycle(lc, "reentry_window_expired")
         else:
@@ -1400,6 +1414,8 @@ class SignalLifecycleManager:
         # Decide next state (§6.7)
         if reason in ("LIQUIDATED", "LIQ+TIMEOUT"):
             await self._finalize_lifecycle(lc, f"closed_{reason.lower()}")
+        elif not self.reentry_enabled:
+            await self._finalize_lifecycle(lc, "reentry_disabled")
         elif self._is_reentry_expired(lc, int(time.time())):
             await self._finalize_lifecycle(lc, "reentry_window_expired")
         else:
