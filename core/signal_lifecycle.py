@@ -763,25 +763,28 @@ class SignalLifecycleManager:
                 )
             return False
 
-        # Condition C: Delta momentum filter (§6.6)
-        # Spec: threshold = avg_delta × threshold_mult (POSITIVE)
-        # Spec: IF rolling_delta <= 0 AND rolling_delta <= threshold → EXIT
-        # Since threshold is positive and delta is already <= 0, second condition is always true
-        # Therefore: simplified to just delta <= 0
+        # Condition C: Delta momentum filter (§6.6, threshold_mult reactivated 2026-02-13)
+        # EXIT only when selling pressure exceeds normal noise by threshold_mult
+        # threshold = avg_abs_delta(100) × threshold_mult
+        # EXIT when rolling_delta < -threshold (significant selling)
         if lc.bar_aggregator:
             rolling_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window)
+            avg_abs = lc.bar_aggregator.get_avg_abs_delta(100)
+            threshold = avg_abs * lc.strategy.threshold_mult
 
-            if rolling_delta > 0:
+            if rolling_delta > -threshold:
                 logger.info(
                     f"⏳ TS HELD {lc.symbol}: B✅ drawdown={drawdown:.2f}%, "
-                    f"C❌ delta={rolling_delta:.0f} > 0 (waiting for sellers)"
+                    f"C❌ delta={rolling_delta:.0f} > -{threshold:.0f} "
+                    f"(need selling > {threshold:.0f}, avg={avg_abs:.0f}×{lc.strategy.threshold_mult})"
                 )
                 return False
 
-            # delta <= 0 → Condition C passed (§6.6)
+            # rolling_delta < -threshold → significant selling pressure confirmed
             logger.info(
                 f"📊 Delta filter PASSED for {lc.symbol}: "
-                f"delta={rolling_delta:.0f} <= 0"
+                f"delta={rolling_delta:.0f} < -{threshold:.0f} "
+                f"(avg={avg_abs:.0f}×{lc.strategy.threshold_mult})"
             )
 
         # All 3 conditions met → trigger trailing stop
@@ -824,7 +827,16 @@ class SignalLifecycleManager:
         cooldown_ok = elapsed_since_exit >= lc.strategy.base_cooldown
         drop_pct = (lc.max_price - bar.price) / lc.max_price * 100 if lc.max_price > 0 else 0
         drop_ok = lc.max_price > 0 and drop_pct >= lc.strategy.base_reentry_drop
-        delta_ok = bar.delta > 0
+        # Condition 3: Rolling delta momentum (threshold_mult reactivated 2026-02-13)
+        # Reentry requires sustained buying pressure over delta_window
+        # exceeding avg noise × threshold_mult
+        if lc.bar_aggregator and lc.bar_aggregator.bar_count >= 100:
+            rolling_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window)
+            avg_abs = lc.bar_aggregator.get_avg_abs_delta(100)
+            delta_threshold = avg_abs * lc.strategy.threshold_mult
+            delta_ok = rolling_delta > delta_threshold
+        else:
+            delta_ok = bar.delta > 0  # fallback when not enough data
 
         # Condition 4: 60s rolling window for large trades
         LARGE_TRADE_WINDOW = 60  # seconds
@@ -845,11 +857,15 @@ class SignalLifecycleManager:
         # Periodic diagnostic log (every 60s)
         if bar.ts - lc._last_reentry_log_ts >= 60:
             lc._last_reentry_log_ts = bar.ts
+            # Get rolling delta info for diagnostic log
+            r_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window) if lc.bar_aggregator and lc.bar_aggregator.bar_count >= 100 else bar.delta
+            r_avg = lc.bar_aggregator.get_avg_abs_delta(100) if lc.bar_aggregator and lc.bar_aggregator.bar_count >= 100 else 0
+            r_thr = r_avg * lc.strategy.threshold_mult
             logger.info(
                 f"📊 REENTRY CHECK {lc.symbol}: "
                 f"cooldown={elapsed_since_exit}/{lc.strategy.base_cooldown}s {'✅' if cooldown_ok else '❌'}, "
                 f"drop={drop_pct:.1f}/{lc.strategy.base_reentry_drop}% {'✅' if drop_ok else '❌'}, "
-                f"delta={bar.delta:.0f} {'✅' if delta_ok else '❌'}, "
+                f"delta={r_delta:.0f}/thr={r_thr:.0f}(avg={r_avg:.0f}×{lc.strategy.threshold_mult}) {'✅' if delta_ok else '❌'}, "
                 f"large_buys={rolling_buys}/sells={rolling_sells}(60s) {'✅' if large_ok else '❌'}, "
                 f"threshold=${threshold:.0f}, "
                 f"window_remaining={window_remaining}s ({window_remaining//3600}h{(window_remaining%3600)//60}m)"
@@ -863,7 +879,7 @@ class SignalLifecycleManager:
         if not drop_ok:
             return False
 
-        # 3. Delta > 0 — current bar, per spec §7.1
+        # 3. Delta momentum — rolling delta must exceed avg×threshold_mult (§7.1)
         if not delta_ok:
             return False
 
@@ -872,11 +888,15 @@ class SignalLifecycleManager:
             return False
 
         # All conditions met → re-enter
+        # Get delta values for success log
+        re_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window) if lc.bar_aggregator and lc.bar_aggregator.bar_count >= 100 else bar.delta
+        re_avg = lc.bar_aggregator.get_avg_abs_delta(100) if lc.bar_aggregator and lc.bar_aggregator.bar_count >= 100 else 0
+        re_thr = re_avg * lc.strategy.threshold_mult
         logger.info(
             f"🔄 RE-ENTRY triggered for {lc.symbol}: "
             f"cooldown={elapsed_since_exit}s, "
             f"drop={drop_pct:.2f}% >= {lc.strategy.base_reentry_drop}%, "
-            f"bar.delta={bar.delta:.0f}, "
+            f"rolling_delta={re_delta:.0f} > thr={re_thr:.0f}, "
             f"large_buys={rolling_buys}/sells={rolling_sells}(60s), "
             f"threshold=${threshold:.0f}"
         )
