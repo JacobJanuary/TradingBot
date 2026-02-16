@@ -129,10 +129,16 @@ class WebSocketSignalProcessor:
 
             if remaining:
                 self.stats['signals_unmatched'] += len(remaining)
-                logger.info(
-                    f"⚠️ {len(remaining)} signals did not match composite strategy "
-                    f"(no legacy pipeline — signals dropped)"
-                )
+                for sig in remaining:
+                    sym = sig.get('symbol', sig.get('pair_symbol', '?'))
+                    sc = sig.get('total_score', sig.get('score_week', 0))
+                    rsi = sig.get('rsi', 0)
+                    vol = sig.get('volume_zscore', sig.get('vol_zscore', 0))
+                    oi = sig.get('oi_delta_pct', sig.get('oi_delta', 0))
+                    logger.warning(
+                        f"⚠️ DROPPED {sym}: score={sc} rsi={rsi} vol={vol} oi={oi} "
+                        f"— no matching rule"
+                    )
 
         except Exception as e:
             logger.error(f"Error processing WebSocket signals: {e}", exc_info=True)
