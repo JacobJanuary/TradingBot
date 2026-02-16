@@ -2430,6 +2430,12 @@ class PositionManager:
 
             # UNIFIED PRICE UPDATE (if enabled)
             if self.unified_protection:
+                # Auto-register on first price update (ensures subscription exists before updates)
+                if 'ts_adapters' in self.unified_protection:
+                    adapter = self.unified_protection['ts_adapters'].get(position.exchange)
+                    if adapter and symbol not in adapter.subscribed_symbols:
+                        await adapter.register_position(position)
+                        logger.info(f"✅ Auto-registered {symbol} with unified price monitor")
                 await handle_unified_price_update(
                     self.unified_protection,
                     symbol,
@@ -2502,14 +2508,6 @@ class PositionManager:
                         if action == 'activated':
                             position.trailing_activated = True
                             logger.info(f"Trailing stop activated for {symbol}")
-
-                            # Register with unified protection if enabled
-                            if self.unified_protection and 'ts_adapters' in self.unified_protection:
-                                exchange_name = position.exchange
-                                if exchange_name in self.unified_protection['ts_adapters']:
-                                    adapter = self.unified_protection['ts_adapters'][exchange_name]
-                                    await adapter.register_position(position)
-                                    logger.info(f"Position {symbol} registered with unified protection")
 
                             # Log trailing stop activation
                             event_logger = get_event_logger()
