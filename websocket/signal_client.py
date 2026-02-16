@@ -54,10 +54,9 @@ class SignalWebSocketClient:
         self.signal_buffer: List[dict] = []
         self.buffer_size = int(config.get('SIGNAL_BUFFER_SIZE', 100))
 
-        # Health monitoring settings
-        self.health_check_enabled = config.get('HEALTH_CHECK_ENABLED', True)
-        self.signal_timeout = int(config.get('SIGNAL_TIMEOUT', 900))  # 15 minutes default
-        self.health_check_interval = int(config.get('HEALTH_CHECK_INTERVAL', 60))  # 1 minute
+        # Health monitoring via server heartbeat (every 30s per protocol)
+        self.heartbeat_timeout = int(config.get('HEARTBEAT_TIMEOUT', 90))  # 90s = 3 missed heartbeats
+        self.last_heartbeat_time: Optional[datetime] = None
 
         # Статистика
         self.stats = {
@@ -90,10 +89,12 @@ class SignalWebSocketClient:
             self.state = ConnectionState.CONNECTING
             logger.info(f"Connecting to signal server: {self.server_url}")
 
+            # Server sends WS pings every 20s, expects pong within 60s
+            # Client must NOT send its own pings (ping_interval=None)
             self.websocket = await websockets.connect(
                 self.server_url,
-                ping_interval=20,
-                ping_timeout=10
+                ping_interval=None,
+                ping_timeout=90
             )
 
             self.state = ConnectionState.CONNECTED
@@ -155,8 +156,8 @@ class SignalWebSocketClient:
 
             if data.get('type') == 'auth_success':
                 logger.info("Authentication successful")
-                logger.info(f"Server config: interval={data.get('query_interval')}s, "
-                          f"window={data.get('signal_window')}min")
+                logger.info(f"Server config: strategy={data.get('strategy')}, "
+                          f"filters={data.get('filters')}")
                 return True
             else:
                 logger.error(f"Authentication failed: {data.get('message')}")
@@ -198,8 +199,9 @@ class SignalWebSocketClient:
         if old_buffer_size > 0:
             logger.debug(f"Cleared signal buffer ({old_buffer_size} signals)")
 
-        # 3. Reset signal timing to prevent false timeout after reconnect
+        # 3. Reset timing to prevent false timeout after reconnect
         self.stats['last_signal_time'] = None
+        self.last_heartbeat_time = None
 
         # 4. Reset state (кроме reconnect_attempts - его сохраняем!)
         self.state = ConnectionState.DISCONNECTED
@@ -208,26 +210,24 @@ class SignalWebSocketClient:
 
 
 
-    def _check_signal_timeout(self) -> bool:
+    def _check_heartbeat_timeout(self) -> bool:
         """
-        Проверка не истек ли timeout с последнего полученного сигнала
+        Check if server heartbeat has timed out.
+        Server sends heartbeat every 30s. If no heartbeat for 90s → connection dead.
 
         Returns:
-            True если все OK, False если timeout истек
+            True if OK, False if heartbeat timeout exceeded
         """
-        if not self.health_check_enabled:
+        if self.last_heartbeat_time is None:
+            # Haven't received first heartbeat yet — OK after connect
             return True
 
-        if self.stats['last_signal_time'] is None:
-            # Еще не получали сигналов - это OK после start/reconnect
-            return True
+        elapsed = (datetime.now() - self.last_heartbeat_time).total_seconds()
 
-        time_since_last_signal = (datetime.now() - self.stats['last_signal_time']).total_seconds()
-
-        if time_since_last_signal > self.signal_timeout:
+        if elapsed > self.heartbeat_timeout:
             logger.error(
-                f"⚠️ SIGNAL TIMEOUT! Last signal was {time_since_last_signal:.0f}s ago "
-                f"(threshold: {self.signal_timeout}s)"
+                f"💀 HEARTBEAT TIMEOUT! Last heartbeat {elapsed:.0f}s ago "
+                f"(threshold: {self.heartbeat_timeout}s)"
             )
             return False
 
@@ -239,25 +239,26 @@ class SignalWebSocketClient:
             data = json.loads(message)
             msg_type = data.get('type')
 
-            if msg_type == 'signals':
-                # Batch сигналов (from get_signals / auth handshake)
-                await self.handle_signals(data)
-
-            elif msg_type == 'signal':
+            if msg_type == 'signal':
                 # Individual signal (broadcast from server)
-                # Normalize and accumulate, then flush as batch
                 normalized = self._normalize_signal(data)
                 self._pending_signals.append(normalized)
-                # Flush immediately — each broadcast is a complete wave
+                # Flush immediately — each broadcast is a complete signal
                 await self._flush_pending_signals()
 
-            elif msg_type == 'pong':
-                # Ответ на ping
-                logger.debug("Received pong")
+            elif msg_type == 'signals_snapshot':
+                # Historical signals sent once after auth
+                await self.handle_signals(data)
+                logger.info(f"📸 Received signals snapshot ({data.get('count', '?')} signals)")
 
-            elif msg_type == 'stats':
-                # Статистика сервера
-                logger.info(f"Server stats: {data}")
+            elif msg_type == 'heartbeat':
+                # Server heartbeat every 30s — update timing
+                self.last_heartbeat_time = datetime.now()
+                logger.debug(f"💓 Heartbeat: {data.get('ts')}")
+
+            elif msg_type == 'pong':
+                # Response to app-level ping
+                logger.debug("Received pong")
 
             elif msg_type == 'error':
                 logger.error(f"Server error: {data.get('message')}")
@@ -265,7 +266,7 @@ class SignalWebSocketClient:
                     await self.on_error_callback(data.get('message'))
 
             elif msg_type in ['auth_required', 'auth_success', 'auth_failed']:
-                # Сообщения аутентификации - игнорируем, т.к. обрабатываются в authenticate()
+                # Auth messages handled in authenticate()
                 logger.debug(f"Auth message: {msg_type}")
 
             else:
@@ -280,23 +281,26 @@ class SignalWebSocketClient:
     def _normalize_signal(data: dict) -> dict:
         """
         Normalize server signal format to TradingBot format.
-        
-        Server sends: pair_symbol, total_score, timestamp, patterns, rsi, volume_zscore, oi_delta_pct
-        TradingBot expects: symbol, score_week, score_month, created_at, exchange, action, id
+
+        Server sends: pair_symbol, total_score, direction, timestamp, patterns,
+                      rsi, volume_zscore, oi_delta_pct, strategy
+        TradingBot expects: symbol, score_week, score_month, created_at,
+                           exchange, action, id
         """
         return {
-            # Pass through original fields
+            # Pass through all original fields
             **data,
             # Aliases for TradingBot compatibility
             'symbol': data.get('pair_symbol', data.get('symbol')),
             'total_score': data.get('total_score', 0),
-            # Map total_score to score_week/score_month for backward compatibility
+            # Map total_score to score_week/score_month for backward compat
             'score_week': data.get('score_week', data.get('total_score', 0)),
             'score_month': data.get('score_month', data.get('total_score', 0)),
             'created_at': data.get('created_at', data.get('timestamp')),
             'exchange': data.get('exchange', 'binance'),
             'exchange_id': data.get('exchange_id', 1),
-            'action': data.get('action'),  # May be None — processor handles this
+            # Server sends 'direction' (LONG/SHORT), bot expects 'action'
+            'action': data.get('action', data.get('direction')),
         }
 
     async def _flush_pending_signals(self):
@@ -395,7 +399,6 @@ class SignalWebSocketClient:
         3. Автоматический reconnect при timeout
         """
         self.running = True
-        last_health_check = datetime.now()
 
         while self.running:
             try:
@@ -409,37 +412,32 @@ class SignalWebSocketClient:
                             break
                         continue
 
-                # ✅ NEW: Periodic health check
-                now = datetime.now()
-                if (now - last_health_check).total_seconds() >= self.health_check_interval:
-                    if not self._check_signal_timeout():
-                        logger.error("🔴 Health check FAILED - initiating reconnect")
-                        self.state = ConnectionState.DISCONNECTED
+                # Heartbeat-based health check (server sends heartbeat every 30s)
+                if not self._check_heartbeat_timeout():
+                    logger.error("🔴 Heartbeat timeout — initiating reconnect")
+                    self.state = ConnectionState.DISCONNECTED
 
-                        if self.on_disconnect_callback:
-                            await self.on_disconnect_callback()
+                    if self.on_disconnect_callback:
+                        await self.on_disconnect_callback()
 
-                        if self.auto_reconnect:
-                            await self.reconnect()
-                        else:
-                            break
-                        continue
+                    if self.auto_reconnect:
+                        await self.reconnect()
+                    else:
+                        break
+                    continue
 
-                    last_health_check = now
-
-                # Читаем сообщения с timeout
+                # Read messages (timeout = heartbeat_timeout to allow health checks)
                 try:
-                    # ✅ NEW: Read with timeout to allow health checks
                     message = await asyncio.wait_for(
                         self.websocket.recv(),
-                        timeout=self.health_check_interval
+                        timeout=self.heartbeat_timeout
                     )
 
                     self.stats['total_bytes_received'] += len(message)
                     await self.handle_message(message)
 
                 except asyncio.TimeoutError:
-                    # Timeout is OK - просто делаем health check на следующей итерации
+                    # No message for 90s — check heartbeat on next iteration
                     continue
 
             except websockets.exceptions.ConnectionClosed:
@@ -500,7 +498,7 @@ class SignalWebSocketClient:
             'buffered_signals': len(self.signal_buffer),
             'time_since_last_signal': time_since_last_signal,  # ✅ NEW
             'uptime': uptime,  # ✅ NEW
-            'health_status': 'OK' if self._check_signal_timeout() else 'TIMEOUT',  # ✅ NEW
+            'health_status': 'OK' if self._check_heartbeat_timeout() else 'TIMEOUT',
             **self.stats
         }
 
