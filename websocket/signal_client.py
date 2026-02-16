@@ -198,48 +198,15 @@ class SignalWebSocketClient:
         if old_buffer_size > 0:
             logger.debug(f"Cleared signal buffer ({old_buffer_size} signals)")
 
-        # 3. Reset state (кроме reconnect_attempts - его сохраняем!)
+        # 3. Reset signal timing to prevent false timeout after reconnect
+        self.stats['last_signal_time'] = None
+
+        # 4. Reset state (кроме reconnect_attempts - его сохраняем!)
         self.state = ConnectionState.DISCONNECTED
 
         logger.info("✅ Connection cleanup complete")
 
-    async def _verify_connection_health(self, timeout: int = 60) -> bool:
-        """
-        Проверка работоспособности connection после reconnect
 
-        Ждет получения первого сообщения в течение timeout секунд.
-        Если сообщение приходит - connection работает.
-
-        Args:
-            timeout: Максимальное время ожидания первого сообщения (секунды)
-
-        Returns:
-            True если connection работает, False иначе
-        """
-        logger.info(f"🔍 Verifying connection health (timeout={timeout}s)...")
-
-        initial_signals_received = self.stats['signals_received']
-        start_time = datetime.now()
-
-        # Ждем появления нового сигнала
-        while (datetime.now() - start_time).total_seconds() < timeout:
-            # Проверяем что получили новые данные
-            if self.stats['signals_received'] > initial_signals_received:
-                elapsed = (datetime.now() - start_time).total_seconds()
-                logger.info(f"✅ Connection health VERIFIED (first signal in {elapsed:.1f}s)")
-                return True
-
-            # Проверяем что connection все еще AUTHENTICATED
-            if self.state != ConnectionState.AUTHENTICATED:
-                logger.error(f"❌ Connection state changed to {self.state}")
-                return False
-
-            # Короткая пауза перед следующей проверкой
-            await asyncio.sleep(2)
-
-        # Timeout - сигналы не пришли
-        logger.error(f"❌ Connection health check TIMEOUT ({timeout}s) - no signals received")
-        return False
 
     def _check_signal_timeout(self) -> bool:
         """
@@ -415,15 +382,7 @@ class SignalWebSocketClient:
         if not success:
             return False
 
-        # ✅ NEW: Verify connection health after reconnect
-        health_ok = await self._verify_connection_health(timeout=60)
-
-        if not health_ok:
-            logger.error("❌ Connection health check FAILED after reconnect!")
-            self.state = ConnectionState.DISCONNECTED
-            return False
-
-        logger.info("✅ Reconnect successful and verified!")
+        logger.info("✅ Reconnect successful — resuming message loop")
         return True
 
     async def run(self):
@@ -507,40 +466,6 @@ class SignalWebSocketClient:
                 else:
                     break
 
-    async def request_signals(self):
-        """Запрос немедленной отправки сигналов"""
-        if self.state == ConnectionState.AUTHENTICATED:
-            try:
-                await self.websocket.send(json.dumps({
-                    'type': 'get_signals'
-                }))
-                logger.debug("Requested immediate signals")
-                return True
-            except (websockets.exceptions.ConnectionClosed, Exception) as e:
-                logger.error(f"Failed to request signals: {e}")
-                self.state = ConnectionState.DISCONNECTED
-                if self.on_disconnect_callback:
-                    await self.on_disconnect_callback()
-                return False
-        return False
-
-    async def request_stats(self):
-        """Запрос статистики сервера"""
-        if self.state == ConnectionState.AUTHENTICATED:
-            try:
-                await self.websocket.send(json.dumps({
-                    'type': 'get_stats'
-                }))
-                logger.debug("Requested server stats")
-                return True
-            except (websockets.exceptions.ConnectionClosed, Exception) as e:
-                logger.error(f"Failed to request stats: {e}")
-                self.state = ConnectionState.DISCONNECTED
-                if self.on_disconnect_callback:
-                    await self.on_disconnect_callback()
-                return False
-        return False
-
     async def ping(self) -> bool:
         """Отправка ping для проверки соединения"""
         if self.state == ConnectionState.AUTHENTICATED:
@@ -583,41 +508,7 @@ class SignalWebSocketClient:
         """Получение последних сигналов из буфера"""
         return self.signal_buffer[-limit:]
     
-    def get_signals_by_timestamp(self, timestamp: str) -> List[Dict]:
-        """
-        Получить сигналы с конкретным timestamp из буфера
-        
-        Args:
-            timestamp: ISO timestamp волны (например, '2025-10-08 15:30:00+00:00')
-        
-        Returns:
-            List of signals matching the timestamp
-        """
-        matching = []
-        
-        # Normalize timestamp for comparison (убираем миллисекунды и timezone offset если есть)
-        # Ищем совпадение по первым 19 символам (YYYY-MM-DDTHH:MM:SS)
-        # timestamp может быть с 'T' или с пробелом, приводим к единому формату с 'T'
-        search_ts = timestamp[:19] if len(timestamp) >= 19 else timestamp
-        # Если в search_ts пробел вместо 'T', заменяем
-        search_ts = search_ts.replace(' ', 'T')
-        
-        logger.info(f"[DEBUG] Searching for timestamp: '{search_ts}' in buffer of {len(self.signal_buffer)} signals")
-        
-        for idx, signal in enumerate(self.signal_buffer[:5]):  # Log first 5 for debugging
-            signal_ts = signal.get('timestamp') or signal.get('created_at')
-            logger.info(f"[DEBUG] Signal {idx}: timestamp='{signal_ts}', first_19='{str(signal_ts)[:19] if signal_ts else None}'")
-        
-        for signal in self.signal_buffer:
-            # Check both 'timestamp' and 'created_at' fields
-            signal_ts = signal.get('timestamp') or signal.get('created_at')
-            if signal_ts:
-                signal_ts_str = str(signal_ts)[:19]
-                if signal_ts_str == search_ts:
-                    matching.append(signal)
-        
-        logger.info(f"[DEBUG] Found {len(matching)} signals for timestamp {timestamp} in buffer of {len(self.signal_buffer)}")
-        return matching
+
 
     async def stop(self):
         """Остановка клиента"""
@@ -630,118 +521,3 @@ class SignalWebSocketClient:
 
         self.state = ConnectionState.DISCONNECTED
         logger.info("Signal client stopped")
-
-
-class SignalProcessor:
-    """
-    Обработчик сигналов для интеграции в бота
-    """
-
-    def __init__(self, trading_bot):
-        self.bot = trading_bot
-        self.config = trading_bot.config
-
-        # Создаем клиент
-        self.client = SignalWebSocketClient(self.config)
-
-        # Фильтры сигналов
-        self.min_score = float(self.config.get('MIN_SIGNAL_SCORE', 0.7))
-        self.max_signals = int(self.config.get('MAX_SIGNALS_TO_PROCESS', 5))
-        self.allowed_exchanges = self.config.get('ALLOWED_EXCHANGES', '').split(',')
-
-        # Статистика обработки
-        self.processing_stats = {
-            'total_received': 0,
-            'filtered_out': 0,
-            'processed': 0,
-            'errors': 0
-        }
-
-        # Устанавливаем callbacks
-        self.client.set_callbacks(
-            on_signals=self.process_signals,
-            on_connect=self.on_connect,
-            on_disconnect=self.on_disconnect,
-            on_error=self.on_error
-        )
-
-    async def process_signals(self, signals: List[dict]):
-        """Обработка полученных сигналов"""
-        logger.info(f"Processing {len(signals)} signals")
-        self.processing_stats['total_received'] += len(signals)
-
-        try:
-            # Фильтрация сигналов
-            filtered_signals = await self.filter_signals(signals)
-            self.processing_stats['filtered_out'] += (len(signals) - len(filtered_signals))
-
-            logger.info(f"Filtered to {len(filtered_signals)} signals")
-
-            # Обработка топовых сигналов
-            for signal in filtered_signals[:self.max_signals]:
-                try:
-                    await self.bot.strategy.process_signal(signal)
-                    self.processing_stats['processed'] += 1
-                except Exception as e:
-                    logger.error(f"Error processing signal {signal.get('id')}: {e}")
-                    self.processing_stats['errors'] += 1
-
-        except Exception as e:
-            logger.error(f"Error in signal processing: {e}")
-            self.processing_stats['errors'] += 1
-
-    async def filter_signals(self, signals: List[dict]) -> List[dict]:
-        """Фильтрация сигналов по критериям"""
-        filtered = []
-
-        for signal in signals:
-            # Проверка score
-            if signal.get('score', 0) < self.min_score:
-                continue
-
-            # Проверка биржи
-            if self.allowed_exchanges and signal.get('exchange') not in self.allowed_exchanges:
-                continue
-
-            # Дополнительные проверки
-            if not signal.get('entry_price'):
-                continue
-
-            filtered.append(signal)
-
-        # Сортировка по score
-        filtered.sort(key=lambda x: x.get('score', 0), reverse=True)
-
-        return filtered
-
-    async def on_connect(self):
-        """Обработчик подключения"""
-        logger.info("Signal processor connected to server")
-        await self.bot.notify("Signal stream connected")
-
-    async def on_disconnect(self):
-        """Обработчик отключения"""
-        logger.warning("Signal processor disconnected from server")
-        await self.bot.notify("Signal stream disconnected")
-
-    async def on_error(self, error):
-        """Обработчик ошибок"""
-        logger.error(f"Signal processor error: {error}")
-        await self.bot.notify(f"Signal stream error: {error}")
-
-    async def start(self):
-        """Запуск получения сигналов"""
-        logger.info("Starting signal processor...")
-        await self.client.run()
-
-    async def stop(self):
-        """Остановка обработки"""
-        logger.info("Stopping signal processor...")
-        await self.client.stop()
-
-    def get_stats(self) -> dict:
-        """Получение статистики"""
-        return {
-            'client': self.client.get_stats(),
-            'processing': self.processing_stats
-        }
