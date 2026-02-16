@@ -3,33 +3,10 @@
   "rules": [
     {
       "priority": 1,
-      "score_range": "100-9999",
-      "filter": {
-        "score_min": 100,
-        "score_max": 9999,
-        "rsi_min": 0,
-        "vol_min": 0,
-        "oi_min": 0
-      },
-      "strategy": {
-        "leverage": 10,
-        "sl_pct": 5,
-        "delta_window": 3600,
-        "threshold_mult": 1.0,
-        "base_activation": 8.0,
-        "base_callback": 3.0,
-        "base_reentry_drop": 5.0,
-        "base_cooldown": 600,
-        "max_reentry_hours": 4,
-        "max_position_hours": 4
-      }
-    },
-    {
-      "priority": 2,
       "score_range": "999",
       "filter": {
         "score_min": 999,
-        "score_max": 999,
+        "score_max": 1000,
         "rsi_min": 0,
         "vol_min": 0,
         "oi_min": 0
@@ -45,6 +22,29 @@
         "base_cooldown": 300,
         "max_reentry_hours": 4,
         "max_position_hours": 30
+      }
+    },
+    {
+      "priority": 2,
+      "score_range": "100-999",
+      "filter": {
+        "score_min": 100,
+        "score_max": 999,
+        "rsi_min": 0,
+        "vol_min": 0,
+        "oi_min": 0
+      },
+      "strategy": {
+        "leverage": 10,
+        "sl_pct": 5,
+        "delta_window": 3600,
+        "threshold_mult": 1.0,
+        "base_activation": 8.0,
+        "base_callback": 3.0,
+        "base_reentry_drop": 5.0,
+        "base_cooldown": 600,
+        "max_reentry_hours": 4,
+        "max_position_hours": 4
       }
     }
   ]
