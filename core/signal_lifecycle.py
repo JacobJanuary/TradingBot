@@ -304,9 +304,18 @@ class SignalLifecycleManager:
         # 6. Create lifecycle
         # §5.1: signal_start_ts = signal's entry_time, not current time
         entry_time = signal.get('entry_time', signal.get('timestamp', int(time.time())))
-        # FIX: signal_adapter returns 'timestamp' as datetime.datetime — convert to epoch int
+        # Convert entry_time to epoch int from various formats:
+        # - datetime object (from signal_adapter)
+        # - ISO string (from WS server: "2026-02-16T14:00:00.700173+00:00")
+        # - int/float (already epoch)
         if isinstance(entry_time, datetime):
             entry_time = int(entry_time.timestamp())
+        elif isinstance(entry_time, str):
+            try:
+                entry_time = int(datetime.fromisoformat(entry_time).timestamp())
+            except ValueError:
+                logger.warning(f"Could not parse entry_time '{entry_time}', using current time")
+                entry_time = int(time.time())
         lc = SignalLifecycle(
             signal_id=signal_id or 0,
             symbol=symbol,
