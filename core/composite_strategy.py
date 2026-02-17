@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 COMMISSION_PCT = 0.04  # 0.04%
 
 # Smart Timeout v2.0 constants (2026-02-12)
-SMART_TIMEOUT_THRESHOLD = 5          # Min score to extend (out of 10)
+SMART_TIMEOUT_THRESHOLD = 3          # Min score to extend (out of 10) — lowered from 5
 SMART_TIMEOUT_EXTENSION_SEC = 1800   # 30 minutes per extension
 SMART_TIMEOUT_MAX_EXTENSIONS = 3     # Hard cap = 1.5h total
 SMART_TIMEOUT_RECHECK_SEC = 300      # Strength recheck interval (5min)

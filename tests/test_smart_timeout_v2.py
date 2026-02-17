@@ -349,10 +349,11 @@ class TestSmartTimeoutDecision:
         mgr = make_manager()
         strategy = make_strategy(sl_pct=3.0)
 
-        # Need score >= 5. Create bars with:
+        # Need score >= 3 (threshold). Create bars with:
         # - Positive delta → +3 pts
+        # - Near breakeven (-0.5%) → +2 pts
         # - Large buys > sells → +2 pts
-        # Total = 5 ✅
+        # Total = 7 ✅
         lc = make_lifecycle(
             entry_price=100.0,
             position_age_sec=21600,
@@ -593,7 +594,7 @@ class TestStrengthScore:
         assert score == 0, f"Should be vetoed, got score={score}"
 
     def test_full_score_all_conditions(self):
-        """All conditions met → score >= 5."""
+        """All conditions met → score >= 7."""
         mgr = make_manager()
         lc = make_lifecycle(bar_count=1000, bar_delta=50.0)
         agg = lc.bar_aggregator
@@ -609,7 +610,7 @@ class TestStrengthScore:
 
         bar = make_bar(price=agg.bars[-1].price)
         score = mgr._compute_strength_score(lc, bar)
-        assert score >= 5, f"Expected score >= 5, got {score}"
+        assert score >= 7, f"Expected score >= 7, got {score}"
 
 
 # ==============================================================================

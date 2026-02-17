@@ -643,10 +643,12 @@ class SignalLifecycleManager:
         """
         Smart Timeout v2.0: Compute market strength score for timeout extension.
         
-        Score 0-10. Uses ONLY data from BarAggregator (0 API calls).
+        Score 0-12. Uses ONLY data from BarAggregator (0 API calls).
+        Threshold: 3 (lowered from 5 — see smart_timeout_investigation.md)
         
         Scoring:
-            +3: Delta > 0 (net buy pressure)
+            +3: Delta > 0 over 5min (net buy pressure)
+            +2: Near breakeven (PnL from entry > -1%)
             +2: Large buys >= sells × 1.2 (institutional flow)
             +2: RSI(14min) < 30 (oversold)
             +1: Volume Z-score > 2.0 with delta > 0 (capitulation buy)
@@ -662,10 +664,15 @@ class SignalLifecycleManager:
 
         score = 0
 
-        # Tier 1: Instant flow
-        rolling_delta = agg.get_rolling_delta(min(lc.strategy.delta_window, 60))
+        # Tier 1: Instant flow (5min window for stability)
+        rolling_delta = agg.get_rolling_delta(min(lc.strategy.delta_window, 300))
         if rolling_delta > 0:
             score += 3
+
+        # Near-breakeven bonus: positions close to 0% have highest recovery odds
+        pnl_from_entry = calculate_pnl_from_entry(lc.entry_price, bar.price)
+        if pnl_from_entry > -1.0:
+            score += 2
 
         # Large trades: use 60s window from bars
         recent_bars = list(agg.bars)[-60:] if agg.bar_count >= 60 else list(agg.bars)
@@ -700,8 +707,9 @@ class SignalLifecycleManager:
             score += 1
 
         logger.info(
-            f"📊 Strength {lc.symbol}: score={score}/10 "
+            f"📊 Strength {lc.symbol}: score={score}/12 "
             f"[delta={'✅' if rolling_delta > 0 else '❌'}({rolling_delta:.0f}) "
+            f"near_be={'✅' if pnl_from_entry > -1.0 else '❌'}({pnl_from_entry:.2f}%) "
             f"large_trades={large_buys}B/{large_sells}S "
             f"RSI={rsi:.1f} vol_z={vol_zscore:.1f} "
             f"extremes={extremes['position']:.2f} mom15m={momentum_15m:.2f}%]"
