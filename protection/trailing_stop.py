@@ -834,224 +834,77 @@ class SmartTrailingStopManager:
 
     async def _activate_trailing_stop(self, ts: TrailingStopInstance) -> Optional[Dict]:
         """
-        Activate trailing stop with retry logic
+        Activate trailing stop — internal state tracking only (Variant B).
         
-        FIX: Don't mark as activated if SL update fails (prevents unprotected positions)
-        Implements 3 retry attempts with exponential backoff
+        VARIANT B (2026-02-17): Do NOT create exchange SL at callback%.
+        Protection SL at entry - sl_pct% stays alive as safety net.
+        Lifecycle delta TS (_check_trailing_stop in signal_lifecycle.py) handles
+        the actual exit decision using 3 conditions from TRADING_BOT_ALGORITHM_SPEC §6.6:
+            A: pnl >= activation%
+            B: drawdown >= callback%  
+            C: rolling_delta < -threshold (momentum confirms selling pressure)
+        
+        This prevents the exchange SL from closing positions before the delta
+        filter can evaluate whether buyers are still active.
         """
-        MAX_RETRIES = 3
-        RETRY_DELAYS = [0.3, 0.7, 1.5]  # Exponential backoff in seconds
-        
-        # Save original state for rollback
-        original_state = ts.state
-        original_stop_price = ts.current_stop_price
-        
-        # Calculate initial trailing stop price
+        # Mark as activated (internal state only — no exchange SL)
+        ts.state = TrailingStopState.ACTIVE
+        ts.activated_at = datetime.now(timezone.utc)
+        self.stats['total_activated'] += 1
+
+        profit = self._calculate_profit_percent(ts)
         distance = self._get_trailing_distance(ts)
 
-        if ts.side == 'long':
-            proposed_stop_price = ts.highest_price * (1 - distance / 100)
-        else:
-            proposed_stop_price = ts.lowest_price * (1 + distance / 100)
-        
-        # ============================================================
-        # EMERGENCY CLOSE PRE-CHECK
-        # ============================================================
-        # If price already crossed proposed SL, close immediately
-        # Don't retry - position already lost!
-        #
-        # This prevents:
-        # 1. Binance -2021 errors (order would immediately trigger)
-        # 2. Unprotected positions during retry loops
-        # 3. Unnecessary API calls when result is predetermined
-        
-        should_emergency_close = False
-        if ts.side == 'short' and ts.current_price >= proposed_stop_price:
-            should_emergency_close = True
-        elif ts.side == 'long' and ts.current_price <= proposed_stop_price:
-            should_emergency_close = True
-        
-        if should_emergency_close:
-            logger.error(
-                f"🔴 {ts.symbol}: EMERGENCY - Price crossed proposed SL during activation! "
-                f"side={ts.side}, current={ts.current_price:.8f}, proposed_sl={proposed_stop_price:.8f}. "
-                f"Executing IMMEDIATE MARKET CLOSE (bypassing retry loop). "
-                f"[SEARCH: ts_emergency_close_pre_activation_{ts.symbol}]"
-            )
-            
-            try:
-                # Close position immediately via market order
-                close_side = 'sell' if ts.side == 'long' else 'buy'
-                await self.exchange.create_market_order(
-                    symbol=ts.symbol,
-                    side=close_side,
-                    amount=float(ts.quantity),
-                    params={'reduceOnly': True}
-                )
-                
-                logger.info(f"✅ {ts.symbol}: Emergency market close executed successfully")
-                
-                # Log emergency close event
-                event_logger = get_event_logger()
-                if event_logger:
-                    await event_logger.log_event(
-                        EventType.WARNING_RAISED,
-                        {
-                            'warning_type': 'ts_emergency_close_pre_activation',
-                            'symbol': ts.symbol,
-                            'side': ts.side,
-                            'current_price': float(ts.current_price),
-                            'proposed_sl': float(proposed_stop_price),
-                            'entry_price': float(ts.entry_price),
-                            'message': 'Position closed immediately - price crossed SL during activation'
-                        },
-                        symbol=ts.symbol,
-                        exchange=self.exchange_name,
-                        severity='ERROR'
-                    )
-                
-                # Return None - don't activate TS, position closed
-                return None
-                
-            except Exception as e:
-                error_msg = str(e)
-                # Check for "ReduceOnly rejected" - position already closed
-                if "-2022" in error_msg or "ReduceOnly" in error_msg:
-                    logger.info(
-                        f"ℹ️ {ts.symbol}: Emergency close skipped - position already closed "
-                        f"(ReduceOnly rejected). SL likely triggered by exchange."
-                    )
-                    return None
-                
-                logger.error(
-                    f"❌ {ts.symbol}: Emergency market close FAILED: {e}. "
-                    f"Will attempt normal TS activation (may fail with -2021).",
-                    exc_info=True
-                )
-                # Fall through to normal retry logic
-        
-        # ============================================================
-        # END EMERGENCY CLOSE PRE-CHECK
-        # ============================================================
-        
-        # Try activation with retries
-        for attempt in range(MAX_RETRIES):
-            try:
-                # Set state for this attempt
-                ts.state = TrailingStopState.ACTIVE
-                ts.current_stop_price = proposed_stop_price
-                
-                # Update stop order on exchange
-                success = await self._update_stop_order(ts)
-                
-                if success:
-                    # SUCCESS: Mark as activated
-                    ts.activated_at = datetime.now(timezone.utc)
-                    self.stats['total_activated'] += 1
-                    
-                    logger.info(
-                        f"✅ {ts.symbol}: TS ACTIVATED - "
-                        f"side={ts.side}, "
-                        f"price={ts.current_price:.8f}, "
-                        f"sl={ts.current_stop_price:.8f}, "
-                        f"entry={ts.entry_price:.8f}, "
-                        f"profit={self._calculate_profit_percent(ts):.2f}%, "
-                        f"attempt={attempt + 1}/{MAX_RETRIES}, "
-                        f"[SEARCH: ts_activated_{ts.symbol}]"
-                    )
-
-                    # Log trailing stop activation
-                    event_logger = get_event_logger()
-                    if event_logger:
-                        await event_logger.log_event(
-                            EventType.TRAILING_STOP_ACTIVATED,
-                            {
-                                'symbol': ts.symbol,
-                                'activation_price': float(ts.current_price),
-                                'stop_price': float(ts.current_stop_price),
-                                'distance_percent': float(distance),
-                                'side': ts.side,
-                                'entry_price': float(ts.entry_price),
-                                'profit_percent': float(self._calculate_profit_percent(ts)),
-                                'attempts': attempt + 1
-                            },
-                            symbol=ts.symbol,
-                            exchange=self.exchange_name,
-                            severity='INFO'
-                        )
-
-                    logger.debug(f"{ts.symbol} SL ownership: trailing_stop (via trailing_activated=True)")
-
-                    # Save activated state to database
-                    await self._save_state(ts)
-
-                    return {
-                        'action': 'activated',
-                        'symbol': ts.symbol,
-                        'stop_price': float(ts.current_stop_price),
-                        'distance_percent': float(distance)
-                    }
-                
-                # FAILED: Rollback state
-                ts.state = original_state
-                ts.current_stop_price = original_stop_price
-                
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAYS[attempt]
-                    logger.warning(
-                        f"⚠️ {ts.symbol}: TS activation failed (attempt {attempt + 1}/{MAX_RETRIES}), "
-                        f"retrying in {delay}s..."
-                    )
-                    await asyncio.sleep(delay)
-                    
-            except Exception as e:
-                # Exception during activation - rollback and retry
-                ts.state = original_state
-                ts.current_stop_price = original_stop_price
-                
-                logger.error(
-                    f"❌ {ts.symbol}: Exception during TS activation (attempt {attempt + 1}/{MAX_RETRIES}): {e}",
-                    exc_info=True
-                )
-                
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(RETRY_DELAYS[attempt])
-        
-        # ALL RETRIES FAILED - critical error
-        logger.error(
-            f"🔴 {ts.symbol}: TS ACTIVATION FAILED after {MAX_RETRIES} attempts! "
-            f"Position remains with Protection SL (if exists). "
-            f"[SEARCH: ts_activation_failed_{ts.symbol}]"
+        logger.info(
+            f"✅ {ts.symbol}: TS ACTIVATED (Variant B — no exchange SL) - "
+            f"side={ts.side}, "
+            f"price={ts.current_price:.8f}, "
+            f"entry={ts.entry_price:.8f}, "
+            f"profit={profit:.2f}%, "
+            f"callback={distance:.2f}%, "
+            f"Protection SL stays at entry - sl_pct%, "
+            f"lifecycle delta TS handles exit. "
+            f"[SEARCH: ts_activated_{ts.symbol}]"
         )
-        
-        # Log critical failure event
+
+        # Log trailing stop activation event
         event_logger = get_event_logger()
         if event_logger:
             await event_logger.log_event(
-                EventType.TRAILING_STOP_ACTIVATION_FAILED,
+                EventType.TRAILING_STOP_ACTIVATED,
                 {
                     'symbol': ts.symbol,
-                    'attempts': MAX_RETRIES,
+                    'activation_price': float(ts.current_price),
+                    'variant': 'B_lifecycle_delta',
+                    'distance_percent': float(distance),
                     'side': ts.side,
-                    'current_price': float(ts.current_price),
-                    'proposed_sl': float(proposed_stop_price),
                     'entry_price': float(ts.entry_price),
-                    'profit_percent': float(self._calculate_profit_percent(ts))
+                    'profit_percent': float(profit),
+                    'note': 'No exchange SL created — lifecycle delta TS handles exit'
                 },
                 symbol=ts.symbol,
                 exchange=self.exchange_name,
-                severity='ERROR'
+                severity='INFO'
             )
-        
-        # Return None to indicate failure (caller should handle)
-        return None
+
+        # Save activated state to database
+        await self._save_state(ts)
+
+        return {
+            'action': 'activated',
+            'symbol': ts.symbol,
+            'stop_price': None,  # No exchange SL — lifecycle handles exit
+            'distance_percent': float(distance)
+        }
 
     async def _update_trailing_stop(self, ts: TrailingStopInstance) -> Optional[Dict]:
         """Update trailing stop if price moved favorably"""
 
-        # NOTE: Delta filter logic moved to ReentryManager.register_exit()
-        # SL updates are no longer blocked - instead we use Instant Reentry
-        # when SL triggers during strong momentum
+        # VARIANT B (2026-02-17): No exchange SL to ratchet.
+        # Peak tracking is handled by update_price() (highest_price/lowest_price).
+        # Lifecycle delta TS (_check_trailing_stop) handles exit decisions.
+        # Protection SL at entry - sl_pct% remains as safety net.
+        return None
 
         distance = self._get_trailing_distance(ts)
         new_stop_price = None

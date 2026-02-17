@@ -780,16 +780,22 @@ class SignalLifecycleManager:
             lc.ts_activated = True
             logger.info(
                 f"📈 Trailing stop ACTIVATED for {lc.symbol}: "
-                f"pnl={pnl_from_entry:.2f}% >= {lc.strategy.base_activation}%"
+                f"pnl={pnl_from_entry:.2f}% >= {lc.strategy.base_activation}% | "
+                f"entry={lc.entry_price:.6f}, price={bar.price:.6f}, "
+                f"peak={lc.max_price:.6f}"
             )
 
         # Condition B: Callback (drawdown from peak)
         drawdown = calculate_drawdown_from_max(lc.max_price, bar.price)
         if drawdown < lc.strategy.base_callback:
-            if lc.ts_activated:
-                logger.debug(
-                    f"TS {lc.symbol}: drawdown={drawdown:.2f}% < {lc.strategy.base_callback}% "
-                    f"(pnl={pnl_from_entry:.2f}%, peak={lc.max_price})"
+            # Log every 30s when TS is activated to track position state
+            elapsed = bar.ts - lc.position_entry_ts
+            if elapsed % 30 == 0:
+                logger.info(
+                    f"📍 TS CHECK {lc.symbol}: A✅ activated | "
+                    f"B❌ drawdown={drawdown:.2f}% < {lc.strategy.base_callback}% | "
+                    f"pnl={pnl_from_entry:.2f}%, price={bar.price:.6f}, "
+                    f"peak={lc.max_price:.6f}, entry={lc.entry_price:.6f}"
                 )
             return False
 
@@ -801,28 +807,38 @@ class SignalLifecycleManager:
             rolling_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window)
             avg_abs = lc.bar_aggregator.get_avg_abs_delta(100)
             threshold = avg_abs * lc.strategy.threshold_mult
+            bar_count = lc.bar_aggregator.bar_count
 
             if rolling_delta > -threshold:
                 logger.info(
-                    f"⏳ TS HELD {lc.symbol}: B✅ drawdown={drawdown:.2f}%, "
-                    f"C❌ delta={rolling_delta:.0f} > -{threshold:.0f} "
-                    f"(need selling > {threshold:.0f}, avg={avg_abs:.0f}×{lc.strategy.threshold_mult})"
+                    f"⏳ TS HELD {lc.symbol}: A✅ B✅ C❌ | "
+                    f"drawdown={drawdown:.2f}% >= {lc.strategy.base_callback}% | "
+                    f"delta={rolling_delta:.0f} > -{threshold:.0f} (HOLD — buyers active) | "
+                    f"avg_abs={avg_abs:.0f} × mult={lc.strategy.threshold_mult} | "
+                    f"window={lc.strategy.delta_window}s, bars={bar_count} | "
+                    f"pnl={pnl_from_entry:.2f}%, price={bar.price:.6f}, "
+                    f"peak={lc.max_price:.6f}, entry={lc.entry_price:.6f}"
                 )
                 return False
 
             # rolling_delta < -threshold → significant selling pressure confirmed
             logger.info(
-                f"📊 Delta filter PASSED for {lc.symbol}: "
-                f"delta={rolling_delta:.0f} < -{threshold:.0f} "
-                f"(avg={avg_abs:.0f}×{lc.strategy.threshold_mult})"
+                f"📊 Delta filter PASSED {lc.symbol}: A✅ B✅ C✅ | "
+                f"delta={rolling_delta:.0f} < -{threshold:.0f} (sellers dominate) | "
+                f"avg_abs={avg_abs:.0f} × mult={lc.strategy.threshold_mult} | "
+                f"window={lc.strategy.delta_window}s, bars={bar_count} | "
+                f"drawdown={drawdown:.2f}%, pnl={pnl_from_entry:.2f}%"
             )
 
         # All 3 conditions met → trigger trailing stop
         pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, "TRAILING")
         logger.info(
-            f"🎯 TRAILING STOP {lc.symbol}: "
+            f"🎯 TRAILING STOP EXIT {lc.symbol}: "
             f"pnl_entry={pnl_from_entry:.2f}%, drawdown={drawdown:.2f}%, "
-            f"realized={pnl:.2f}%"
+            f"realized={pnl:.2f}%, leverage={lc.strategy.leverage}x | "
+            f"price={bar.price:.6f}, entry={lc.entry_price:.6f}, "
+            f"peak={lc.max_price:.6f} | "
+            f"Protection SL will be cancelled → market close"
         )
         await self._close_position(lc, "TRAILING", pnl, bar.price)
         return True
