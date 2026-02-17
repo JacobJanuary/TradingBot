@@ -829,6 +829,9 @@ class SignalLifecycleManager:
                 f"window={lc.strategy.delta_window}s, bars={bar_count} | "
                 f"drawdown={drawdown:.2f}%, pnl={pnl_from_entry:.2f}%"
             )
+        else:
+            logger.warning(f"⚠️ TS BLOCKED {lc.symbol}: no bar_aggregator, cannot check delta")
+            return False
 
         # All 3 conditions met → trigger trailing stop
         pnl = calculate_realized_pnl(pnl_from_entry, lc.strategy.leverage, "TRAILING")

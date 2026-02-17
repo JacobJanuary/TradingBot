@@ -77,6 +77,10 @@ class BarAggregator:
         self.cumsum_delta.append(0.0)
         self.cumsum_abs_delta.append(0.0)
 
+        # Count of bars with actual trades (for avg_abs_delta dilution fix)
+        self.cumsum_trade_count: Deque[int] = deque(maxlen=max_bars + 1)
+        self.cumsum_trade_count.append(0)
+
         # Current (incomplete) bar accumulator
         self._current_ts: int = 0
         self._current_price: float = 0.0
@@ -160,6 +164,7 @@ class BarAggregator:
         prev_abs = self.cumsum_abs_delta[-1]
         self.cumsum_delta.append(prev_delta + bar.delta)
         self.cumsum_abs_delta.append(prev_abs + abs(bar.delta))
+        self.cumsum_trade_count.append(self.cumsum_trade_count[-1] + 1)
 
         # Reset accumulator
         self._current_ts = 0
@@ -200,9 +205,10 @@ class BarAggregator:
             )
             self.bars.append(bar)
 
-            # Update cumulative sums (delta=0, abs_delta=0)
+            # Update cumulative sums (delta=0, abs_delta=0, trade_count unchanged)
             self.cumsum_delta.append(self.cumsum_delta[-1])
             self.cumsum_abs_delta.append(self.cumsum_abs_delta[-1])
+            self.cumsum_trade_count.append(self.cumsum_trade_count[-1])
 
             # Notify callback
             if self.on_bar_callback:
@@ -222,6 +228,7 @@ class BarAggregator:
         prev_abs = self.cumsum_abs_delta[-1]
         self.cumsum_delta.append(prev_delta + bar.delta)
         self.cumsum_abs_delta.append(prev_abs + abs(bar.delta))
+        self.cumsum_trade_count.append(self.cumsum_trade_count[-1] + 1)
 
     def get_rolling_delta(self, window_sec: int) -> float:
         """
@@ -266,7 +273,12 @@ class BarAggregator:
 
         effective_lookback = min(lookback, n)
         total = self.cumsum_abs_delta[-1] - self.cumsum_abs_delta[-(effective_lookback + 1)]
-        return total / effective_lookback
+
+        # Divide by trade-bar count (not total) to avoid empty bar dilution
+        trade_count = self.cumsum_trade_count[-1] - self.cumsum_trade_count[-(effective_lookback + 1)]
+        if trade_count == 0:
+            return 0.0  # No real trades in window
+        return total / trade_count
 
     def calibrate_dynamic_threshold(self, percentile: float = DYNAMIC_THRESHOLD_PERCENTILE) -> float:
         """
