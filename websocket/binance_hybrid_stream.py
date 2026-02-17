@@ -26,7 +26,7 @@ except ImportError:
     _json_loads = json.loads
     _json_dumps = json.dumps
 
-from websocket.mark_price_pool import MarkPriceConnectionPool
+from websocket.mark_price_per_symbol_pool import MarkPricePerSymbolPool
 from websocket.symbol_state import SymbolStateManager, SymbolState
 
 logger = logging.getLogger(__name__)
@@ -102,8 +102,8 @@ class BinanceHybridStream:
         self.mark_prices: Dict[str, str] = {}  # {symbol: latest_mark_price}
 
         # ==================== NEW ARCHITECTURE (Expert Panel 2026-02-12) ====================
-        # MarkPriceConnectionPool: URL-based combined streams, replaces dynamic SUBSCRIBE
-        self.mark_price_pool = MarkPriceConnectionPool(
+        # MarkPricePerSymbolPool: per-symbol WS connections (zero-impact add/remove)
+        self.mark_price_pool = MarkPricePerSymbolPool(
             on_price_update=self._on_pool_price_update,
             frequency="1s",
         )
