@@ -234,13 +234,13 @@ class TradingBot:
                                 logger.info(f"   → User WS: Position lifecycle (ACCOUNT_UPDATE)")
                                 logger.info(f"   → Mark WS: Price updates (1-3s)")
                                 
-                                # Initialize AggTrades stream for delta calculation
-                                from websocket.binance_aggtrades_stream import BinanceAggTradesStream
-                                aggtrades_stream = BinanceAggTradesStream(testnet=False)
+                                # Initialize AggTrades stream for delta calculation (per-symbol isolation)
+                                from websocket.aggtrades_per_symbol_pool import AggTradesPerSymbolPool
+                                aggtrades_stream = AggTradesPerSymbolPool(testnet=False)
                                 await aggtrades_stream.start()
                                 self.websockets[f'{name}_aggtrades'] = aggtrades_stream
                                 self.aggtrades_stream = aggtrades_stream  # Store reference
-                                logger.info(f"✅ {name.capitalize()} AggTrades WebSocket ready (delta calculation)")
+                                logger.info(f"✅ {name.capitalize()} AggTrades Per-Symbol Pool ready (delta calculation)")
                             except Exception as e:
                                 logger.error(f"Failed to start Binance hybrid stream: {e}")
                                 raise
