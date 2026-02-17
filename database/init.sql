@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS monitoring.positions (
     pnl DECIMAL(20, 8),
     pnl_percentage DECIMAL(10, 4),
     trailing_activated BOOLEAN DEFAULT FALSE,
+    spread_at_entry DECIMAL(10, 4),
     created_at TIMESTAMP DEFAULT NOW()
 );
 

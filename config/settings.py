@@ -73,6 +73,10 @@ class TradingConfig:
     # Signal filtering
     max_spread_percent: Decimal = Decimal('0.5')
 
+    # Entry order execution
+    entry_order_type: str = 'market'           # 'market' | 'limit_ioc'
+    entry_max_slippage_percent: float = 0.15   # Max slippage for limit_ioc
+
     # Execution
     signal_time_window_minutes: int = 10
 
@@ -248,6 +252,16 @@ class Config:
         if val := os.getenv('MAX_SPREAD_PERCENT'):
             config.max_spread_percent = Decimal(val)
 
+        # Entry order execution
+        if val := os.getenv('ENTRY_ORDER_TYPE'):
+            val_lower = val.lower()
+            if val_lower in ('market', 'limit_ioc'):
+                config.entry_order_type = val_lower
+            else:
+                logger.warning(f"⚠️ Invalid ENTRY_ORDER_TYPE={val}, using 'market'")
+        if val := os.getenv('ENTRY_MAX_SLIPPAGE_PERCENT'):
+            config.entry_max_slippage_percent = float(val)
+
         # FIX: 2025-10-03 - Добавлена загрузка MAX_TRADES_PER_15MIN из .env
         if val := os.getenv('MAX_TRADES_PER_15MIN'):
             config.max_trades_per_15min = int(val)
@@ -273,6 +287,7 @@ class Config:
         logger.info(f"Trading config loaded: position_size=${config.position_size_usd}")
         logger.info(f"Leverage config: leverage={config.leverage}x, max={config.max_leverage}x, auto_set={config.auto_set_leverage}")
         logger.info(f"Signal filters: min_oi=${config.signal_min_open_interest_usdt}, min_vol_1h=${config.signal_min_volume_1h_usdt}")
+        logger.info(f"Entry order: type={config.entry_order_type}, max_slippage={config.entry_max_slippage_percent}%")
         return config
 
     def _init_safety_constants(self) -> TradingSafetyConstants:

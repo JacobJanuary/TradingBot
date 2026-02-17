@@ -8,7 +8,7 @@ CRITICAL: Этот модуль обеспечивает атомарность 
 """
 import asyncio
 import logging
-from typing import Optional, Dict, Any, TYPE_CHECKING
+from typing import Optional, Dict, Any, Tuple, TYPE_CHECKING
 from enum import Enum
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -449,6 +449,92 @@ class AtomicPositionManager:
             f"This may indicate API issues or order rejection."
         )
 
+    async def _place_limit_ioc_entry(
+        self,
+        exchange_instance,
+        exchange: str,
+        symbol: str,
+        side: str,
+        quantity: float,
+        params: Dict
+    ) -> Tuple[Any, float]:
+        """
+        Place IOC (Immediate-Or-Cancel) limit entry order with slippage control.
+        
+        Instead of market order (fills at any price), places limit order at
+        ask + slippage tolerance. This controls maximum slippage and may
+        save on fees (maker vs taker).
+        
+        Falls back to market order if ticker is unavailable.
+        
+        Args:
+            exchange_instance: Exchange manager instance
+            exchange: Exchange name ('binance', 'bybit')
+            symbol: Trading pair
+            side: 'buy' or 'sell'
+            quantity: Order quantity
+            params: Exchange-specific params (e.g. newOrderRespType)
+            
+        Returns:
+            Tuple of (raw_order, actual_quantity)
+        """
+        max_slippage = self.config.entry_max_slippage_percent if self.config else 0.15
+        
+        # 1. Fetch current price
+        try:
+            ticker = await exchange_instance.fetch_ticker(symbol)
+        except Exception as e:
+            logger.warning(f"⚠️ IOC: fetch_ticker failed for {symbol}: {e}, falling back to market")
+            raw_order = await exchange_instance.create_market_order(
+                symbol, side, quantity, params=params if params else None
+            )
+            return raw_order, quantity
+        
+        if not ticker or not ticker.get('ask') or not ticker.get('bid'):
+            logger.warning(f"⚠️ IOC: No bid/ask for {symbol}, falling back to market order")
+            raw_order = await exchange_instance.create_market_order(
+                symbol, side, quantity, params=params if params else None
+            )
+            return raw_order, quantity
+        
+        # 2. Calculate limit price with slippage tolerance
+        if side.lower() == 'buy':
+            base_price = ticker['ask']
+            limit_price = base_price * (1 + max_slippage / 100)
+        else:
+            base_price = ticker['bid']
+            limit_price = base_price * (1 - max_slippage / 100)
+        
+        # 3. Round price to exchange precision
+        limit_price = float(exchange_instance.price_to_precision(symbol, limit_price))
+        
+        logger.info(
+            f"📊 IOC Limit entry for {symbol}: "
+            f"side={side}, qty={quantity}, "
+            f"limit_price={limit_price} "
+            f"(base={'ask' if side.lower() == 'buy' else 'bid'}={base_price}, "
+            f"slippage={max_slippage}%)"
+        )
+        
+        # 4. Place IOC limit order
+        ioc_params = {**params, 'timeInForce': 'IOC'}
+        
+        try:
+            raw_order = await exchange_instance.create_limit_order(
+                symbol, side, quantity, limit_price, params=ioc_params
+            )
+        except Exception as e:
+            logger.warning(
+                f"⚠️ IOC limit order failed for {symbol}: {e}. "
+                f"Falling back to market order."
+            )
+            raw_order = await exchange_instance.create_market_order(
+                symbol, side, quantity, params=params if params else None
+            )
+            return raw_order, quantity
+        
+        return raw_order, quantity
+
     async def open_position_atomic(
         self,
         request: Any,  # PositionRequest
@@ -533,7 +619,7 @@ class AtomicPositionManager:
                     # NOTE: FULL returns immediately with status='NEW', executedQty='0'
                     # We fetch order afterwards to get actual filled status and avgPrice
                     params['newOrderRespType'] = 'FULL'
-                    logger.debug(f"Setting newOrderRespType=FULL for Binance market order")
+                    logger.debug(f"Setting newOrderRespType=FULL for Binance order")
 
                 # FIX #1: Pre-register position BEFORE order execution (prevents race condition)
                 # WebSocket updates arrive instantly (<1ms), must register before order
@@ -541,9 +627,19 @@ class AtomicPositionManager:
                     await self.position_manager.pre_register_position(symbol, exchange)
                     logger.info(f"⚡ Pre-registered {symbol} for WebSocket tracking (BEFORE order)")
 
-                raw_order = await exchange_instance.create_market_order(
-                    symbol, side, quantity, params=params if params else None
-                )
+                # Determine entry order type from config
+                entry_order_type = self.config.entry_order_type if self.config else 'market'
+                actual_quantity = quantity
+
+                if entry_order_type == 'limit_ioc':
+                    raw_order, actual_quantity = await self._place_limit_ioc_entry(
+                        exchange_instance, exchange, symbol, side, quantity, params
+                    )
+                else:
+                    # Default: market order (current behavior)
+                    raw_order = await exchange_instance.create_market_order(
+                        symbol, side, quantity, params=params if params else None
+                    )
 
                 # Check if order was created
                 if raw_order is None:
@@ -611,9 +707,23 @@ class AtomicPositionManager:
                     raise AtomicPositionError(f"Failed to normalize order for {symbol}")
 
                 if not ExchangeResponseAdapter.is_order_filled(entry_order):
-                    raise AtomicPositionError(f"Entry order failed: {entry_order.status}")
+                    # For IOC: accept any fill > 0
+                    if entry_order_type == 'limit_ioc' and entry_order.filled > 0:
+                        fill_ratio = entry_order.filled / entry_order.amount * 100 if entry_order.amount > 0 else 0
+                        logger.warning(
+                            f"⚠️ IOC partial fill for {symbol}: "
+                            f"{entry_order.filled}/{entry_order.amount} ({fill_ratio:.1f}%)"
+                        )
+                        # Use actual filled quantity for position
+                        quantity = entry_order.filled
+                        actual_quantity = entry_order.filled
+                    else:
+                        raise AtomicPositionError(
+                            f"Entry order failed: status={entry_order.status}, "
+                            f"filled={entry_order.filled}/{entry_order.amount}"
+                        )
 
-                logger.info(f"✅ Entry order placed: {entry_order.id}")
+                logger.info(f"✅ Entry order placed: {entry_order.id} (type={entry_order_type})")
 
                 # Update position with entry details
                 # Extract execution price from normalized order
@@ -671,7 +781,7 @@ class AtomicPositionManager:
                     'symbol': symbol,
                     'exchange': exchange,
                     'side': 'long' if side.lower() == 'buy' else 'short',
-                    'quantity': quantity,
+                    'quantity': actual_quantity,  # Use actual filled qty (may differ for IOC)
                     'entry_price': exec_price,  # ← FIXED: Use REAL execution price, not signal
                     'current_price': exec_price,
                     'status': state.value,

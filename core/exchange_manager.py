@@ -511,6 +511,9 @@ class ExchangeManager:
     async def create_limit_order(self, symbol: str, side: str, amount: Decimal, price: Decimal, params: Dict = None) -> OrderResult:
         """Create limit order"""
         try:
+            # Validate and adjust amount to exchange limits
+            validated_amount = await self._validate_and_adjust_amount(symbol, float(amount))
+
             # CRITICAL FIX: Convert symbol to exchange-specific format
             exchange_symbol = self.find_exchange_symbol(symbol)
             if not exchange_symbol:
@@ -520,7 +523,7 @@ class ExchangeManager:
                 self.exchange.create_limit_order,
                 symbol=exchange_symbol,  # ✅ Use exchange-specific format
                 side=side.lower(),
-                amount=float(amount),
+                amount=validated_amount,
                 price=float(price),
                 params=params or {}
             )

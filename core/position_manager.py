@@ -1232,9 +1232,8 @@ class PositionManager:
 
                 return None
 
-            # 5. Validate spread (временно только логирование)
-            await self._validate_spread(exchange, symbol)
-            # Не блокируем открытие позиций из-за спреда
+            # 5. Measure spread at entry (for analytics, does not block)
+            spread_at_entry = await self._validate_spread(exchange, symbol)
 
             # 6. Calculate stop-loss price first
             # FIX: Convert order side (BUY/SELL) to position side (long/short) before SL calculation
@@ -1322,6 +1321,16 @@ class PositionManager:
 
                     logger.info(f"✅ Position #{atomic_result['position_id']} for {symbol} opened ATOMICALLY at ${atomic_result['entry_price']:.4f}")
                     logger.info(f"✅ Added {symbol} to tracked positions (total: {len(self.positions)})")
+
+                    # Save spread at entry for analytics
+                    if spread_at_entry is not None:
+                        try:
+                            await self.repository.update_position(
+                                atomic_result['position_id'],
+                                spread_at_entry=spread_at_entry
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to save spread_at_entry for {symbol}: {e}")
 
                     # Apply any buffered WebSocket updates
                     if symbol in self.pending_updates:
@@ -2208,28 +2217,40 @@ class PositionManager:
 
 
 
-    async def _validate_spread(self, exchange: ExchangeManager, symbol: str) -> bool:
-        """Validate bid-ask spread"""
+    async def _validate_spread(self, exchange: ExchangeManager, symbol: str) -> Optional[float]:
+        """
+        Measure bid-ask spread at entry time.
 
-        ticker = await exchange.fetch_ticker(symbol)
-        if not ticker:
-            return False
+        Returns:
+            Spread percentage as float, or None if unable to measure.
+            Does NOT block position creation — spread is logged for analytics.
+        """
+        try:
+            ticker = await exchange.fetch_ticker(symbol)
+            if not ticker:
+                return None
 
-        bid = ticker.get('bid')
-        ask = ticker.get('ask')
+            bid = ticker.get('bid')
+            ask = ticker.get('ask')
 
-        if not bid or not ask or bid <= 0 or ask <= 0:
-            return False
+            if not bid or not ask or bid <= 0 or ask <= 0:
+                return None
 
-        spread_percent = ((ask - bid) / bid) * 100
-        max_spread = to_decimal(self.config.max_spread_percent)
+            spread_percent = ((ask - bid) / bid) * 100
+            max_spread = float(self.config.max_spread_percent)
 
-        if spread_percent > max_spread:
-            logger.warning(f"Spread too wide for {symbol}: {spread_percent:.2f}% > {max_spread}%")
-            # Временно пропускаем проверку для тестов
-            pass  # Продолжаем несмотря на широкий спред
+            if spread_percent > max_spread:
+                logger.warning(
+                    f"⚠️ Wide spread {symbol}: {spread_percent:.4f}% > {max_spread}% "
+                    f"(bid={bid}, ask={ask})"
+                )
+            else:
+                logger.info(f"📊 Spread {symbol}: {spread_percent:.4f}% (bid={bid}, ask={ask})")
 
-        return True
+            return round(spread_percent, 4)
+        except Exception as e:
+            logger.warning(f"Failed to measure spread for {symbol}: {e}")
+            return None
 
     async def _calculate_stop_loss(self, entry_price: float, side: str, percent: float) -> float:
         """Calculate stop loss price using Decimal-safe utility"""

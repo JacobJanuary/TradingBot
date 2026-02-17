@@ -31,9 +31,10 @@ PrivateTmp=true
 MemoryLimit=1G
 CPUQuota=50%
 
-# Logging
-StandardOutput=append:/home/elcrypto/TradingBot/logs/systemd-output.log
-StandardError=append:/home/elcrypto/TradingBot/logs/systemd-error.log
+# Logging — bot uses RotatingFileHandler (trading_bot.log, 100MB×10)
+# stderr=inherit sends to journal (auto-capped), avoids 20GB file bloat
+StandardOutput=inherit
+StandardError=inherit
 SyslogIdentifier=trading-bot
 
 # Graceful shutdown

@@ -239,23 +239,43 @@ class ExchangeResponseAdapter:
         )
 
     @staticmethod
-    def is_order_filled(order: NormalizedOrder) -> bool:
+    def is_order_filled(order: NormalizedOrder, min_fill_ratio: float = 0.999) -> bool:
         """
-        Проверяет, исполнен ли ордер полностью
+        Проверяет, исполнен ли ордер (полностью или достаточно)
 
         Учитывает особенности разных бирж:
         - Bybit market orders могут сразу иметь status='closed'
         - Binance требует filled >= amount
+        - IOC limit orders: статус 'canceled'/'expired' но filled > 0
+        
+        Args:
+            order: Нормализованный ордер
+            min_fill_ratio: Минимальное соотношение filled/amount (0.999 = 99.9%)
         """
         if order.status == 'closed':
             return True
 
-        # Для market orders
-        if order.type == 'market' and order.filled > 0:
-            # Допускаем небольшую погрешность (0.1%)
-            return order.filled >= order.amount * 0.999
+        # For market and limit orders: check fill ratio
+        if order.filled > 0 and order.amount > 0:
+            return order.filled >= order.amount * min_fill_ratio
 
         return False
+
+    @staticmethod
+    def is_partially_filled(order: NormalizedOrder, min_ratio: float = 0.0) -> bool:
+        """
+        Проверяет, исполнен ли ордер частично (>min_ratio, но не полностью)
+        
+        Используется для IOC limit ордеров, которые могут быть частично исполнены.
+        
+        Args:
+            order: Нормализованный ордер
+            min_ratio: Минимальное соотношение для partial fill (0.0 = любой fill)
+        """
+        if order.filled <= 0 or order.amount <= 0:
+            return False
+        ratio = order.filled / order.amount
+        return ratio > min_ratio and ratio < 0.999
 
     @staticmethod
     def extract_execution_price(order: NormalizedOrder) -> float:
