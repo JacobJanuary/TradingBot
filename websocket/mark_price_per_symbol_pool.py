@@ -24,6 +24,8 @@ import random
 import time
 from typing import Callable, Set, Optional, Dict
 
+from utils.symbol_helpers import normalize_symbol
+
 try:
     import orjson
     def _json_loads(s): return orjson.loads(s)
@@ -63,7 +65,7 @@ class PerSymbolConnection:
             callback: Async callback(data: dict) for each markPriceUpdate
             frequency: Mark price frequency ('1s' or '3s')
         """
-        self.symbol = symbol
+        self.symbol = normalize_symbol(symbol)
         self.callback = callback
         self.frequency = frequency
 
@@ -300,6 +302,7 @@ class MarkPricePerSymbolPool:
 
         Zero impact on existing connections.
         """
+        symbol = normalize_symbol(symbol)
         async with self._lock:
             if symbol in self._connections:
                 logger.debug(f"[POOL] {symbol} already tracked, skipping")
@@ -330,6 +333,7 @@ class MarkPricePerSymbolPool:
 
         Zero impact on other connections.
         """
+        symbol = normalize_symbol(symbol)
         async with self._lock:
             conn = self._connections.pop(symbol, None)
             if conn:
@@ -351,6 +355,7 @@ class MarkPricePerSymbolPool:
         Args:
             symbols: Set of raw Binance symbols (e.g., 'BTCUSDT')
         """
+        symbols = {normalize_symbol(s) for s in symbols}
         async with self._lock:
             current = set(self._connections.keys())
 
