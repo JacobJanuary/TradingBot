@@ -819,10 +819,11 @@ class SignalLifecycleManager:
 
         # Condition C: Delta momentum filter (§6.6, threshold_mult reactivated 2026-02-13)
         # EXIT only when selling pressure exceeds normal noise by threshold_mult
-        # FIX 2026-02-18: both rolling_delta and avg_abs now use same window (delta_window)
-        # Previously avg_abs used hardcoded 100 bars — 36x scale mismatch with rolling_delta(3600)
+        # FIX 2026-02-18: dedicated delta_check_window (300s) for TS exit check
+        # Separate from delta_window (3600s) used by re-entry and lookback
+        # Both rolling_delta and avg_abs use same window for correct scale
         if lc.bar_aggregator:
-            delta_w = lc.strategy.delta_window
+            delta_w = lc.strategy.delta_check_window
             rolling_delta = lc.bar_aggregator.get_rolling_delta(delta_w)
             avg_abs = lc.bar_aggregator.get_avg_abs_delta(delta_w)
             threshold = avg_abs * lc.strategy.threshold_mult
@@ -1618,6 +1619,7 @@ class SignalLifecycleManager:
                 'base_cooldown': lc.strategy.base_cooldown,
                 'base_reentry_drop': lc.strategy.base_reentry_drop,
                 'delta_window': lc.strategy.delta_window,
+                'delta_check_window': lc.strategy.delta_check_window,
                 'threshold_mult': lc.strategy.threshold_mult,
                 'max_reentry_hours': lc.strategy.max_reentry_hours,
                 'max_position_hours': lc.strategy.max_position_hours,
@@ -1712,6 +1714,7 @@ class SignalLifecycleManager:
                     base_cooldown=sp.get('base_cooldown', 300),
                     base_reentry_drop=sp.get('base_reentry_drop', 5.0),
                     delta_window=sp.get('delta_window', 3600),
+                    delta_check_window=sp.get('delta_check_window', 300),
                     threshold_mult=sp.get('threshold_mult', 1.0),
                     max_reentry_hours=sp.get('max_reentry_hours', 4),
                     max_position_hours=sp.get('max_position_hours', 24),

@@ -45,6 +45,7 @@ class StrategyParams:
     leverage: int = 10
     sl_pct: float = 3.0
     delta_window: int = 3600
+    delta_check_window: int = 300       # TS-specific delta window (§6.6 fix 2026-02-18)
     threshold_mult: float = 1.0
     base_activation: float = 10.0
     base_callback: float = 3.0
@@ -140,6 +141,7 @@ class CompositeStrategy:
                     leverage=strat.get('leverage', 10),
                     sl_pct=strat.get('sl_pct', 3.0),
                     delta_window=strat.get('delta_window', 3600),
+                    delta_check_window=strat.get('delta_check_window', 300),
                     threshold_mult=strat.get('threshold_mult', 1.0),
                     base_activation=strat.get('base_activation', 10.0),
                     base_callback=strat.get('base_callback', 3.0),
