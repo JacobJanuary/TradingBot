@@ -101,6 +101,7 @@ class SignalLifecycle:
 
     # Trailing stop tracking
     ts_activated: bool = False          # Has trailing stop been activated?
+    ts_held_since: int = 0              # When B✅ first triggered (for time decay)
 
     # Trade history
     trades: list = field(default_factory=list)
@@ -788,6 +789,8 @@ class SignalLifecycleManager:
         # Condition B: Callback (drawdown from peak)
         drawdown = calculate_drawdown_from_max(lc.max_price, bar.price)
         if drawdown < lc.strategy.base_callback:
+            # Reset held tracker when drawdown retreats below callback
+            lc.ts_held_since = 0
             # Log every 30s when TS is activated to track position state
             elapsed = bar.ts - lc.position_entry_ts
             if elapsed % 30 == 0:
@@ -799,34 +802,67 @@ class SignalLifecycleManager:
                 )
             return False
 
+        # Profit Lock: don't exit below guaranteed profit floor
+        # Floor = activation% - callback% (e.g., 8% - 3% = 5%)
+        min_exit_pnl = lc.strategy.base_activation - lc.strategy.base_callback
+        if pnl_from_entry < min_exit_pnl:
+            elapsed = bar.ts - lc.position_entry_ts
+            if elapsed % 30 == 0:
+                logger.info(
+                    f"🔒 PROFIT LOCK {lc.symbol}: A✅ B✅ | "
+                    f"pnl={pnl_from_entry:.2f}% < floor={min_exit_pnl:.1f}% "
+                    f"(act={lc.strategy.base_activation}% - cb={lc.strategy.base_callback}%) | "
+                    f"drawdown={drawdown:.2f}%, price={bar.price:.6f}, "
+                    f"peak={lc.max_price:.6f}, entry={lc.entry_price:.6f}"
+                )
+            return False
+
         # Condition C: Delta momentum filter (§6.6, threshold_mult reactivated 2026-02-13)
         # EXIT only when selling pressure exceeds normal noise by threshold_mult
-        # threshold = avg_abs_delta(100) × threshold_mult
-        # EXIT when rolling_delta < -threshold (significant selling)
+        # FIX 2026-02-18: both rolling_delta and avg_abs now use same window (delta_window)
+        # Previously avg_abs used hardcoded 100 bars — 36x scale mismatch with rolling_delta(3600)
         if lc.bar_aggregator:
-            rolling_delta = lc.bar_aggregator.get_rolling_delta(lc.strategy.delta_window)
-            avg_abs = lc.bar_aggregator.get_avg_abs_delta(100)
+            delta_w = lc.strategy.delta_window
+            rolling_delta = lc.bar_aggregator.get_rolling_delta(delta_w)
+            avg_abs = lc.bar_aggregator.get_avg_abs_delta(delta_w)
             threshold = avg_abs * lc.strategy.threshold_mult
             bar_count = lc.bar_aggregator.bar_count
 
+            # Time Decay: after 5+ minutes in HELD (A✅ B✅ C❌), 
+            # gradually lower threshold to avoid indefinite holding
+            # decay = max(0.3, 1.0 - 0.1 × held_minutes)
+            if not lc.ts_held_since:
+                lc.ts_held_since = bar.ts
+            held_seconds = bar.ts - lc.ts_held_since
+            held_minutes = held_seconds / 60
+            decay = 1.0
+            if held_minutes > 5:
+                decay = max(0.3, 1.0 - 0.1 * (held_minutes - 5))
+                threshold = threshold * decay
+
             if rolling_delta > -threshold:
-                logger.info(
-                    f"⏳ TS HELD {lc.symbol}: A✅ B✅ C❌ | "
-                    f"drawdown={drawdown:.2f}% >= {lc.strategy.base_callback}% | "
-                    f"delta={rolling_delta:.0f} > -{threshold:.0f} (HOLD — buyers active) | "
-                    f"avg_abs={avg_abs:.0f} × mult={lc.strategy.threshold_mult} | "
-                    f"window={lc.strategy.delta_window}s, bars={bar_count} | "
-                    f"pnl={pnl_from_entry:.2f}%, price={bar.price:.6f}, "
-                    f"peak={lc.max_price:.6f}, entry={lc.entry_price:.6f}"
-                )
+                # Throttle logging: every 30s instead of every bar
+                elapsed = bar.ts - lc.position_entry_ts
+                if elapsed % 30 == 0:
+                    decay_str = f" decay={decay:.2f}" if decay < 1.0 else ""
+                    logger.info(
+                        f"⏳ TS HELD {lc.symbol}: A✅ B✅ C❌ | "
+                        f"drawdown={drawdown:.2f}% >= {lc.strategy.base_callback}% | "
+                        f"delta={rolling_delta:.0f} > -{threshold:.0f} (HOLD — buyers active) | "
+                        f"avg_abs={avg_abs:.0f} × mult={lc.strategy.threshold_mult}{decay_str} | "
+                        f"window={delta_w}s, bars={bar_count}, held={held_seconds}s | "
+                        f"pnl={pnl_from_entry:.2f}%, price={bar.price:.6f}, "
+                        f"peak={lc.max_price:.6f}, entry={lc.entry_price:.6f}"
+                    )
                 return False
 
             # rolling_delta < -threshold → significant selling pressure confirmed
+            decay_str = f" decay={decay:.2f}" if decay < 1.0 else ""
             logger.info(
                 f"📊 Delta filter PASSED {lc.symbol}: A✅ B✅ C✅ | "
                 f"delta={rolling_delta:.0f} < -{threshold:.0f} (sellers dominate) | "
-                f"avg_abs={avg_abs:.0f} × mult={lc.strategy.threshold_mult} | "
-                f"window={lc.strategy.delta_window}s, bars={bar_count} | "
+                f"avg_abs={avg_abs:.0f} × mult={lc.strategy.threshold_mult}{decay_str} | "
+                f"window={delta_w}s, bars={bar_count}, held={held_seconds}s | "
                 f"drawdown={drawdown:.2f}%, pnl={pnl_from_entry:.2f}%"
             )
         else:
