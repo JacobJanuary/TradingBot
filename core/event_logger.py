@@ -181,7 +181,7 @@ class EventLogger:
             pool: Database connection pool
         """
         self.pool = pool
-        self._event_queue = asyncio.Queue(maxsize=1000)
+        self._event_queue = asyncio.Queue(maxsize=10000)
         self._batch_size = 100
         self._flush_interval = 5.0  # seconds
         self._worker_task = None
@@ -321,13 +321,20 @@ class EventLogger:
 
         while not self._shutdown:
             try:
-                # Try to get event with timeout
+                # Drain as many events as available (up to batch_size)
                 try:
                     event = await asyncio.wait_for(
                         self._event_queue.get(),
                         timeout=1.0
                     )
                     batch.append(event)
+                    # Drain remaining without waiting
+                    while len(batch) < self._batch_size:
+                        try:
+                            event = self._event_queue.get_nowait()
+                            batch.append(event)
+                        except asyncio.QueueEmpty:
+                            break
                 except asyncio.TimeoutError:
                     pass
 
@@ -339,7 +346,6 @@ class EventLogger:
                 )
 
                 if should_flush and batch:
-                    logger.info(f"EventLogger flushing {len(batch)} events")
                     await self._write_batch(batch)
                     batch = []
                     last_flush = current_time
@@ -383,18 +389,6 @@ class EventLogger:
             return
 
         async with self.pool.acquire() as conn:
-            # DEBUG: показать куда подключились
-            db_info = await conn.fetchrow("""
-                SELECT current_database() as db,
-                       inet_server_addr() as host,
-                       inet_server_port() as port
-            """)
-            logger.info(f"EventLogger connected to: {db_info['host']}:{db_info['port']}/{db_info['db']}")
-
-            # Count BEFORE insert
-            count_before = await conn.fetchval("SELECT COUNT(*) FROM monitoring.events")
-
-            # Prepare batch insert
             query = """
                 INSERT INTO monitoring.events (
                     event_type, event_data, correlation_id,
@@ -403,10 +397,7 @@ class EventLogger:
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """
 
-            logger.info(f"EventLogger executing INSERT for {len(batch)} events (count_before={count_before})")
-
             try:
-                # Execute batch
                 await conn.executemany(
                     query,
                     [
@@ -418,22 +409,8 @@ class EventLogger:
                         for e in batch
                     ]
                 )
-
-                # Count AFTER insert (same connection)
-                count_after = await conn.fetchval("SELECT COUNT(*) FROM monitoring.events")
-
-                # Get last 3 IDs to verify
-                last_ids = await conn.fetch("SELECT id, event_type FROM monitoring.events ORDER BY id DESC LIMIT 3")
-                last_ids_str = ', '.join([f"id={r['id']}:{r['event_type']}" for r in last_ids])
-
-                logger.info(f"EventLogger wrote {len(batch)} events to DB (count_before={count_before}, count_after={count_after}, delta={count_after - count_before}, last_ids=[{last_ids_str}])")
             except Exception as e:
-                logger.error(f"EventLogger batch write failed: {e}", exc_info=True)
-
-        # Verify write from new connection
-        async with self.pool.acquire() as conn:
-            count = await conn.fetchval("SELECT COUNT(*) FROM monitoring.events")
-            logger.info(f"EventLogger DB verify from NEW connection: {count}")
+                logger.error(f"EventLogger batch write failed ({len(batch)} events): {e}", exc_info=True)
 
     async def log_transaction(
         self,
