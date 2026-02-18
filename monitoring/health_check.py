@@ -411,9 +411,10 @@ class HealthChecker:
 
             # CHECK: Last wave/signal time (with grace period)
             elif time_since_last_signal:
-                # Grace period: 40 minutes (accounts for 2-3 wave intervals)
-                # Waves come every 13-15 minutes, so 40 min = reasonable threshold
-                max_allowed_silence = timedelta(minutes=40)
+                # Grace period: 4 hours — signals arrive via WebSocket and gaps
+                # of 1-3 hours are completely normal during quiet market periods.
+                # Previous threshold of 40 min caused ~100+ false positive warnings.
+                max_allowed_silence = timedelta(hours=4)
 
                 if time_since_last_signal > max_allowed_silence:
                     # Check if this is just after bot start (grace period)
