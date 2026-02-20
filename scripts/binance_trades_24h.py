@@ -139,7 +139,11 @@ class BinanceReporter:
             
             # Is this closing an existing position?
             is_closing = False
-            if open_queue and open_queue[0]['side'] != side:
+            # In Binance, if realizedPnl != 0, it ABSOLUTELY is a closing trade.
+            if realized_pnl != 0:
+                is_closing = True
+            # For exact breakeven closes, rely on FIFO queue presence
+            elif open_queue and open_queue[0]['side'] != side:
                 is_closing = True
             
             if not is_closing:
@@ -160,14 +164,8 @@ class BinanceReporter:
                     pos = open_queue[0]
                     matched = min(qty_to_close, pos['qty'])
                     
-                    # Direction
+                    # Direction is based on the OPENING queue side
                     direction = 'LONG' if pos['side'] == 'BUY' else 'SHORT'
-                    
-                    # Calculate PnL
-                    if pos['side'] == 'BUY':
-                        pnl = (price - pos['price']) * matched
-                    else:
-                        pnl = (pos['price'] - price) * matched
                     
                     # Duration
                     duration_sec = (time_ms - pos['time']) / 1000
@@ -183,9 +181,8 @@ class BinanceReporter:
                             'exit_price': price,
                             'exit_time': dt,
                             'qty': matched,
-                            'gross_pnl': pnl,
-                            'realized_pnl': realized_pnl * (matched / qty) if qty > 0 else Decimal(0),
-                            'commission': pos['commission'] + commission * (matched / qty),
+                            'gross_pnl': realized_pnl * (matched / qty) if qty > 0 else Decimal(0),
+                            'commission': pos['commission'] * (matched / pos['qty']) + commission * (matched / qty),
                             'duration': duration,
                             'duration_sec': duration_sec
                         })
@@ -196,15 +193,25 @@ class BinanceReporter:
                     if pos['qty'] <= Decimal('1e-9'):
                         open_queue.pop(0)
                 
-                # Remainder = position reversal
-                if qty_to_close > Decimal('1e-9'):
-                    open_queue.append({
-                        'qty': qty_to_close, 
-                        'price': price, 
-                        'time': time_ms,
-                        'dt': dt,
-                        'side': side,
-                        'commission': commission * (qty_to_close / qty)
+                # If there's STILL qty_to_close > 0, it was an "orphan" close.
+                # The position was opened BEFORE our 30-day fetch window.
+                # We simply discard this remainder to prevent it from mutating 
+                # into a phantom open position! (Fixed Phantom OFFSET Bug)
+                if qty_to_close > Decimal('1e-9') and time_ms >= self.start_ts:
+                    # Optional: Add an "Orphan" record to visualize that it closed.
+                    direction = 'LONG' if side == 'SELL' else 'SHORT'
+                    round_trips.append({
+                        'symbol': symbol,
+                        'direction': direction,
+                        'entry_price': Decimal(0),
+                        'entry_time': dt, # Unknown entry
+                        'exit_price': price,
+                        'exit_time': dt,
+                        'qty': qty_to_close,
+                        'gross_pnl': realized_pnl * (qty_to_close / qty) if qty > 0 else Decimal(0),
+                        'commission': commission * (qty_to_close / qty),
+                        'duration': '???',
+                        'duration_sec': 0
                     })
         
         return round_trips
@@ -244,6 +251,7 @@ class BinanceReporter:
             # Group by type
             realized_pnl = []
             funding_fees = []
+            commissions = []
             symbols = set()
             
             for record in income_records:
@@ -257,8 +265,10 @@ class BinanceReporter:
                     symbols.add(symbol)
                 elif income_type == 'FUNDING_FEE':
                     funding_fees.append({'symbol': symbol, 'amount': amount, 'time': time})
+                elif income_type == 'COMMISSION':
+                    commissions.append({'symbol': symbol, 'amount': amount, 'time': time})
             
-            print(f"   Закрытых позиций: {len(realized_pnl)} | Funding: {len(funding_fees)}")
+            print(f"   Закрытых позиций: {len(realized_pnl)} | Funding: {len(funding_fees)} | Комиссий: {len(commissions)}")
             print()
 
             # 2. For each symbol with closed trades, fetch FULL trade history
@@ -275,9 +285,11 @@ class BinanceReporter:
                 else:
                     print("0")
             
-            # Store funding fees
+            # Store all income data perfectly
             self.income_data = {
-                'funding_fees': funding_fees
+                'funding_fees': funding_fees,
+                'realized_pnl': realized_pnl,
+                'commissions': commissions
             }
             
             print()
@@ -293,14 +305,19 @@ class BinanceReporter:
         # Sort by exit time
         self.round_trips.sort(key=lambda x: x['exit_time'])
         
-        # Calculate totals
-        total_pnl = sum(rt['gross_pnl'] for rt in self.round_trips)
-        total_commission = sum(abs(rt['commission']) for rt in self.round_trips)
+        # Calculate exact totals from Binance Income API for 100% precision
+        total_pnl = sum(f['pnl'] for f in self.income_data.get('realized_pnl', []))
+        total_commission = sum(abs(f['amount']) for f in self.income_data.get('commissions', []))
         total_funding = sum(f['amount'] for f in self.income_data.get('funding_fees', []))
         net_total = total_pnl - total_commission + total_funding
         
-        wins = sum(1 for rt in self.round_trips if rt['gross_pnl'] > 0)
-        losses = sum(1 for rt in self.round_trips if rt['gross_pnl'] < 0)
+        # Calculate win/loss specifically from realized_pnl since FIFO can have orphans
+        if self.income_data.get('realized_pnl'):
+            wins = sum(1 for f in self.income_data.get('realized_pnl', []) if f['pnl'] > 0)
+            losses = sum(1 for f in self.income_data.get('realized_pnl', []) if f['pnl'] < 0)
+        else:
+            wins = sum(1 for rt in self.round_trips if rt['gross_pnl'] > 0)
+            losses = sum(1 for rt in self.round_trips if rt['gross_pnl'] < 0)
         total_trades = len(self.round_trips)
         win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
 

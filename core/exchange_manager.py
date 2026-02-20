@@ -1799,7 +1799,10 @@ class ExchangeManager:
 
     async def can_open_position(self, symbol: str, notional_usd: float, preloaded_positions: Optional[List] = None) -> Tuple[bool, str]:
         """
-        Check if we can open a new position without exceeding limits
+        Check if we can open a new position without exceeding limits.
+        
+        Retries up to 3 times on transient API errors (network/timeout/rate-limit)
+        to prevent valid signals from being permanently killed by a single glitch.
 
         Args:
             symbol: Trading symbol
@@ -1809,74 +1812,102 @@ class ExchangeManager:
         Returns:
             (can_open, reason)
         """
-        try:
-            # Step 1: Check free balance (account for leverage)
-            free_usdt = await self._get_free_balance_usdt()
-            total_usdt = await self._get_total_balance_usdt()
-            
-            # Get leverage from config
-            leverage = float(config.trading.leverage)
-            required_margin = float(notional_usd) / leverage
+        max_retries = 3
+        retry_delay = 0.5  # seconds
 
-            if free_usdt < required_margin:
-                return False, f"Insufficient free balance: ${free_usdt:.2f} < ${required_margin:.2f} (notional=${notional_usd:.2f}, leverage={leverage}x)"
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Step 1: Check free balance (account for leverage)
+                free_usdt = await self._get_free_balance_usdt()
+                total_usdt = await self._get_total_balance_usdt()
+                
+                # Get leverage from config
+                leverage = float(config.trading.leverage)
+                required_margin = float(notional_usd) / leverage
 
-            # Step 1.5: Check minimum active balance (reserve after opening position)
-            remaining_balance = free_usdt - required_margin
-            min_active_balance = float(config.safety.MINIMUM_ACTIVE_BALANCE_USD)
+                if free_usdt < required_margin:
+                    return False, f"Insufficient free balance: ${free_usdt:.2f} < ${required_margin:.2f} (notional=${notional_usd:.2f}, leverage={leverage}x)"
 
-            if remaining_balance < min_active_balance:
-                return False, (
-                    f"Insufficient free balance on {self.name}: "
-                    f"Opening ${notional_usd:.2f} position (margin=${required_margin:.2f}, leverage={leverage}x) would leave ${remaining_balance:.2f}, "
-                    f"minimum required: ${min_active_balance:.2f}"
-                )
+                # Step 1.5: Check minimum active balance (reserve after opening position)
+                remaining_balance = free_usdt - required_margin
+                min_active_balance = float(config.safety.MINIMUM_ACTIVE_BALANCE_USD)
 
-            # Step 2: Get total current notional
-            if preloaded_positions is not None:
-                positions = preloaded_positions
-            else:
-                positions = await self.exchange.fetch_positions()
-            total_notional = sum(abs(float(p.get('notional', 0)))
-                                for p in positions if float(p.get('contracts', 0)) > 0)
+                if remaining_balance < min_active_balance:
+                    return False, (
+                        f"Insufficient free balance on {self.name}: "
+                        f"Opening ${notional_usd:.2f} position (margin=${required_margin:.2f}, leverage={leverage}x) would leave ${remaining_balance:.2f}, "
+                        f"minimum required: ${min_active_balance:.2f}"
+                    )
 
-            # Step 3: Check maxNotionalValue (Binance specific)
-            if self.name == 'binance':
-                try:
-                    exchange_symbol = self.find_exchange_symbol(symbol)
-                    symbol_clean = exchange_symbol.replace('/USDT:USDT', 'USDT')
+                # Step 2: Get total current notional
+                if preloaded_positions is not None:
+                    positions = preloaded_positions
+                else:
+                    positions = await self.exchange.fetch_positions()
+                total_notional = sum(abs(float(p.get('notional', 0)))
+                                    for p in positions if float(p.get('contracts', 0)) > 0)
 
-                    position_risk = await self.exchange.fapiPrivateV2GetPositionRisk({
-                        'symbol': symbol_clean
-                    })
+                # Step 3: Check maxNotionalValue (Binance specific)
+                if self.name == 'binance':
+                    try:
+                        exchange_symbol = self.find_exchange_symbol(symbol)
+                        symbol_clean = exchange_symbol.replace('/USDT:USDT', 'USDT')
 
-                    for risk in position_risk:
-                        if risk.get('symbol') == symbol_clean:
-                            max_notional_str = risk.get('maxNotionalValue', 'INF')
-                            if max_notional_str != 'INF':
-                                max_notional = float(max_notional_str)
+                        position_risk = await self.exchange.fapiPrivateV2GetPositionRisk({
+                            'symbol': symbol_clean
+                        })
 
-                                # FIX BUG #2: Ignore maxNotional = 0 (means "no personal limit set")
-                                # Binance returns "0" for symbols without open positions, not as a $0 limit
-                                if max_notional > 0:
-                                    new_total = total_notional + float(notional_usd)
+                        for risk in position_risk:
+                            if risk.get('symbol') == symbol_clean:
+                                max_notional_str = risk.get('maxNotionalValue', 'INF')
+                                if max_notional_str != 'INF':
+                                    max_notional = float(max_notional_str)
 
-                                    if new_total > max_notional:
-                                        return False, f"Would exceed max notional: ${new_total:.2f} > ${max_notional:.2f}"
-                            break
-                except Exception as e:
-                    # "Invalid symbol" is expected for some pairs (ME, 0G, LINEA, etc.)
-                    error_str = str(e)
-                    if 'Invalid symbol' in error_str:
-                        logger.debug(f"maxNotionalValue check skipped for {symbol}: not available on API")
-                    else:
-                        logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
+                                    # FIX BUG #2: Ignore maxNotional = 0 (means "no personal limit set")
+                                    # Binance returns "0" for symbols without open positions, not as a $0 limit
+                                    if max_notional > 0:
+                                        new_total = total_notional + float(notional_usd)
 
-            return True, "OK"
+                                        if new_total > max_notional:
+                                            return False, f"Would exceed max notional: ${new_total:.2f} > ${max_notional:.2f}"
+                                break
+                    except Exception as e:
+                        # "Invalid symbol" is expected for some pairs (ME, 0G, LINEA, etc.)
+                        error_str = str(e)
+                        if 'Invalid symbol' in error_str:
+                            logger.debug(f"maxNotionalValue check skipped for {symbol}: not available on API")
+                        else:
+                            logger.warning(f"Could not check maxNotionalValue for {symbol}: {e}")
 
-        except Exception as e:
-            logger.error(f"Error checking if can open position for {symbol}: {e}")
-            return False, f"Validation error: {e}"
+                return True, "OK"
+
+            except Exception as e:
+                error_str = str(e)
+                # Genuine validation failures — don't retry
+                if any(keyword in error_str for keyword in [
+                    'Insufficient', 'insufficient',
+                    'exceed max notional',
+                    'Invalid symbol',
+                ]):
+                    logger.error(f"Error checking if can open position for {symbol}: {e}")
+                    return False, f"Validation error: {e}"
+
+                # Transient API errors — retry
+                if attempt < max_retries:
+                    logger.warning(
+                        f"⚠️ can_open_position({symbol}) attempt {attempt}/{max_retries} failed "
+                        f"(transient API error: {e}), retrying in {retry_delay}s..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # exponential backoff
+                else:
+                    logger.error(
+                        f"❌ can_open_position({symbol}) FAILED after {max_retries} attempts: {e}"
+                    )
+                    return False, f"Validation error after {max_retries} retries: {e}"
+
+        # Should never reach here, but safety fallback
+        return False, "Validation error: max retries exhausted"
 
     async def validate_order(self, symbol: str, side: str, amount: Decimal, price: Optional[Decimal] = None) -> Tuple[bool, str]:
         """
