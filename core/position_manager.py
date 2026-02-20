@@ -2734,8 +2734,11 @@ class PositionManager:
                 if not is_closing:
                     return
             else:
-                # Position might already be gone (closed), still cache
-                pass
+                # CRITICAL FIX: Position already gone (closed). Do NOT cache fill data!
+                # Caching it here causes the fill data to leak into the NEXT position
+                # for this symbol, causing catastrophically wrong PnL logs.
+                logger.debug(f"⏭️ Skipping fill cache for {symbol}: Position already closed, preventing cross-trade cache leak.")
+                return
         
         if average_price > 0:
             self._pending_fill_data[symbol] = {
@@ -3200,8 +3203,15 @@ class PositionManager:
                             position_data.quantity * position_data.entry_price
                         ))
 
+                    # CRITICAL FIX: Purge any lingering state caches to prevent cross-trade PnL leaks
+                    self._pending_fill_data.pop(symbol, None)
+                    self._deferred_closures.pop(symbol, None)
+                    task = self._deferred_closure_tasks.pop(symbol, None)
+                    if task and not task.done():
+                        task.cancel()
+
                     result['positions_removed'] = True
-                    logger.info(f"✅ {symbol}: Removed from positions tracking")
+                    logger.info(f"✅ {symbol}: Removed from positions tracking and purged local state caches")
                 except Exception as e:
                     error_msg = f"Failed to remove from positions: {e}"
                     result['errors'].append(error_msg)
